@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 민감한 정보가 담긴 파일 (절대 올리지 마세요)
+config.py
+database.py
+user_data.json
+
+# 가상환경 및 환경변수
+.env
+.venv
+env/
+venv/
+
+# 로그 파일
+*.log
