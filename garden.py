@@ -200,11 +200,10 @@ class GardenView(discord.ui.View):
             all_fish.update(tier_list)
         
         harvestable_rares = [item for item in RARE_ITEMS if item not in all_fish]
-        if not harvestable_rares: # 비어있을 경우의 안전장치
+        if not harvestable_rares:
             harvestable_rares = ["사랑나무 가지", "무지개 열매", "설국 열매"]
         
         slots_reset_count = 0
-        total_invest = self.user_data["myhome"].get("total_investigations", 0)
         for idx, slot in enumerate(self.garden["slots"]):
             if slot["planted"] and slot["stage"] >= 3:
                 target_item = slot.get("fertilizer")
@@ -215,7 +214,7 @@ class GardenView(discord.ui.View):
                     inv[item] = inv.get(item, 0) + 1
                 
                 harvested.extend(item_drops)
-                self.garden["slots"][idx] = {"planted": False, "stage": 0, "last_invest_count": total_invest, "fertilizer": None}
+                self.garden["slots"][idx] = {"planted": False, "stage": 0, "last_invest_count": 0, "fertilizer": None}
                 slots_reset_count += 1
         
         if harvested:

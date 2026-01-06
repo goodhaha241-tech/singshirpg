@@ -149,15 +149,44 @@ class InfoView(discord.ui.View):
             next_char_btn.callback = self.next_char
             self.add_item(next_char_btn)
 
-        # 인벤토리 버튼
-        btn_inv = discord.ui.Button(label="🎒 가방", style=discord.ButtonStyle.success, row=1)
+        # 기능 버튼들 (StatusMenuView 기능 통합)
+        btn_inv = discord.ui.Button(label="🎒 가방", style=discord.ButtonStyle.secondary, row=1)
         btn_inv.callback = self.open_inventory
         self.add_item(btn_inv)
 
-        # 뒤로가기 버튼
-        back_btn = discord.ui.Button(label="⬅️ 정보창으로", style=discord.ButtonStyle.gray, row=1)
-        back_btn.callback = self.go_back
-        self.add_item(back_btn)
+        btn_use = discord.ui.Button(label="🧪 사용", style=discord.ButtonStyle.secondary, row=1)
+        btn_use.callback = self.use_item_callback
+        self.add_item(btn_use)
+
+        btn_card = discord.ui.Button(label="🃏 카드", style=discord.ButtonStyle.secondary, row=1)
+        btn_card.callback = self.card_manage_callback
+        self.add_item(btn_card)
+
+        btn_home = discord.ui.Button(label="🏡 정비", style=discord.ButtonStyle.success, row=1)
+        btn_home.callback = self.myhome_callback
+        self.add_item(btn_home)
+
+    async def use_item_callback(self, interaction: discord.Interaction):
+        if interaction.user != self.author: return
+        from use_item import ItemUseView
+        view = ItemUseView(self.author, self.user_data, self.all_data, self.save_func, self.char_index)
+        embed = discord.Embed(title="🎒 아이템 사용", description="사용할 아이템을 선택하세요.", color=discord.Color.blue())
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    async def card_manage_callback(self, interaction: discord.Interaction):
+        if interaction.user != self.author: return
+        from card_manager import CardManageView
+        view = CardManageView(self.author, self.user_data, self.all_data, self.save_func, char_index=self.char_index)
+        await interaction.response.edit_message(content=None, embed=view.create_embed(), view=view)
+
+    async def myhome_callback(self, interaction: discord.Interaction):
+        if interaction.user != self.author: return
+        from myhome import MyHomeView
+        # MyHomeView는 all_data 구조를 기대하므로 래퍼나 가짜 데이터 필요할 수 있음
+        # 여기서는 data_manager가 DB 모드이므로 all_data는 큰 의미 없으나 호환성 유지
+        fake_all_data = {str(self.author.id): self.user_data}
+        view = MyHomeView(self.author, self.user_data, fake_all_data, self.save_func)
+        await interaction.response.edit_message(content=None, embed=view.get_embed(), view=view)
 
     async def prev_char(self, interaction: discord.Interaction):
         if interaction.user != self.author: return

@@ -4,170 +4,115 @@ CREATE DATABASE IF NOT EXISTS discord_bot_db
 
 USE discord_bot_db;
 
--- --------------------------------------------------------
--- 1. 사용자 정보 (Users)
--- --------------------------------------------------------
+-- 1. 사용자 기본 정보
 CREATE TABLE IF NOT EXISTS users (
-    user_id VARCHAR(20) PRIMARY KEY COMMENT 'Discord User ID',
+    user_id VARCHAR(50) PRIMARY KEY,
     pt BIGINT DEFAULT 0,
     money BIGINT DEFAULT 0,
     last_checkin DATE,
+    investigator_index INT DEFAULT 0, -- 대표 캐릭터 인덱스
     
-    -- 현재 선택된 캐릭터 (대표 캐릭터) 인덱스
-    investigator_index INT DEFAULT 0,
-    
-    -- 메인 퀘스트 정보
+    -- 메인 퀘스트
     main_quest_id INT DEFAULT 0,
     main_quest_current INT DEFAULT 0,
     main_quest_index INT DEFAULT 0,
-    
-    -- [추가] 마이홈 시설 레벨 (기존 JSON의 myhome.level 대응)
+
+    -- 마이홈 레벨 (JSON의 myhome 내부 값을 여기로 풀어서 저장)
     garden_level INT DEFAULT 1,
     workshop_level INT DEFAULT 1,
     fishing_level INT DEFAULT 1,
-    
-    -- [추가] 통계 데이터
     total_subjugations INT DEFAULT 0,
 
-    -- 유저 적용 버프 (카페 버프 등) - JSON으로 저장
-    buffs JSON COMMENT 'Active buffs data',
+    -- JSON 형태로 저장할 가벼운 데이터들
+    cards JSON,           -- 보유 카드 리스트
+    buffs JSON,           -- 적용 중인 버프
     
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- --------------------------------------------------------
--- 2. 캐릭터 (Characters)
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS characters (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(20) NOT NULL,
-    
-    -- [중요] 캐릭터 순서 정렬을 위한 인덱스 (0, 1, 2...)
-    char_index INT NOT NULL,
-    
-    name VARCHAR(50),
-    
-    -- 기본 스탯
-    hp INT DEFAULT 100,
-    max_mental INT DEFAULT 100,
-    
-    -- 전투 스탯
-    attack INT DEFAULT 10,
-    defense INT DEFAULT 0,
-    defense_rate INT DEFAULT 0,
-    speed INT DEFAULT 10,
-    
-    -- 장비 및 덱 정보
-    card_slots INT DEFAULT 4,
-    
-    -- [JSON] 장착한 스킬 카드 목록 (예: ["기본공격", "방어"])
-    equipped_cards JSON,
-    
-    -- [JSON] 상태이상 및 임시 버프 (예: {"bleed": 0})
-    status_effects JSON,
-    
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-    -- 한 유저 내에서 슬롯 번호는 중복될 수 없음
-    UNIQUE KEY unique_char_slot (user_id, char_index)
-);
-
--- --------------------------------------------------------
--- 3. 인벤토리 (Inventory)
--- --------------------------------------------------------
+-- 2. 인벤토리
 CREATE TABLE IF NOT EXISTS inventory (
-    user_id VARCHAR(20),
+    user_id VARCHAR(50),
     item_name VARCHAR(100),
-    quantity INT DEFAULT 0,
+    quantity INT,
     PRIMARY KEY (user_id, item_name),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- --------------------------------------------------------
--- 4. 아티팩트 (Artifacts)
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS artifacts (
-    id VARCHAR(50) PRIMARY KEY COMMENT 'UUID string',
-    user_id VARCHAR(20),
+-- 3. 캐릭터 (보유 캐릭터 목록)
+CREATE TABLE IF NOT EXISTS characters (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(50),
     name VARCHAR(100),
-    
-    rank_level INT DEFAULT 1 COMMENT '성급 (1~3)',
-    level INT DEFAULT 0 COMMENT '강화 수치 (+0~+5)',
-    prefix VARCHAR(50),
-    
-    -- [JSON] 스탯 정보 (예: {"attack": 5, "defense": 2})
-    stats JSON,
-    
-    -- [추가] 3성 아티팩트 특수 효과 코드
-    special VARCHAR(50) DEFAULT NULL,
-    
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    hp INT,
+    current_hp INT,
+    max_mental INT,
+    current_mental INT,
+    attack INT,
+    defense INT,
+    defense_rate INT DEFAULT 0,
+    card_slots INT DEFAULT 4,
+    equipped_cards JSON, -- 장착한 카드 목록
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- --------------------------------------------------------
--- 5. 해금된 지역 (Unlocked Regions)
--- --------------------------------------------------------
+-- 4. 아티팩트
+CREATE TABLE IF NOT EXISTS artifacts (
+    id VARCHAR(36) PRIMARY KEY, -- UUID
+    user_id VARCHAR(50),
+    name VARCHAR(100),
+    rank_level INT, -- rank 예약어 회피
+    grade INT,
+    level INT,
+    prefix VARCHAR(50),
+    stats JSON,
+    special VARCHAR(100),
+    description TEXT,
+    equipped_char_index INT DEFAULT -1, -- 장착된 캐릭터 인덱스 (-1이면 미장착)
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- 5. 해금된 지역
 CREATE TABLE IF NOT EXISTS unlocked_regions (
-    user_id VARCHAR(20),
+    user_id VARCHAR(50),
     region_name VARCHAR(100),
     PRIMARY KEY (user_id, region_name),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- --------------------------------------------------------
--- 6. [신규] 영입 퀘스트 진행도 (Recruit Progress)
--- --------------------------------------------------------
+-- 6. 퀘스트/영입 진행도 (recruit_progress)
 CREATE TABLE IF NOT EXISTS recruit_progress (
-    user_id VARCHAR(20),
-    char_key VARCHAR(50) COMMENT '영입 대상 키 (예: Yeongsan)',
-    progress INT DEFAULT 0 COMMENT '현재 퀘스트 단계',
+    user_id VARCHAR(50),
+    char_key VARCHAR(50), -- 예: 'Yeongsan'
+    progress INT DEFAULT 0,
     PRIMARY KEY (user_id, char_key),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- --------------------------------------------------------
--- 7. 마이홈 - 텃밭 슬롯 (Garden Slots)
--- --------------------------------------------------------
+-- 7. 마이홈 - 텃밭 슬롯
 CREATE TABLE IF NOT EXISTS garden_slots (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(20),
+    user_id VARCHAR(50),
     slot_index INT,
     planted BOOLEAN DEFAULT FALSE,
+    plant_name VARCHAR(100),
     stage INT DEFAULT 0,
     last_invest_count INT DEFAULT 0,
-    fertilizer VARCHAR(100),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- --------------------------------------------------------
--- 8. 마이홈 - 비료 보관함 (User Fertilizers)
--- --------------------------------------------------------
+-- 8. 마이홈 - 비료 (JSON의 fertilizers)
 CREATE TABLE IF NOT EXISTS user_fertilizers (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(20),
-    target VARCHAR(100) COMMENT '수확 시 얻게 될 타겟 아이템',
+    user_id VARCHAR(50),
+    target VARCHAR(100),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- --------------------------------------------------------
--- 9. 마이홈 - 낚시 분해 슬롯 (Fishing Dismantle Slots)
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS fishing_slots (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(20),
-    fish_name VARCHAR(100),
-    start_count INT DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-
--- --------------------------------------------------------
--- 10. 마이홈 - 작업실 슬롯 (Workshop Slots)
--- --------------------------------------------------------
+-- 9. 마이홈 - 작업실 슬롯
 CREATE TABLE IF NOT EXISTS workshop_slots (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(20),
+    user_id VARCHAR(50),
     slot_index INT,
     craft_item VARCHAR(100),
     start_count INT DEFAULT 0,
@@ -175,15 +120,11 @@ CREATE TABLE IF NOT EXISTS workshop_slots (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- --------------------------------------------------------
--- 11. 거래소 (Trades)
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS trades (
-    id VARCHAR(36) PRIMARY KEY,
-    seller_id VARCHAR(20),
-    item_name VARCHAR(100),
-    quantity INT,
-    price INT,
-    status VARCHAR(20) DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- 10. 마이홈 - 낚시 분해 슬롯
+CREATE TABLE IF NOT EXISTS fishing_slots (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(50),
+    fish_name VARCHAR(100),
+    start_count INT DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
