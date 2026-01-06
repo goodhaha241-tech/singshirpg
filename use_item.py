@@ -4,6 +4,7 @@ import json
 import os
 from character import Character
 from items import ITEM_CATEGORIES, STAT_UP_ITEMS
+from data_manager import get_user_data
 
 DATA_FILE = "user_data.json"
 
@@ -11,11 +12,10 @@ DATA_FILE = "user_data.json"
 class NameChangeModal(discord.ui.Modal, title="캐릭터 이름 변경"):
     new_name = discord.ui.TextInput(label="새로운 이름", placeholder="변경할 이름 (2~10자)", min_length=2, max_length=10)
 
-    def __init__(self, author, user_data, all_data, char_index, save_func):
+    def __init__(self, author, user_data, char_index, save_func):
         super().__init__()
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.char_index = char_index
         self.save_func = save_func
 
@@ -28,16 +28,15 @@ class NameChangeModal(discord.ui.Modal, title="캐릭터 이름 변경"):
             inv["이름 변경권"] -= 1
             if inv["이름 변경권"] <= 0: del inv["이름 변경권"]
         
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         await interaction.response.send_message(f"✅ 이름이 **[{new_name_val}]**(으)로 변경되었습니다!", ephemeral=True)
 
 
 class ItemUseView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, char_index=0):
+    def __init__(self, author, user_data, save_func, char_index=0):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.char_index = char_index # 전달받은 인덱스 사용
         
@@ -164,24 +163,29 @@ class ItemUseView(discord.ui.View):
         cid = interaction.data.get("custom_id")
         
         if cid == "back_info":
+            await interaction.response.defer()
             from info import InfoView
-            view = InfoView(self.author, self.user_data, self.all_data, self.save_func, self.char_index)
-            await interaction.response.edit_message(content=None, embed=view.create_status_embed(), view=view)
+            view = InfoView(self.author, self.user_data, self.save_func, self.char_index)
+            await interaction.edit_original_response(content=None, embed=view.create_status_embed(), view=view)
         elif cid == "prev_char":
+            await interaction.response.defer()
             self.char_page = max(0, self.char_page - 1)
             self.update_components()
-            await interaction.response.edit_message(view=self)
+            await interaction.edit_original_response(view=self)
         elif cid == "next_char":
+            await interaction.response.defer()
             chars = self.user_data.get("characters", [])
             max_p = (len(chars) - 1) // self.PER_PAGE
             self.char_page = min(max_p, self.char_page + 1)
             self.update_components()
-            await interaction.response.edit_message(view=self)
+            await interaction.edit_original_response(view=self)
         elif cid == "prev_item":
+            await interaction.response.defer()
             self.item_page = max(0, self.item_page - 1)
             self.update_components()
-            await interaction.response.edit_message(view=self)
+            await interaction.edit_original_response(view=self)
         elif cid == "next_item":
+            await interaction.response.defer()
             inv = self.user_data.get("inventory", {})
             valid_items = []
             for item_name, count in inv.items():
@@ -197,11 +201,12 @@ class ItemUseView(discord.ui.View):
             max_p = (len(valid_items) - 1) // self.PER_PAGE
             self.item_page = min(max_p, self.item_page + 1)
             self.update_components()
-            await interaction.response.edit_message(view=self)
+            await interaction.edit_original_response(view=self)
             
         return True
 
     async def on_char_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         self.char_index = int(interaction.data['values'][0])
         self.update_components()
         
@@ -217,20 +222,21 @@ class ItemUseView(discord.ui.View):
         if char.get('defense_rate', 0) > 0:
             embed.add_field(name="🛡️ 방어율", value=f"{char.get('defense_rate')}%", inline=True)
             
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=self)
 
     async def on_item_select(self, interaction: discord.Interaction):
         item_name = interaction.data['values'][0]
         if item_name == "이름 변경권":
-            await interaction.response.send_modal(NameChangeModal(self.author, self.user_data, self.all_data, self.char_index, self.save_func))
+            await interaction.response.send_modal(NameChangeModal(self.author, self.user_data, self.char_index, self.save_func))
             return
 
-        self.user_data = self.all_data.get(str(self.author.id))
+        await interaction.response.defer()
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         char_data = self.user_data["characters"][self.char_index]
         inv = self.user_data["inventory"]
         
         if inv.get(item_name, 0) <= 0:
-            return await interaction.response.send_message("❌ 아이템이 부족합니다.", ephemeral=True)
+            return await interaction.followup.send("❌ 아이템이 부족합니다.", ephemeral=True)
 
         msg = ""
         used = False
@@ -240,20 +246,27 @@ class ItemUseView(discord.ui.View):
         if item_name in STAT_UP_ITEMS:
             info = STAT_UP_ITEMS[item_name]
 
+            # [제한] 능력치 강화 아이템은 첫 번째 캐릭터(인덱스 0)만 사용 가능
+            if self.char_index != 0:
+                return await interaction.followup.send("⚠️ 능력치 강화 아이템은 첫 번째 캐릭터(유저 캐릭터)에게만 사용할 수 있습니다.", ephemeral=True)
+
             # [수정] 기간제 버프 아이템과 영구 스탯 상승 아이템 로직 분리
             if "duration" in info:
                 buffs = self.user_data.setdefault("buffs", {})
                 stat = info["stat"]
 
-                # [수정] 이미 동일한 종류의 기간제 버프가 활성화되어 있으면 사용을 막습니다.
-                if stat in buffs and buffs[stat].get('duration', 0) > 0:
-                    return await interaction.response.send_message(f"⚠️ 이미 동일한 종류({stat})의 기간제 버프가 활성화되어 있습니다.", ephemeral=True)
-
-                buffs[stat] = {
+                buffs[item_name] = {
+                    "stat": stat,
                     "value": info["value"],
-                    "duration": info["duration"]
+                    "duration": info["duration"],
+                    "target": char_data["name"]
                 }
-                msg = f"✨ **{item_name}** 사용! 다음 {info['duration']}번의 행동 동안 **{stat} +{info['value']}** 효과가 적용됩니다."
+                
+                # [신규] 버프 개수 제한 (최대 2개)
+                while len(buffs) > 2:
+                    oldest_key = next(iter(buffs))
+                    del buffs[oldest_key]
+
                 msg = f"✨ **{item_name}** 사용! (일시적 버프)"
                 embed_fields.append(("효과 적용", f"**{stat} +{info['value']}**\n({info['duration']}회 행동 지속)"))
                 used = True
@@ -267,8 +280,7 @@ class ItemUseView(discord.ui.View):
                 
                 curr = char_data.get(key, 0)
                 if curr >= limit:
-                    return await interaction.response.send_message("⚠️ 능력치 한계 도달!", ephemeral=True)
-                    return await interaction.response.send_message(f"⚠️ {stat} 능력치가 이미 한계({limit})에 도달했습니다!", ephemeral=True)
+                    return await interaction.followup.send(f"⚠️ {stat} 능력치가 이미 한계({limit})에 도달했습니다!", ephemeral=True)
                     
                 char_data[key] = min(limit, curr + val)
                 if stat == "max_hp": char_data["current_hp"] += val
@@ -303,10 +315,10 @@ class ItemUseView(discord.ui.View):
         if used:
             inv[item_name] -= 1
             if inv[item_name] <= 0: del inv[item_name]
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             
             self.update_components()
             embed = discord.Embed(title="✅ 사용 완료", description=msg, color=discord.Color.green())
             for name, value in embed_fields:
                 embed.add_field(name=name, value=value, inline=False)
-            await interaction.response.edit_message(embed=embed, view=self)
+            await interaction.edit_original_response(embed=embed, view=self)

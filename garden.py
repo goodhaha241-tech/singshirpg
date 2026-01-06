@@ -7,11 +7,10 @@ from data_manager import get_user_data
 
 
 class GardenView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.page = 0
         
@@ -70,7 +69,7 @@ class GardenView(discord.ui.View):
                     if remaining == 0:
                         state = f"💧 **물 부족** (단계: {growth}/3){fert_info}"
                     else:
-                        state = f"🌿 자라는 중 ({growth}/3){fert_info} - 물주기까지 조사 {remaining}회"
+                        state = f"🌿 자라는 중 ({growth}/3){fert_info}\n   ┕ 진행: **{diff}/{req_invest}** 턴 (남은: **{remaining}**턴)"
             
             slots_desc += f"**[{i+1}번]** {state}\n"
         
@@ -118,8 +117,8 @@ class GardenView(discord.ui.View):
     async def interaction_check(self, i):
         if i.user != self.author: return False
         
+        await i.response.defer()
         # [DB 수정] DB에서 최신 데이터 로드
-        self.all_data = {}
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
         self.garden = self.user_data["myhome"].setdefault("garden", {})
 
@@ -138,23 +137,23 @@ class GardenView(discord.ui.View):
         elif cid == "prev_page":
             self.page -= 1
             self.update_components()
-            await i.response.edit_message(view=self)
+            await i.edit_original_response(view=self)
         elif cid == "next_page":
             self.page += 1
             self.update_components()
-            await i.response.edit_message(view=self)
+            await i.edit_original_response(view=self)
         return True
 
     async def plant_seed(self, i):
         inv = self.user_data.get("inventory", {})
         if inv.get("이상한 씨앗", 0) <= 0:
-            return await i.response.edit_message(content="❌ '이상한 씨앗'이 없습니다. (씨앗 변환으로 획득 가능)", embed=self.get_embed(), view=self)
+            return await i.edit_original_response(content="❌ '이상한 씨앗'이 없습니다. (씨앗 변환으로 획득 가능)", embed=self.get_embed(), view=self)
         
         target = -1
         for idx, slot in enumerate(self.garden["slots"]):
             if not slot["planted"]: target = idx; break
         
-        if target == -1: return await i.response.edit_message(content="❌ 빈 슬롯이 없습니다.", embed=self.get_embed(), view=self)
+        if target == -1: return await i.edit_original_response(content="❌ 빈 슬롯이 없습니다.", embed=self.get_embed(), view=self)
         
         inv["이상한 씨앗"] -= 1
         self.garden["slots"][target] = {
@@ -162,12 +161,12 @@ class GardenView(discord.ui.View):
             "last_invest_count": self.user_data["myhome"].get("total_investigations", 0),
             "fertilizer": None 
         }
-        await self.save_func(self.all_data)
-        await i.response.edit_message(content="🌱 씨앗을 심었습니다.", embed=self.get_embed(), view=self)
+        await self.save_func(self.author.id, self.user_data)
+        await i.edit_original_response(content="🌱 씨앗을 심었습니다.", embed=self.get_embed(), view=self)
 
     async def water_plants(self, i):
         water = self.garden.get("water_can", 0)
-        if water <= 0: return await i.response.edit_message(content="❌ 물뿌리개가 비었습니다.", embed=self.get_embed(), view=self)
+        if water <= 0: return await i.edit_original_response(content="❌ 물뿌리개가 비었습니다.", embed=self.get_embed(), view=self)
         
         total_invest = self.user_data["myhome"].get("total_investigations", 0)
         count = 0
@@ -183,10 +182,10 @@ class GardenView(discord.ui.View):
         
         if count > 0:
             self.garden["water_can"] = water
-            await self.save_func(self.all_data)
-            await i.response.edit_message(content=f"🚿 {count}개 작물에 물을 주었습니다.", embed=self.get_embed(), view=self)
+            await self.save_func(self.author.id, self.user_data)
+            await i.edit_original_response(content=f"🚿 {count}개 작물에 물을 주었습니다.", embed=self.get_embed(), view=self)
         else:
-            await i.response.edit_message(content="❌ 물을 줄 작물이 없거나, 아직 물을 줄 시기가 아닙니다 (조사 50회 필요).", embed=self.get_embed(), view=self)
+            await i.edit_original_response(content="❌ 물을 줄 작물이 없거나, 아직 물을 줄 시기가 아닙니다 (조사 성공 50턴 필요).", embed=self.get_embed(), view=self)
 
     async def harvest_plants(self, i):
         harvested = []
@@ -218,77 +217,77 @@ class GardenView(discord.ui.View):
                 slots_reset_count += 1
         
         if harvested:
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             from collections import Counter
             counts = Counter(harvested)
             res_str = ", ".join([f"{k} x{v}" for k, v in counts.items()])
-            await i.response.edit_message(content=f"🌾 {slots_reset_count}개 슬롯 수확 완료!\n획득: {res_str}", embed=self.get_embed(), view=self)
+            await i.edit_original_response(content=f"🌾 {slots_reset_count}개 슬롯 수확 완료!\n획득: {res_str}", embed=self.get_embed(), view=self)
         else:
-            await i.response.edit_message(content="❌ 수확할 작물이 없습니다.", embed=self.get_embed(), view=self)
+            await i.edit_original_response(content="❌ 수확할 작물이 없습니다.", embed=self.get_embed(), view=self)
 
     async def convert_seed_menu(self, i):
-        view = SeedConvertView(self.author, self.user_data, self.all_data, self.save_func, self)
-        await i.response.edit_message(embed=view.get_embed(), view=view)
+        view = SeedConvertView(self.author, self.user_data, self.save_func, self)
+        await i.edit_original_response(embed=view.get_embed(), view=view)
 
     async def refill_water_menu(self, i):
-        view = WaterRefillView(self.author, self.user_data, self.all_data, self.save_func, self)
-        await i.response.edit_message(embed=view.get_embed(), view=view)
+        view = WaterRefillView(self.author, self.user_data, self.save_func, self)
+        await i.edit_original_response(embed=view.get_embed(), view=view)
 
     async def make_fertilizer_menu(self, i):
-        view = FertilizerCraftView(self.author, self.user_data, self.all_data, self.save_func, self)
-        await i.response.edit_message(embed=view.get_embed(), view=view)
+        view = FertilizerCraftView(self.author, self.user_data, self.save_func, self)
+        await i.edit_original_response(embed=view.get_embed(), view=view)
 
     async def apply_fertilizer_menu(self, i):
         ferts = self.user_data.get("fertilizers", [])
         if not ferts:
-            return await i.response.edit_message(content="❌ 보유한 비료가 없습니다.", embed=self.get_embed(), view=self)
-        view = FertilizerApplyView(self.author, self.user_data, self.all_data, self.save_func, self)
-        await i.response.edit_message(embed=view.get_embed(), view=view)
+            return await i.edit_original_response(content="❌ 보유한 비료가 없습니다.", embed=self.get_embed(), view=self)
+        view = FertilizerApplyView(self.author, self.user_data, self.save_func, self)
+        await i.edit_original_response(embed=view.get_embed(), view=view)
 
     async def expand_garden(self, i):
         if len(self.garden["slots"]) >= 5: 
-            return await i.response.edit_message(content="❌ 최대 5칸까지 확장 가능합니다.", embed=self.get_embed(), view=self)
+            return await i.edit_original_response(content="❌ 최대 5칸까지 확장 가능합니다.", embed=self.get_embed(), view=self)
         
         money = self.user_data.get("money", 0)
         pt = self.user_data.get("pt", 0)
         
         if money < 20000 or pt < 2000:
-            return await i.response.edit_message(content="❌ 비용 부족 (20,000원 + 2,000pt 필요)", embed=self.get_embed(), view=self)
+            return await i.edit_original_response(content="❌ 비용 부족 (20,000원 + 2,000pt 필요)", embed=self.get_embed(), view=self)
         
         self.user_data["money"] -= 20000
         self.user_data["pt"] -= 2000
         self.garden["slots"].append({"planted": False, "stage": 0, "last_invest_count": 0})
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
-        await i.response.edit_message(content=f"🏗️ 텃밭 확장 완료! ({len(self.garden['slots'])}칸)", embed=self.get_embed(), view=self)
+        await i.edit_original_response(content=f"🏗️ 텃밭 확장 완료! ({len(self.garden['slots'])}칸)", embed=self.get_embed(), view=self)
 
     async def upgrade_garden(self, i):
         lvl = self.garden.get("level", 1)
         if lvl >= 3:
-            return await i.response.edit_message(content="❌ 최대 강화 상태입니다.", embed=self.get_embed(), view=self)
+            return await i.edit_original_response(content="❌ 최대 강화 상태입니다.", embed=self.get_embed(), view=self)
         
         cost = 50000 if lvl == 1 else 100000
         
         if self.user_data.get("money", 0) < cost:
-            return await i.response.edit_message(content=f"❌ 비용 부족 ({cost:,}원 필요)", embed=self.get_embed(), view=self)
+            return await i.edit_original_response(content=f"❌ 비용 부족 ({cost:,}원 필요)", embed=self.get_embed(), view=self)
             
         self.user_data["money"] -= cost
         self.garden["level"] = lvl + 1
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
-        await i.response.edit_message(content=f"⭐ 텃밭 강화 완료! (수확량 {2+lvl} -> {3+lvl}개)", embed=self.get_embed(), view=self)
+        await i.edit_original_response(content=f"⭐ 텃밭 강화 완료! (수확량 {2+lvl} -> {3+lvl}개)", embed=self.get_embed(), view=self)
 
     async def go_home(self, interaction):
         # [중요] 순환 참조 방지를 위해 함수 내부에서 import
         from myhome import MyHomeView
-        view = MyHomeView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(content="🏠 마이홈으로 이동했습니다.", embed=view.get_embed(), view=view)
+        view = MyHomeView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(content="🏠 마이홈으로 이동했습니다.", embed=view.get_embed(), view=view)
 
 
 class SeedConvertView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, parent):
+    def __init__(self, author, user_data, save_func, parent):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func, self.parent = author, user_data, all_data, save_func, parent
+        self.author, self.user_data, self.save_func, self.parent = author, user_data, save_func, parent
         self.selected_recipe = None
         self.recipes = {
             "twisted": {"name": "뒤틀린 씨앗", "ratio": 3},
@@ -332,18 +331,16 @@ class SeedConvertView(discord.ui.View):
         if i.user != self.author: return
         self.selected_recipe = i.data['values'][0]
         self.update_components()
-        await i.response.edit_message(view=self)
+        await i.edit_original_response(view=self)
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
         
         # [DB 수정] 데이터 갱신 및 부모 뷰 동기화 준비
-        self.all_data = {}
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
         
         cid = i.data.get("custom_id")
         if cid == "back":
-            self.parent.all_data = self.all_data
             self.parent.user_data = self.user_data
             self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
             self.parent.update_components()
@@ -366,15 +363,15 @@ class SeedConvertView(discord.ui.View):
         if inv[src_name] <= 0: del inv[src_name]
         
         inv["이상한 씨앗"] = inv.get("이상한 씨앗", 0) + (ratio * count)
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         await i.response.edit_message(embed=self.get_embed(), view=self)
 
 
 class WaterRefillView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, parent):
+    def __init__(self, author, user_data, save_func, parent):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func, self.parent = author, user_data, all_data, save_func, parent
+        self.author, self.user_data, self.save_func, self.parent = author, user_data, save_func, parent
         self.selected_material = None
         self.update_components()
 
@@ -407,18 +404,16 @@ class WaterRefillView(discord.ui.View):
         if i.user != self.author: return
         self.selected_material = i.data['values'][0]
         self.update_components()
-        await i.response.edit_message(view=self)
+        await i.edit_original_response(view=self)
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
         
         # [DB 수정] 데이터 갱신
-        self.all_data = {}
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
         
         cid = i.data.get("custom_id")
         if cid == "back":
-            self.parent.all_data = self.all_data
             self.parent.user_data = self.user_data
             self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
             self.parent.update_components()
@@ -452,14 +447,14 @@ class WaterRefillView(discord.ui.View):
         if inv[item] <= 0: del inv[item]
         self.user_data["myhome"]["garden"]["water_can"] = min(20, current + gain)
         
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         await i.response.edit_message(embed=self.get_embed(), view=self)
 
 
 class FertilizerCraftView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, parent):
+    def __init__(self, author, user_data, save_func, parent):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func, self.parent = author, user_data, all_data, save_func, parent
+        self.author, self.user_data, self.save_func, self.parent = author, user_data, save_func, parent
         self.update_components()
 
     def update_components(self):
@@ -498,12 +493,10 @@ class FertilizerCraftView(discord.ui.View):
         if i.user != self.author: return False
         
         # [DB 수정] 데이터 갱신
-        self.all_data = {}
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
 
         if i.data.get("custom_id") == "back":
             # [FIX] 부모 뷰(GardenView) 데이터 동기화
-            self.parent.all_data = self.all_data
             self.parent.user_data = self.user_data
             self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
             self.parent.update_components()
@@ -533,16 +526,16 @@ class FertilizerCraftView(discord.ui.View):
             
             self.user_data.setdefault("fertilizers", []).append({"target": val})
             
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             self.update_components()
             await i.response.edit_message(content=f"🧪 **{val}** 속성의 신비한 비료를 제작했습니다!", embed=self.get_embed(), view=self)
         return True
 
 
 class FertilizerApplyView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, parent):
+    def __init__(self, author, user_data, save_func, parent):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func, self.parent = author, user_data, all_data, save_func, parent
+        self.author, self.user_data, self.save_func, self.parent = author, user_data, save_func, parent
         self.selected_slot = None
         self.add_slot_select()
         self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=2, custom_id="back"))
@@ -568,12 +561,10 @@ class FertilizerApplyView(discord.ui.View):
         if i.user != self.author: return False
         
         # [DB 수정] 데이터 갱신
-        self.all_data = {}
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
 
         if i.data.get("custom_id") == "back":
             # [FIX] 부모 뷰 데이터 동기화
-            self.parent.all_data = self.all_data
             self.parent.user_data = self.user_data
             self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
             self.parent.update_components()
@@ -595,6 +586,7 @@ class FertilizerApplyView(discord.ui.View):
                 opt.append(discord.SelectOption(label=f"대상: {f['target']}", value=str(idx), description="수확 시 이 재료 획득"))
             
             self.add_item(discord.ui.Select(placeholder="사용할 비료 선택", options=opt[:25], custom_id="fert_sel"))
+            self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=2, custom_id="back"))
             await i.response.edit_message(content=f"🌱 {self.selected_slot+1}번 작물에 줄 비료를 선택하세요.", embed=self.get_embed(), view=self)
             
         elif i.data["custom_id"] == "fert_sel":
@@ -608,7 +600,7 @@ class FertilizerApplyView(discord.ui.View):
             del ferts[f_idx]
             
             self.user_data["myhome"]["garden"]["slots"][self.selected_slot]["fertilizer"] = target_item
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             
             await i.response.edit_message(content=f"🧪 **{target_item}** 비료를 {self.selected_slot+1}번 작물에 주었습니다!", embed=self.parent.get_embed(), view=self.parent)
         

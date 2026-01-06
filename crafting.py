@@ -3,7 +3,7 @@ import discord
 import json
 import os
 import random
-from items import CRAFT_RECIPES, ITEM_CATEGORIES, ITEM_PRICES, COMMON_ITEMS, RARE_ITEMS
+from items import CRAFT_RECIPES, ITEM_CATEGORIES, ITEM_PRICES, COMMON_ITEMS, RARE_ITEMS, REGIONS
 from fishing import FISH_TIERS
 from story import update_quest_progress
 from data_manager import get_user_data
@@ -12,16 +12,13 @@ DATA_FILE = "user_data.json"
 
 # --- [1] 지역 선택 뷰 (메인 - 버튼식) ---
 class CraftView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.page = 0
         self.ITEMS_PER_PAGE = 3 
-        
-        self.user_data = self.all_data.get(str(self.author.id))
         self.update_buttons()
 
     async def reload_data(self):
@@ -32,17 +29,14 @@ class CraftView(discord.ui.View):
         self.clear_items()
         
         unlocked = self.user_data.get("unlocked_regions", ["기원의 쌍성"])
-        
-        active_regions = []
         all_recipe_regions = set(info.get("region", "기원의 쌍성") for info in CRAFT_RECIPES.values())
         
-        for region in unlocked:
-            if region in all_recipe_regions or region == "기원의 쌍성":
-                active_regions.append(region)
-        
-        if "기원의 쌍성" in active_regions:
-            active_regions.remove("기원의 쌍성")
-            active_regions.insert(0, "기원의 쌍성")
+        active_regions = []
+        # items.py의 REGIONS 순서(해금 순서)대로 정렬하여 표시
+        for region in REGIONS.keys():
+            if region in unlocked:
+                if region in all_recipe_regions or region == "기원의 쌍성":
+                    active_regions.append(region)
 
         total_pages = (len(active_regions) - 1) // self.ITEMS_PER_PAGE + 1
         if self.page < 0: self.page = 0
@@ -80,27 +74,27 @@ class CraftView(discord.ui.View):
     def make_region_callback(self, region_name):
         async def callback(interaction: discord.Interaction):
             if interaction.user != self.author: return
-            self.user_data = self.all_data.get(str(self.author.id))
-            view = RegionCraftView(self.author, self.user_data, self.all_data, self.save_func, region_name)
+            await self.reload_data()
+            view = RegionCraftView(self.author, self.user_data, self.save_func, region_name)
             await interaction.response.edit_message(content=f"🔨 **[{region_name}]** 제작 목록", embed=None, view=view)
         return callback
 
     async def open_box_menu(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
         await self.reload_data()
-        view = BoxOpenView(self.author, self.user_data, self.all_data, self.save_func, self)
+        view = BoxOpenView(self.author, self.user_data, self.save_func, self)
         await interaction.response.edit_message(content="📦 **상자깡** 메뉴입니다.", embed=None, view=view)
 
     async def prev_page(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
+        await self.reload_data()
         self.page -= 1
         self.update_buttons()
         await interaction.response.edit_message(view=self)
 
     async def next_page(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
+        await self.reload_data()
         self.page += 1
         self.update_buttons()
         await interaction.response.edit_message(view=self)
@@ -112,17 +106,14 @@ class CraftView(discord.ui.View):
 
 # --- [2] 지역별 제작품 목록 뷰 ---
 class RegionCraftView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, region_name):
+    def __init__(self, author, user_data, save_func, region_name):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.region_name = region_name
         self.page = 0
         self.PER_PAGE = 7 
-        
-        self.user_data = self.all_data.get(str(self.author.id))
         self.update_components()
 
     async def reload_data(self):
@@ -199,13 +190,11 @@ class RegionCraftView(discord.ui.View):
         key = interaction.data['values'][0]
         if key == "none": return
 
-        self.user_data = self.all_data.get(str(self.author.id))
-
         info = CRAFT_RECIPES.get(key)
         if not info:
             return await interaction.response.send_message("❌ 레시피 정보를 찾을 수 없습니다.", ephemeral=True)
         
-        view = CraftAmountView(self.author, self.user_data, self.all_data, self.save_func, key, info, self)
+        view = CraftAmountView(self.author, self.user_data, self.save_func, key, info, self)
         
         req_text = []
         inv = self.user_data.get("inventory", {})
@@ -226,18 +215,18 @@ class RegionCraftView(discord.ui.View):
 
     async def prev_page(self, i): 
         if i.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
-        self.page-=1; self.update_components(); await i.response.edit_message(view=self)
+        await self.reload_data()
+        self.page-=1; self.update_components(); await i.edit_original_response(view=self)
         
     async def next_page(self, i): 
         if i.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
-        self.page+=1; self.update_components(); await i.response.edit_message(view=self)
+        await self.reload_data()
+        self.page+=1; self.update_components(); await i.edit_original_response(view=self)
     
     async def go_back(self, interaction):
         if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
-        view = CraftView(self.author, self.user_data, self.all_data, self.save_func)
+        await self.reload_data()
+        view = CraftView(self.author, self.user_data, self.save_func)
         await interaction.response.edit_message(content="🔨 제작소 메인", embed=None, view=view)
 
     async def exit_process(self, interaction):
@@ -247,11 +236,10 @@ class RegionCraftView(discord.ui.View):
 
 # --- [3] 수량 선택 뷰 ---
 class CraftAmountView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, recipe_key, recipe_info, parent_view):
+    def __init__(self, author, user_data, save_func, recipe_key, recipe_info, parent_view):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.key = recipe_key
         self.info = recipe_info
@@ -334,11 +322,10 @@ class CraftAmountView(discord.ui.View):
 
 # --- 상자깡 뷰 ---
 class BoxOpenView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, parent_view):
+    def __init__(self, author, user_data, save_func, parent_view):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.parent_view = parent_view
         self.update_buttons()
@@ -348,7 +335,7 @@ class BoxOpenView(discord.ui.View):
     
     def update_buttons(self):
         self.clear_items()
-        box_types = [("낡은 보물상자", "낡은 열쇠"), ("섬세한 보물상자", "낡은 열쇠"), ("깔끔한 보물상자", "깔끔한 열쇠")]
+        box_types = [("낡은 보물상자", "낡은 열쇠"), ("섬세한 보물상자", "섬세한 열쇠"), ("깔끔한 보물상자", "깔끔한 열쇠")]
         inv = self.user_data.get("inventory", {})
         
         for box, key in box_types:
@@ -374,14 +361,14 @@ class BoxOpenView(discord.ui.View):
             if inv.get(box_name, 0) <= 0: return await interaction.response.send_message(f"❌ {box_name} 없음", ephemeral=True)
             if inv.get(key_name, 0) <= 0: return await interaction.response.send_message(f"❌ {key_name} 필요", ephemeral=True)
             
-            view = BoxAmountView(self.author, self.user_data, self.all_data, self.save_func, box_name, key_name, self)
+            view = BoxAmountView(self.author, self.user_data, self.save_func, box_name, key_name, self)
             await interaction.response.edit_message(content=f"🗝️ **{box_name}** 개봉", embed=None, view=view)
         return callback
 
 class BoxAmountView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, box_name, key_name, parent_view):
+    def __init__(self, author, user_data, save_func, box_name, key_name, parent_view):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         self.box, self.key = box_name, key_name
         self.parent_view = parent_view
         
@@ -451,7 +438,7 @@ class BoxAmountView(discord.ui.View):
         await self.save_func(self.author.id, self.user_data)
         
         # [신규] 상자 개봉 퀘스트 업데이트
-        await update_quest_progress(interaction.user.id, self.all_data, self.save_func, "open_box", count)
+        await update_quest_progress(interaction.user.id, self.user_data, self.save_func, "open_box", count)
         
         res_desc = f"💰 **{total_money:,}원** 획득!"
         if rewards:

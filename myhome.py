@@ -51,14 +51,21 @@ LIMITED_CATEGORIES = {
 }
 
 class MyHomeView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.page = 0
         self.update_components()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.author:
+            await interaction.response.send_message("❌ 본인의 마이홈만 관리할 수 있습니다.", ephemeral=True)
+            return False
+        await interaction.response.defer() # defer_update() -> defer()
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
+        return True
 
     def update_components(self):
         self.clear_items()
@@ -120,18 +127,12 @@ class MyHomeView(discord.ui.View):
     async def prev_page(self, interaction: discord.Interaction):
         self.page -= 1
         self.update_components()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
     async def next_page(self, interaction: discord.Interaction):
         self.page += 1
         self.update_components()
-        await interaction.response.edit_message(view=self)
-
-    async def interaction_check(self, interaction: discord.Interaction):
-        if interaction.user != self.author:
-            await interaction.response.send_message("❌ 본인의 마이홈만 관리할 수 있습니다.", ephemeral=True)
-            return False
-        return True
+        await interaction.edit_original_response(view=self)
 
     async def construct_callback(self, interaction: discord.Interaction):
         level = self.user_data.get("myhome", {}).get("construction_step", 0)
@@ -139,12 +140,12 @@ class MyHomeView(discord.ui.View):
         
         # 자원 체크
         if self.user_data.get("pt", 0) < req["pt"] or self.user_data.get("money", 0) < req["money"]:
-            return await interaction.response.edit_message(content="❌ 포인트나 머니가 부족합니다.", embed=self.get_embed(), view=self)
+            return await interaction.edit_original_response(content="❌ 포인트나 머니가 부족합니다.", embed=self.get_embed(), view=self)
         
         inv = self.user_data.get("inventory", {})
         for item, count in req["items"].items():
             if inv.get(item, 0) < count:
-                return await interaction.response.edit_message(content=f"❌ 재료가 부족합니다: {item} ({inv.get(item, 0)}/{count})", embed=self.get_embed(), view=self)
+                return await interaction.edit_original_response(content=f"❌ 재료가 부족합니다: {item} ({inv.get(item, 0)}/{count})", embed=self.get_embed(), view=self)
 
         # 자원 차감
         self.user_data["pt"] -= req["pt"]
@@ -165,33 +166,33 @@ class MyHomeView(discord.ui.View):
         if new_level == 2: # 작업실 해금 시, workshop_level 설정
             myhome_data["workshop_level"] = 1
             
-        await self.save_func(self.all_data) # save_func는 wrapper이므로 all_data를 넘겨도 무방
+        await self.save_func(self.author.id, self.user_data)
         self.update_components()
-        await interaction.response.edit_message(content=f"🎉 마이홈 증축 완료! ({new_level}레벨)", embed=self.get_embed(), view=self)
+        await interaction.edit_original_response(content=f"🎉 마이홈 증축 완료! ({new_level}레벨)", embed=self.get_embed(), view=self)
 
     async def maintenance_callback(self, interaction: discord.Interaction):
-        view = CharacterMaintenanceView(self.author, self.user_data, self.all_data, self.save_func, self)
-        await interaction.response.edit_message(content="캐릭터 정비 메뉴입니다.", embed=None, view=view)
+        view = CharacterMaintenanceView(self.author, self.user_data, self.save_func, self)
+        await interaction.edit_original_response(content="캐릭터 정비 메뉴입니다.", embed=None, view=view)
 
     async def garden_callback(self, interaction: discord.Interaction):
-        view = GardenView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(embed=view.get_embed(), view=view)
+        view = GardenView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
     async def workshop_callback(self, interaction: discord.Interaction):
-        view = WorkshopView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(embed=view.get_embed(), view=view)
+        view = WorkshopView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
     async def fishing_callback(self, interaction: discord.Interaction):
-        view = FishingView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(embed=view.get_embed(), view=view)
+        view = FishingView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
     async def recruit_callback(self, interaction: discord.Interaction):
         async def back_cb(i):
-            view = MyHomeView(self.author, self.user_data, self.all_data, self.save_func)
-            await i.response.edit_message(content=None, embed=view.get_embed(), view=view)
-        view = RecruitSelectView(self.author, self.user_data, self.all_data, self.save_func, back_cb)
+            view = MyHomeView(self.author, self.user_data, self.save_func)
+            await i.edit_original_response(content=None, embed=view.get_embed(), view=view)
+        view = RecruitSelectView(self.author, self.user_data, self.save_func, back_cb)
         embed = discord.Embed(title="🕵️ 영입소", description="함께할 동료를 찾아보세요.", color=discord.Color.blue())
-        await interaction.response.edit_message(content=None, embed=embed, view=view)
+        await interaction.edit_original_response(content=None, embed=embed, view=view)
 
     async def dispatch_callback(self, interaction: discord.Interaction):
         unlocked = self.user_data.get("unlocked_regions", ["기원의 쌍성"])
@@ -207,12 +208,12 @@ class MyHomeView(discord.ui.View):
         
         async def select_cb(i: discord.Interaction):
             region = i.data['values'][0]
-            view = DispatchView(self.author, self.user_data, self.all_data, self.save_func, region)
+            view = DispatchView(self.author, self.user_data, self.save_func, region)
             await i.response.edit_message(content=f"🚀 **{region}** 파견 설정을 선택하세요.", view=view, embed=None)
 
         select.callback = select_cb
         view = discord.ui.View(); view.add_item(select)
-        await interaction.response.send_message("🚀 원격 파견지를 선택하세요.", view=view, ephemeral=True)
+        await interaction.followup.send("🚀 원격 파견지를 선택하세요.", view=view, ephemeral=True)
 
     async def rest_callback(self, interaction: discord.Interaction):
         recovered_count = 0
@@ -234,8 +235,8 @@ class MyHomeView(discord.ui.View):
             characters[i] = char.to_dict()
             recovered_count += 1
             
-        await self.save_func(self.all_data)
-        await interaction.response.edit_message(content=f"🛏️ **휴식 완료!**\n모든 캐릭터({recovered_count}명)의 체력과 정신력이 완전히 회복되었습니다.", embed=self.get_embed(), view=self)
+        await self.save_func(self.author.id, self.user_data)
+        await interaction.edit_original_response(content=f"🛏️ **휴식 완료!**\n모든 캐릭터({recovered_count}명)의 체력과 정신력이 완전히 회복되었습니다.", embed=self.get_embed(), view=self)
 
     def get_embed(self):
         level = self.user_data.get("myhome", {}).get("construction_step", 0)
@@ -257,24 +258,29 @@ class MyHomeView(discord.ui.View):
         return embed
 
 class DispatchView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, region):
+    def __init__(self, author, user_data, save_func, region):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.region = region
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.author: return False
+        await interaction.response.defer()
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
+        return True
 
     async def run_dispatch(self, interaction, count):
         region_info = REGIONS.get(self.region)
         if not region_info:
-            return await interaction.response.edit_message(content="❌ 지역 데이터 오류.", view=self)
+            return await interaction.edit_original_response(content="❌ 지역 데이터 오류.", view=self)
 
         energy_cost = region_info.get("energy_cost", 2)
         total_cost = count * (energy_cost * 2)
 
         if self.user_data.get("pt", 0) < total_cost:
-            return await interaction.response.edit_message(content=f"❌ 포인트가 부족합니다. ({total_cost}pt 필요)", view=self)
+            return await interaction.edit_original_response(content=f"❌ 포인트가 부족합니다. ({total_cost}pt 필요)", view=self)
         
         self.user_data["pt"] -= total_cost
         acquired = {}
@@ -308,15 +314,15 @@ class DispatchView(discord.ui.View):
             inv[k] = inv.get(k, 0) + v
             
         myhome = self.user_data.setdefault("myhome", {})
-        myhome["total_investigations"] = myhome.get("total_investigations", 0) + count
+        myhome["total_investigations"] = myhome.get("total_investigations", 0) + (count * 10)
         
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         res_text = "\n".join([f"{k} x{v}" for k, v in acquired.items()])
         if not res_text: res_text = "획득한 아이템이 없습니다."
         embed = discord.Embed(title=f"🚀 {self.region} 파견 완료 ({count}회)", color=discord.Color.blue())
         embed.description = f"**소모 포인트:** {total_cost}pt\n\n**[획득 결과]**\n{res_text}"
-        await interaction.response.edit_message(content=None, embed=embed, view=None)
+        await interaction.edit_original_response(content=None, embed=embed, view=None)
 
     @discord.ui.button(label="10회 파견", style=discord.ButtonStyle.primary)
     async def d10(self, i, b): await self.run_dispatch(i, 10)
@@ -333,16 +339,15 @@ async def open_myhome(ctx, load_func, save_func):
     async def save_wrapper(data_ignored):
         await save_func(ctx.author.id, user_data)
     
-    view = MyHomeView(ctx.author, user_data, None, save_wrapper)
+    view = MyHomeView(ctx.author, user_data, save_wrapper)
     await ctx.send(embed=view.get_embed(), view=view)
 
 class SetInvestigatorView(discord.ui.View):
     """조사 전담 요원을 설정하는 뷰"""
-    def __init__(self, author, user_data, all_data, save_func, parent_view):
+    def __init__(self, author, user_data, save_func, parent_view):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.parent_view = parent_view
         
@@ -374,26 +379,27 @@ class SetInvestigatorView(discord.ui.View):
 
     async def select_callback(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
+        await interaction.response.defer()
         idx = int(interaction.data['values'][0])
         self.user_data["investigator_index"] = idx
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         char_name = self.user_data["characters"][idx]["name"]
-        await interaction.response.edit_message(content=f"✅ 조사 담당이 **[{char_name}]**(으)로 변경되었습니다.", embed=None, view=self.parent_view)
+        await interaction.edit_original_response(content=f"✅ 조사 담당이 **[{char_name}]**(으)로 변경되었습니다.", embed=None, view=self.parent_view)
 
     async def go_back(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
-        await interaction.response.edit_message(content="캐릭터 정비 메뉴입니다.", embed=None, view=self.parent_view)
+        await interaction.response.defer()
+        await interaction.edit_original_response(content="캐릭터 정비 메뉴입니다.", embed=None, view=self.parent_view)
 
 # --- 캐릭터 정비 관련 뷰 ---
 
 class CharacterSelectViewForCards(discord.ui.View):
     """카드 관리를 위해 캐릭터를 선택하는 뷰 (main.py에서 복사)"""
-    def __init__(self, author, user_data, all_data, save_func, parent_view):
+    def __init__(self, author, user_data, save_func, parent_view):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.parent_view = parent_view
         self.page = 0
@@ -445,39 +451,42 @@ class CharacterSelectViewForCards(discord.ui.View):
 
     async def prev_page(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
+        await interaction.response.defer()
         self.page -= 1
         self.update_view()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
     async def next_page(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
+        await interaction.response.defer()
         self.page += 1
         self.update_view()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
     async def select_callback(self, interaction: discord.Interaction):
         if interaction.user != self.author: return
+        await interaction.response.defer()
         char_index = int(interaction.data['values'][0])
         
-        view = CardManageView(self.author, self.user_data, self.all_data, self.save_func, char_index=char_index)
-        await interaction.response.edit_message(
+        view = CardManageView(self.author, self.user_data, self.save_func, char_index=char_index)
+        await interaction.edit_original_response(
             content=f"🎴 **[{view.char.name}]** 덱 구성 중...", 
             embed=view.create_embed(), 
             view=view
         )
     
     async def go_back(self, interaction: discord.Interaction):
-        self.parent_view.all_data = self.all_data
+        if interaction.user != self.author: return
         self.parent_view.user_data = self.user_data
-        await interaction.response.edit_message(content="캐릭터 정비 메뉴입니다.", embed=None, view=self.parent_view)
+        await interaction.response.defer()
+        await interaction.edit_original_response(content="캐릭터 정비 메뉴입니다.", embed=None, view=self.parent_view)
 
 class CharacterMaintenanceView(discord.ui.View):
     """캐릭터 정비 메인 메뉴 뷰"""
-    def __init__(self, author, user_data, all_data, save_func, parent_view):
+    def __init__(self, author, user_data, save_func, parent_view):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.parent_view = parent_view
 
@@ -491,6 +500,7 @@ class CharacterMaintenanceView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user != self.author: return False
+        await interaction.response.defer()
         cid = interaction.data.get("custom_id")
 
         # 데이터 리로드 (DB 사용)
@@ -498,28 +508,28 @@ class CharacterMaintenanceView(discord.ui.View):
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
 
         if cid == "use_item":
-            view = ItemUseView(self.author, self.user_data, self.all_data, self.save_func)
-            await interaction.response.edit_message(content="사용할 아이템을 선택하세요.", embed=None, view=view)
+            view = ItemUseView(self.author, self.user_data, self.save_func)
+            await interaction.edit_original_response(content="사용할 아이템을 선택하세요.", embed=None, view=view)
 
         elif cid == "manage_cards":
-            view = CharacterSelectViewForCards(self.author, self.user_data, self.all_data, self.save_func, self)
-            await interaction.response.edit_message(content="카드를 관리할 캐릭터를 선택하세요.", embed=None, view=view)
+            view = CharacterSelectViewForCards(self.author, self.user_data, self.save_func, self)
+            await interaction.edit_original_response(content="카드를 관리할 캐릭터를 선택하세요.", embed=None, view=view)
 
         elif cid == "manage_artifacts":
             if ArtifactManageView:
-                view = ArtifactManageView(self.author, self.user_data, self.all_data, self.save_func)
+                view = ArtifactManageView(self.author, self.user_data, self.save_func)
                 embed = view.make_base_embed("💍 아티팩트 관리", "아티팩트를 장착/분해/강화합니다.")
-                await interaction.response.edit_message(content=None, embed=embed, view=view)
+                await interaction.edit_original_response(content=None, embed=embed, view=view)
 
         elif cid == "set_investigator":
-            view = SetInvestigatorView(self.author, self.user_data, self.all_data, self.save_func, self)
-            await interaction.response.edit_message(content="조사를 담당할 요원을 선택하세요.", embed=None, view=view)
+            view = SetInvestigatorView(self.author, self.user_data, self.save_func, self)
+            await interaction.edit_original_response(content="조사를 담당할 요원을 선택하세요.", embed=None, view=view)
 
         elif cid == "back_to_myhome":
-            self.parent_view.all_data = self.all_data
             self.parent_view.user_data = self.user_data
             self.parent_view.page = 0 # 페이지 초기화
             self.parent_view.update_components()
-            await interaction.response.edit_message(content=None, embed=self.parent_view.get_embed(), view=self.parent_view)
+            await interaction.edit_original_response(content=None, embed=self.parent_view.get_embed(), view=self.parent_view)
         
-        return True
+        # 모든 상호작용을 이 함수 내에서 처리했으므로 False를 반환하여 추가 콜백 실행을 막습니다.
+        return False

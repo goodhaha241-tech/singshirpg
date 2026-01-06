@@ -3,6 +3,7 @@ import discord
 import random
 import asyncio
 from items import COMMON_ITEMS, RARE_ITEMS
+from decorators import auto_defer
 
 # --- 물고기 등급 데이터 ---
 FISH_TIERS = {
@@ -53,11 +54,10 @@ FISHING_SCENES = {
 }
 
 class FishingView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.page = 0
         
@@ -100,11 +100,12 @@ class FishingView(discord.ui.View):
             fish_name = slot["fish"]
             prog = total_invest - slot["start_count"]
             req = 50
+            remaining = max(0, req - prog)
             
             if prog >= req:
                 state = f"✅ **{fish_name}** 해체 완료! (수령 가능)"
             else:
-                state = f"🔪 {fish_name} 해체 중... ({prog}/{req})"
+                state = f"🔪 {fish_name} 해체 중...\n   ┕ 진행: **{prog}/{req}** 턴 (남은: **{remaining}**턴)"
             slots_desc += f"**[{i+1}]** {state}\n"
             
         if not slots_desc: slots_desc = "해체 중인 물고기가 없습니다."
@@ -149,6 +150,7 @@ class FishingView(discord.ui.View):
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
+        await i.response.defer()
         cid = i.data["custom_id"]
         
         if cid == "fish_start": await self.start_fishing(i)
@@ -161,24 +163,24 @@ class FishingView(discord.ui.View):
         elif cid == "prev_page":
             self.page -= 1
             self.update_components()
-            await i.response.edit_message(view=self)
+            await i.edit_original_response(view=self)
         elif cid == "next_page":
             self.page += 1
             self.update_components()
-            await i.response.edit_message(view=self)
+            await i.edit_original_response(view=self)
         return True
 
     async def start_fishing(self, i):
-        view = FishingGameView(self.author, self.user_data, self.all_data, self.save_func)
-        await i.response.edit_message(content=None, embed=view.get_embed(), view=view)
+        view = FishingGameView(self.author, self.user_data, self.save_func)
+        await i.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
     async def dismantle_menu(self, i):
         slots = self.fishing_data["dismantle_slots"]
         max_s = self.fishing_data.get("max_dismantle_slots", 3)
         if len(slots) >= max_s:
-            return await i.response.edit_message(content="❌ 해체 작업대가 가득 찼습니다.", embed=self.get_embed(), view=self)
-        view = FishSelectView(self.author, self.user_data, self.all_data, self.save_func, self)
-        await i.response.edit_message(embed=view.get_embed(), view=view)
+            return await i.edit_original_response(content="❌ 해체 작업대가 가득 찼습니다.", embed=self.get_embed(), view=self)
+        view = FishSelectView(self.author, self.user_data, self.save_func, self)
+        await i.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
     async def claim_rewards(self, i):
         slots = self.fishing_data["dismantle_slots"]
@@ -187,7 +189,7 @@ class FishingView(discord.ui.View):
         completed_idx = [idx for idx, s in enumerate(slots) if total_invest - s["start_count"] >= 50]
         
         if not completed_idx:
-            return await i.response.edit_message(content="❌ 완료된 작업이 없습니다. (조사 50회 필요)", embed=self.get_embed(), view=self)
+            return await i.edit_original_response(content="❌ 완료된 작업이 없습니다. (조사 성공 50턴 필요)", embed=self.get_embed(), view=self)
         
         msg = "🎁 **해체 완료 보상**\n"
         inv = self.user_data.setdefault("inventory", {})
@@ -255,65 +257,64 @@ class FishingView(discord.ui.View):
         # DB의 fishing_slots와 동기화를 위해 myhome['fishing_slots']에도 반영 필요 시 로직 추가
         # 여기서는 fishing_data가 myhome['fishing']을 참조하고 있다고 가정
         await self.save_func(self.author.id, self.user_data)
-        await i.response.edit_message(content=msg, embed=self.get_embed(), view=self)
+        await i.edit_original_response(content=msg, embed=self.get_embed(), view=self)
 
     async def upgrade_rod(self, i):
         rod = self.fishing_data["rod"]
         inv = self.user_data.get("inventory", {})
         
-        if rod >= 2: return await i.response.edit_message(content="❌ 이미 최고 등급입니다.", embed=self.get_embed(), view=self)
+        if rod >= 2: return await i.edit_original_response(content="❌ 이미 최고 등급입니다.", embed=self.get_embed(), view=self)
         
         if rod == 0: 
             if inv.get("부서진 스틱", 0) < 30 or inv.get("나뭇가지", 0) < 10:
-                return await i.response.edit_message(content="❌ 재료 부족 (부서진 스틱 30, 나뭇가지 10)", embed=self.get_embed(), view=self)
+                return await i.edit_original_response(content="❌ 재료 부족 (부서진 스틱 30, 나뭇가지 10)", embed=self.get_embed(), view=self)
             inv["부서진 스틱"] -= 30; inv["나뭇가지"] -= 10
             self.fishing_data["rod"] = 1
         elif rod == 1:
             if inv.get("부서진 스틱", 0) < 100 or inv.get("나뭇가지", 0) < 100:
-                return await i.response.edit_message(content="❌ 재료 부족 (부서진 스틱 100, 나뭇가지 100)", embed=self.get_embed(), view=self)
+                return await i.edit_original_response(content="❌ 재료 부족 (부서진 스틱 100, 나뭇가지 100)", embed=self.get_embed(), view=self)
             inv["부서진 스틱"] -= 100; inv["나뭇가지"] -= 100
             self.fishing_data["rod"] = 2
             
         # [수정] await 추가 및 인자 전달 수정
         await self.save_func(self.author.id, self.user_data)
-        await i.response.edit_message(content="🎉 낚싯대 강화 성공!", embed=self.get_embed(), view=self)
+        await i.edit_original_response(content="🎉 낚싯대 강화 성공!", embed=self.get_embed(), view=self)
 
     async def upgrade_spot(self, i):
         spot = self.fishing_data["spot_level"]
-        if spot >= 3: return await i.response.edit_message(content="❌ 낚시터가 최대 레벨입니다.", embed=self.get_embed(), view=self)
+        if spot >= 3: return await i.edit_original_response(content="❌ 낚시터가 최대 레벨입니다.", embed=self.get_embed(), view=self)
         if self.user_data.get("money", 0) < 300000 or self.user_data.get("pt", 0) < 5000:
-            return await i.response.edit_message(content="❌ 비용 부족 (300,000원 + 5,000pt)", embed=self.get_embed(), view=self)
+            return await i.edit_original_response(content="❌ 비용 부족 (300,000원 + 5,000pt)", embed=self.get_embed(), view=self)
         
         self.user_data["money"] -= 300000; self.user_data["pt"] -= 5000
         self.fishing_data["spot_level"] += 1
         # [수정] await 추가 및 인자 전달 수정
         await self.save_func(self.author.id, self.user_data)
-        await i.response.edit_message(content="🎉 낚시터 강화 성공!", embed=self.get_embed(), view=self)
+        await i.edit_original_response(content="🎉 낚시터 강화 성공!", embed=self.get_embed(), view=self)
 
     async def expand_slots(self, i):
         cur = self.fishing_data.get("max_dismantle_slots", 3)
-        if cur >= 5: return await i.response.edit_message(content="❌ 최대 확장 상태입니다.", embed=self.get_embed(), view=self)
-        if self.user_data.get("money", 0) < 50000: return await i.response.edit_message(content="❌ 비용 부족 (50,000원)", embed=self.get_embed(), view=self)
+        if cur >= 5: return await i.edit_original_response(content="❌ 최대 확장 상태입니다.", embed=self.get_embed(), view=self)
+        if self.user_data.get("money", 0) < 50000: return await i.edit_original_response(content="❌ 비용 부족 (50,000원)", embed=self.get_embed(), view=self)
         
         self.user_data["money"] -= 50000
         self.fishing_data["max_dismantle_slots"] = cur + 1
         # [수정] await 추가 및 인자 전달 수정
         await self.save_func(self.author.id, self.user_data)
-        await i.response.edit_message(content="🏗️ 작업대 확장 완료!", embed=self.get_embed(), view=self)
+        await i.edit_original_response(content="🏗️ 작업대 확장 완료!", embed=self.get_embed(), view=self)
 
     async def go_home(self, interaction):
         # [수정] 순환 참조 방지를 위해 내부 import
         from myhome import MyHomeView
-        view = MyHomeView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(content="🏠 마이홈으로 이동했습니다.", embed=view.get_embed(), view=view)
+        view = MyHomeView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(content="🏠 마이홈으로 이동했습니다.", embed=view.get_embed(), view=view)
 
 
 class FishingGameView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         
         self.stage = 0
@@ -348,9 +349,8 @@ class FishingGameView(discord.ui.View):
         return embed
 
     @discord.ui.button(label="🎣 낚는다!", style=discord.ButtonStyle.danger)
+    @auto_defer()
     async def pull(self, i, b):
-        if i.user != self.author: return
-        
         success_prob = FISHING_STAGES[self.stage]["prob"]
         roll = random.randint(1, 100)
         
@@ -360,14 +360,13 @@ class FishingGameView(discord.ui.View):
             if self.protection > 0:
                 self.protection -= 1
                 self.log = "⚠️ 물고기가 미끼를 뱉으려 했지만, 전설의 낚싯대가 붙잡았습니다!"
-                await i.response.edit_message(embed=self.get_embed(), view=self)
+                await i.edit_original_response(embed=self.get_embed(), view=self)
             else:
                 await self.fail_fishing(i, "❌ **낚시 실패...** 물고기가 도망갔습니다.")
 
     @discord.ui.button(label="⏳ 기다린다", style=discord.ButtonStyle.primary)
+    @auto_defer()
     async def wait_btn(self, i, b):
-        if i.user != self.author: return
-        
         fail_base = 10
         fail_prob = max(0, fail_base - (self.spot_lvl * 2))
         next_prob = 50
@@ -378,7 +377,7 @@ class FishingGameView(discord.ui.View):
             if self.protection > 0:
                 self.protection -= 1
                 self.log = "⚠️ 물고기가 눈치채고 도망가려 했지만, 전설의 낚싯대가 막았습니다!"
-                await i.response.edit_message(embed=self.get_embed(), view=self)
+                await i.edit_original_response(embed=self.get_embed(), view=self)
             else:
                 await self.fail_fishing(i, "❌ **낚시 실패...** 너무 오래 기다려서 물고기가 도망갔습니다.")
         elif roll <= fail_prob + next_prob:
@@ -387,10 +386,10 @@ class FishingGameView(discord.ui.View):
                 self.log = "🌊 찌의 움직임이 변했습니다!"
             else:
                 self.log = "❗ 이미 최고조 상태입니다! 낚아야 합니다!"
-            await i.response.edit_message(embed=self.get_embed(), view=self)
+            await i.edit_original_response(embed=self.get_embed(), view=self)
         else:
             self.log = "...상태가 변하지 않았습니다."
-            await i.response.edit_message(embed=self.get_embed(), view=self)
+            await i.edit_original_response(embed=self.get_embed(), view=self)
 
     async def catch_fish(self, i):
         tier_roll = random.random()
@@ -418,42 +417,40 @@ class FishingGameView(discord.ui.View):
         embed.add_field(name="획득한 물고기", value=f"{emoji} **{caught}** ({type_str})", inline=False)
         embed.set_footer(text=f"현재 보유: {inv.get(caught, 0)}마리")
         
-        view = FishingResultView(self.author, self.user_data, self.all_data, self.save_func)
-        await i.response.edit_message(content=None, embed=embed, view=view)
+        view = FishingResultView(self.author, self.user_data, self.save_func)
+        await i.edit_original_response(content=None, embed=embed, view=view)
 
     async def fail_fishing(self, i, msg):
         embed = discord.Embed(title="🎣 낚시 실패", description=msg, color=discord.Color.red())
-        view = FishingResultView(self.author, self.user_data, self.all_data, self.save_func)
-        await i.response.edit_message(content=None, embed=embed, view=view)
+        view = FishingResultView(self.author, self.user_data, self.save_func)
+        await i.edit_original_response(content=None, embed=embed, view=view)
 
 
 class FishingResultView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
 
     @discord.ui.button(label="🎣 다시 낚기", style=discord.ButtonStyle.success)
+    @auto_defer()
     async def retry(self, i, b):
-        if i.user != self.author: return
-        view = FishingGameView(self.author, self.user_data, self.all_data, self.save_func)
-        await i.response.edit_message(content=None, embed=view.get_embed(), view=view)
+        view = FishingGameView(self.author, self.user_data, self.save_func)
+        await i.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
     @discord.ui.button(label="🏠 낚시터 메인", style=discord.ButtonStyle.secondary)
+    @auto_defer()
     async def home(self, i, b):
-        if i.user != self.author: return
-        view = FishingView(self.author, self.user_data, self.all_data, self.save_func)
-        await i.response.edit_message(content=None, embed=view.get_embed(), view=view)
+        view = FishingView(self.author, self.user_data, self.save_func)
+        await i.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
 
 class FishSelectView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, parent_view):
+    def __init__(self, author, user_data, save_func, parent_view):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.parent = parent_view
         self.add_select()
@@ -484,12 +481,12 @@ class FishSelectView(discord.ui.View):
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
+        await i.response.defer()
         if i.data.get("custom_id") == "back":
-            self.parent.all_data = self.all_data
             self.parent.user_data = self.user_data
             self.parent.fishing_data = self.user_data["myhome"].setdefault("fishing", {})
             self.parent.update_components()
-            await i.response.edit_message(embed=self.parent.get_embed(), view=self.parent)
+            await i.edit_original_response(embed=self.parent.get_embed(), view=self.parent)
             return True
             
         val = i.data["values"][0]
@@ -507,4 +504,4 @@ class FishSelectView(discord.ui.View):
         # [수정] await 추가 및 인자 전달 수정
         await self.save_func(self.author.id, self.user_data)
         
-        await i.response.edit_message(content=f"🔪 **{val}** 해체 작업을 시작했습니다!", embed=self.parent.get_embed(), view=self.parent)
+        await i.edit_original_response(content=f"🔪 **{val}** 해체 작업을 시작했습니다!", embed=self.parent.get_embed(), view=self.parent)

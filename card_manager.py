@@ -2,13 +2,13 @@
 import discord
 from cards import get_card
 from character import Character
+from decorators import auto_defer
 
 class CardManageView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, char_index=0):
+    def __init__(self, author, user_data, save_func, char_index=0):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.char_index = char_index
         
@@ -77,26 +77,31 @@ class CardManageView(discord.ui.View):
         
         # [신규] 상태창 복귀 처리
         if interaction.data.get("custom_id") == "back_info":
+            await interaction.response.defer()
             from info import InfoView
-            view = InfoView(self.author, self.user_data, self.all_data, self.save_func, self.char_index)
-            await interaction.response.edit_message(content=None, embed=view.create_status_embed(), view=view)
-            return True
+            # [수정] InfoView 생성자 인자 오류 수정 (all_data는 더 이상 사용되지 않음)
+            view = InfoView(self.author, self.user_data, self.save_func, self.char_index)
+            await interaction.edit_original_response(content=None, embed=view.create_status_embed(), view=view)
+            return False # 상호작용 처리 완료
             
-        return True
+        return True # 다른 콜백 실행 허용
 
+    @auto_defer()
     async def prev_page(self, interaction: discord.Interaction):
         self.page -= 1
         self.update_select_menu()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
+    @auto_defer()
     async def next_page(self, interaction: discord.Interaction):
         self.page += 1
         self.update_select_menu()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
+    @auto_defer()
     async def select_callback(self, interaction: discord.Interaction):
         card_name = interaction.data['values'][0]
-        if card_name == "none": return await interaction.response.defer()
+        if card_name == "none": return
 
         msg = ""
         if card_name in self.char.equipped_cards:
@@ -104,17 +109,17 @@ class CardManageView(discord.ui.View):
             msg = f"✅ **{card_name}** 해제 완료."
         else:
             if len(self.char.equipped_cards) >= self.char.card_slots:
-                return await interaction.response.send_message(f"❌ 슬롯 부족! (최대 {self.char.card_slots}장)", ephemeral=True)
+                return await interaction.followup.send(f"❌ 슬롯 부족! (최대 {self.char.card_slots}장)", ephemeral=True)
             self.char.equipped_cards.append(card_name)
             msg = f"⚔️ **{card_name}** 장착 완료."
 
         if "characters" in self.user_data:
             self.user_data["characters"][self.char_index] = self.char.to_dict()
         
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         self.update_select_menu()
-        await interaction.response.edit_message(content=msg, embed=self.create_embed(), view=self)
+        await interaction.edit_original_response(content=msg, embed=self.create_embed(), view=self)
 
     def create_embed(self):
         embed = discord.Embed(title=f"🃏 {self.char.name}의 카드 설정", color=discord.Color.blue())

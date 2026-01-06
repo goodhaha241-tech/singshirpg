@@ -16,7 +16,7 @@ elif sys.stdout and hasattr(sys.stdout, 'detach'):
     try:
         sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding = 'utf-8')
         sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding = 'utf-8')
-    except Exception:
+    except Exception as e:
         pass
 
 # 하위 폴더 모듈 경로 추가
@@ -44,9 +44,52 @@ logger = logging.getLogger("Main")
 # -------------------------------------------------------------------------
 # 3. 봇 초기화
 # -------------------------------------------------------------------------
+class MyBot(commands.Bot):
+    async def setup_hook(self):
+        """봇 시작 시 초기 설정을 수행합니다. (on_ready보다 먼저 실행됨)"""
+        # 1. 확장 로드
+        try:
+            if "rpg_commands" not in self.extensions:
+                await self.load_extension("rpg_commands")
+            logger.info("✅ rpg_commands 확장 로드 완료")
+        except Exception as e:
+            logger.error(f"❌ 확장 로드 실패: {e}")
+        
+        # 2. 파일 감시 태스크 시작
+        self.loop.create_task(watch_files())
+
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = MyBot(command_prefix="!", intents=intents)
+
+async def watch_files():
+    """파일 변경을 감지하여 봇을 자동으로 재시작합니다."""
+    watched_extensions = ('.py', '.sql')
+    files_mtime = {}
+
+    def get_watched_files():
+        for root, _, files in os.walk(current_dir):
+            for file in files:
+                if file.endswith(watched_extensions):
+                    yield os.path.join(root, file)
+
+    # 초기 상태 기록
+    for path in get_watched_files():
+        try:
+            files_mtime[path] = os.path.getmtime(path)
+        except OSError as e:
+            logger.warning(f"파일 '{path}'의 수정 시간을 가져올 수 없습니다: {e}")
+
+    while True:
+        await asyncio.sleep(2)  # 2초 간격으로 체크
+        for path in get_watched_files():
+            try:
+                current_mtime = os.path.getmtime(path)
+                if path not in files_mtime or current_mtime > files_mtime[path]:
+                    logger.info(f"🔄 파일 변경 감지됨 ({os.path.basename(path)}). 봇을 재시작합니다...")
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+            except OSError as e:
+                logger.warning(f"파일 '{path}' 감지 중 오류 발생: {e}")
 
 @bot.event
 async def on_ready():
@@ -60,15 +103,17 @@ async def on_ready():
     except Exception as e:
         logger.error(f"❌ 데이터베이스 연결 실패: {e}")
 
-    # 2. 명령어 파일(Extension) 로드 및 동기화
-    try:
-        await bot.load_extension("rpg_commands")
-        synced = await bot.tree.sync()
-        logger.info(f"✅ {len(synced)}개의 슬래시 커맨드 동기화 완료")
-    except Exception as e:
-        logger.error(f"❌ 커맨드 로드/동기화 실패: {e}")
-
     print("🤖 봇이 성공적으로 실행되었습니다! (준비 완료)")
+
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync_commands(ctx):
+    """슬래시 커맨드를 수동으로 동기화합니다. (봇 소유자 전용)"""
+    try:
+        synced = await bot.tree.sync()
+        await ctx.send(f"✅ {len(synced)}개의 슬래시 커맨드가 동기화되었습니다.")
+    except Exception as e:
+        await ctx.send(f"❌ 동기화 실패: {e}")
 
 # -------------------------------------------------------------------------
 # 4. 실행

@@ -49,62 +49,75 @@ async def check_schema(pool):
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             # users 테이블이 있는지 확인
-            try:
-                await cur.execute("SELECT 1 FROM users LIMIT 1")
-            except Exception:
-                logger.info("테이블이 없어 schema.sql을 실행합니다...")
-                with open("schema.sql", "r", encoding="utf-8") as f:
-                    sql = f.read()
-                # 세미콜론으로 구문 분리하여 실행
-                for stmt in sql.split(';'):
-                    if stmt.strip() and not stmt.upper().startswith(("CREATE DATABASE", "USE")):
-                        try: await cur.execute(stmt)
-                        except: pass
+            await cur.execute("SHOW TABLES LIKE 'users'")
+            if not await cur.fetchone():
+                logger.info("기본 테이블이 없어 schema.sql을 실행합니다...")
+                if os.path.exists("schema.sql"):
+                    with open("schema.sql", "r", encoding="utf-8") as f:
+                        sql = f.read()
+                    for stmt in sql.split(';'):
+                        if stmt.strip() and not stmt.upper().startswith(("CREATE DATABASE", "USE")):
+                            try: await cur.execute(stmt)
+                            except: continue
             
-            # users 테이블에 main_quest_progress 컬럼이 없는 구버전 스키마 호환
-            try:
-                await cur.execute("SELECT main_quest_progress FROM users LIMIT 1")
-            except Exception:
-                logger.warning("⚠️ 'users' 테이블에 'main_quest_progress' 컬럼이 없어 추가합니다.")
-                try:
-                    await cur.execute("ALTER TABLE users ADD COLUMN main_quest_progress JSON")
-                except Exception as e:
-                    logger.error(f"컬럼 추가 실패: {e}")
+            # 컬럼 존재 여부 일괄 확인 및 추가 (성능 최적화)
+            # 1. users 테이블
+            await cur.execute("DESCRIBE users")
+            u_cols = [r[0] for r in await cur.fetchall()]
             
-            # artifacts 테이블에 equipped_char_index 컬럼이 없는 구버전 스키마 호환
-            try:
-                await cur.execute("SELECT equipped_char_index FROM artifacts LIMIT 1")
-            except Exception:
-                logger.warning("⚠️ 'artifacts' 테이블에 'equipped_char_index' 컬럼이 없어 추가합니다.")
-                try:
-                    await cur.execute("ALTER TABLE artifacts ADD COLUMN equipped_char_index INT DEFAULT -1")
-                except Exception as e:
-                    logger.error(f"컬럼 추가 실패: {e}")
-            
-            # garden_slots 테이블에 plant_name 컬럼이 없는 구버전 스키마 호환
-            try:
-                await cur.execute("SELECT plant_name FROM garden_slots LIMIT 1")
-            except Exception:
-                logger.warning("⚠️ 'garden_slots' 테이블에 'plant_name' 컬럼이 없어 추가합니다.")
-                try:
-                    await cur.execute("ALTER TABLE garden_slots ADD COLUMN plant_name VARCHAR(100)")
-                except Exception as e:
-                    logger.error(f"컬럼 추가 실패: {e}")
+            updates = [
+                ("main_quest_progress", "JSON"),
+                ("total_investigations", "BIGINT DEFAULT 0"),
+                ("water_can", "INT DEFAULT 0"),
+                ("fishing_rod", "INT DEFAULT 0"),
+                ("fishing_spot_level", "INT DEFAULT 0"),
+                ("fishing_max_slots", "INT DEFAULT 3")
+            ]
+            for col, col_type in updates:
+                if col not in u_cols:
+                    logger.warning(f"⚠️ 'users' 테이블에 '{col}' 컬럼 추가 중...")
+                    await cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
 
-            # users 테이블에 total_investigations 컬럼이 없는 구버전 스키마 호환
+            # 2. artifacts 테이블
+            await cur.execute("DESCRIBE artifacts")
+            a_cols = [r[0] for r in await cur.fetchall()]
+            if "equipped_char_index" not in a_cols:
+                await cur.execute("ALTER TABLE artifacts ADD COLUMN equipped_char_index INT DEFAULT -1")
+
+            # 3. garden_slots 테이블
+            await cur.execute("DESCRIBE garden_slots")
+            g_cols = [r[0] for r in await cur.fetchall()]
+            if "plant_name" not in g_cols:
+                await cur.execute("ALTER TABLE garden_slots ADD COLUMN plant_name VARCHAR(100)")
+            if "fertilizer" not in g_cols:
+                await cur.execute("ALTER TABLE garden_slots ADD COLUMN fertilizer VARCHAR(100)")
+
+            # users 테이블의 total_subjugations 컬럼을 BIGINT로 확장
             try:
-                await cur.execute("SELECT total_investigations FROM users LIMIT 1")
-            except Exception:
-                logger.warning("⚠️ 'users' 테이블에 'total_investigations' 컬럼이 없어 추가합니다.")
-                try:
-                    await cur.execute("ALTER TABLE users ADD COLUMN total_investigations INT DEFAULT 0")
-                except Exception as e:
-                    logger.error(f"컬럼 추가 실패: {e}")
+                await cur.execute("ALTER TABLE users MODIFY COLUMN total_subjugations BIGINT DEFAULT 0")
+            except Exception as e:
+                # 이미 BIGINT이거나 컬럼이 없는 경우 등 예외 처리
+                logger.warning(f"⚠️ 'total_subjugations' 컬럼 수정 시도 중 알림: {e}")
+
+            # inventory 수량 및 각 테이블의 PK ID 확장
+            try:
+                # 인벤토리 수량 확장
+                await cur.execute("ALTER TABLE inventory MODIFY COLUMN quantity BIGINT DEFAULT 0")
+                
+                # 주요 테이블 PK ID 확장 (AUTO_INCREMENT 유지)
+                await cur.execute("ALTER TABLE characters MODIFY COLUMN id BIGINT AUTO_INCREMENT")
+                await cur.execute("ALTER TABLE garden_slots MODIFY COLUMN id BIGINT AUTO_INCREMENT")
+                await cur.execute("ALTER TABLE workshop_slots MODIFY COLUMN id BIGINT AUTO_INCREMENT")
+                await cur.execute("ALTER TABLE fishing_slots MODIFY COLUMN id BIGINT AUTO_INCREMENT")
+                
+                logger.info("✅ 인벤토리 수량 및 PK ID BIGINT 확장 완료")
+            except Exception as e:
+                logger.warning(f"⚠️ 컬럼 타입 확장 중 알림: {e}")
 
             # fishing_slots 테이블 확인 (없으면 생성)
             try:
                 await cur.execute("SELECT 1 FROM fishing_slots LIMIT 1")
-            except Exception:
+            except (aiomysql.Error, Exception):
                 logger.warning("⚠️ 'fishing_slots' 테이블이 없어 생성합니다.")
                 try:
                     with open("schema.sql", "r", encoding="utf-8") as f:
@@ -122,124 +135,156 @@ async def check_schema(pool):
                 except Exception as e:
                     logger.error(f"테이블 생성 실패: {e}")
 
+async def _get_new_user_data(user_name=None):
+    """Returns the default data structure for a new user."""
+    from character import DEFAULT_PLAYER_DATA
+    new_char = DEFAULT_PLAYER_DATA.copy()
+    new_char["name"] = user_name if user_name else "플레이어"
+    
+    return {
+        "pt": 0, "money": 0, "last_checkin": None,
+        "investigator_index": 0,
+        "main_quest_id": 0, "main_quest_current": 0, "main_quest_index": 0,
+        "cards": ["기본공격", "기본방어", "기본반격"],
+        "buffs": {},
+        "main_quest_progress": {},
+        "inventory": {},
+        "characters": [new_char],
+        "artifacts": [],
+        "unlocked_regions": ["기원의 쌍성"],
+        "recruit_progress": {},
+        "myhome": {
+            "garden": {"level": 1, "slots": [], "water_can": 0},
+            "workshop_level": 1, "workshop_slots": [],
+            "fishing_level": 1,
+            "fishing": {"dismantle_slots": [], "rod": 0, "spot_level": 0, "max_dismantle_slots": 3},
+            "total_investigations": 0,
+            "total_subjugations": 0,
+            "construction_step": 0
+        },
+        "fertilizers": []
+    }
+
+async def _get_inventory(cur, user_id):
+    """Fetches user's inventory."""
+    await cur.execute("SELECT item_name, quantity FROM inventory WHERE user_id = %s", (str(user_id),))
+    return {row['item_name']: row['quantity'] for row in await cur.fetchall()}
+
+async def _get_characters_and_artifacts(cur, user_id):
+    """Fetches characters and artifacts, linking them."""
+    # Characters
+    await cur.execute("SELECT * FROM characters WHERE user_id = %s", (str(user_id),))
+    char_rows = await cur.fetchall()
+    characters = []
+    for row in char_rows:
+        char_data = {
+            "name": row['name'],
+            "hp": row['hp'],
+            "current_hp": row['current_hp'],
+            "max_mental": row['max_mental'],
+            "current_mental": row['current_mental'],
+            "attack": row['attack'],
+            "defense": row['defense'],
+            "defense_rate": row['defense_rate'],
+            "card_slots": row['card_slots'],
+            "equipped_cards": json.loads(row['equipped_cards']) if row['equipped_cards'] else [],
+            "status_effects": {}, 
+            "is_recruited": True,
+            "is_down": False
+        }
+        characters.append(char_data)
+
+    # Artifacts
+    await cur.execute("SELECT * FROM artifacts WHERE user_id = %s", (str(user_id),))
+    art_rows = await cur.fetchall()
+    artifacts = []
+    for row in art_rows:
+        art = {
+            "id": row['id'],
+            "name": row['name'],
+            "rank": row['rank_level'],
+            "grade": row['grade'],
+            "level": row['level'],
+            "prefix": row['prefix'],
+            "stats": json.loads(row['stats']) if row['stats'] else {},
+            "special": row['special'],
+            "description": row['description'],
+            "equipped_char_index": row.get('equipped_char_index', -1)
+        }
+        artifacts.append(art)
+        
+        # Link equipped artifact to character
+        eq_idx = row.get('equipped_char_index', -1)
+        if eq_idx != -1 and 0 <= eq_idx < len(characters):
+            characters[eq_idx]["equipped_artifact"] = art
+            
+    return characters, artifacts
+
+async def _get_unlocked_regions(cur, user_id):
+    """Fetches unlocked regions."""
+    await cur.execute("SELECT region_name FROM unlocked_regions WHERE user_id = %s", (str(user_id),))
+    regions = [r['region_name'] for r in await cur.fetchall()]
+    return regions if regions else ["기원의 쌍성"]
+
+async def _get_recruit_progress(cur, user_id):
+    """Fetches recruitment progress."""
+    await cur.execute("SELECT char_key, progress FROM recruit_progress WHERE user_id = %s", (str(user_id),))
+    return {r['char_key']: r['progress'] for r in await cur.fetchall()}
+
+async def _get_myhome_data(cur, user_id, user_row):
+    """Fetches and assembles all MyHome related data."""
+    # Garden
+    await cur.execute("SELECT * FROM garden_slots WHERE user_id = %s ORDER BY slot_index", (str(user_id),))
+    g_slots = [{"planted": bool(r['planted']), "plant_name": r['plant_name'], "stage": r['stage'], "last_invest_count": r['last_invest_count'], "fertilizer": r['fertilizer']} for r in await cur.fetchall()]
+    
+    # Workshop
+    await cur.execute("SELECT * FROM workshop_slots WHERE user_id = %s", (str(user_id),))
+    w_slots = [{"slot_index": r['slot_index'], "craft_item": r['craft_item'], "start_count": r['start_count'], "required_count": r['required_count']} for r in await cur.fetchall()]
+
+    # Fishing
+    await cur.execute("SELECT * FROM fishing_slots WHERE user_id = %s", (str(user_id),))
+    f_slots = [{"fish": r['fish_name'], "start_count": r['start_count']} for r in await cur.fetchall()]
+
+    return {
+        "garden": {"level": user_row['garden_level'] or 1, "slots": g_slots, "water_can": user_row['water_can'] or 0},
+        "workshop_level": user_row['workshop_level'] or 1,
+        "workshop_slots": w_slots,
+        "fishing_level": user_row['fishing_level'] or 1,
+        "total_investigations": user_row['total_investigations'] or 0,
+        "fishing": {"dismantle_slots": f_slots, "rod": user_row['fishing_rod'] or 0, "spot_level": user_row['fishing_spot_level'] or 0, "max_dismantle_slots": user_row['fishing_max_slots'] or 3},
+        "total_subjugations": user_row['total_subjugations'] or 0,
+        "construction_step": 5 if (user_row['garden_level'] or 0) > 0 else 0
+    }
+
 async def get_user_data(user_id, user_name=None):
     """DB에서 유저 데이터를 로드하여 딕셔너리 형태로 반환합니다."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
-            # 1. Users 테이블 조회
             await cur.execute("SELECT * FROM users WHERE user_id = %s", (str(user_id),))
             user_row = await cur.fetchone()
             
             if not user_row:
-                # 데이터가 없으면 기본값 반환 (신규 유저)
-                from character import DEFAULT_PLAYER_DATA
-                new_char = DEFAULT_PLAYER_DATA.copy()
-                new_char["name"] = user_name if user_name else "플레이어"
-                
-                return {
-                    "pt": 0, "money": 0, "last_checkin": None,
-                    "investigator_index": 0,
-                    "main_quest_id": 0, "main_quest_current": 0, "main_quest_index": 0,
-                    "cards": ["기본공격", "기본방어", "기본반격"],
-                    "buffs": {},
-                    "main_quest_progress": {},
-                    "inventory": {},
-                    "characters": [new_char],
-                    "artifacts": [],
-                    "unlocked_regions": ["기원의 쌍성"],
-                    "recruit_progress": {},
-                    "myhome": {
-                        "garden": {"level": 1, "slots": [], "water_can": 0},
-                        "workshop_level": 1, "workshop_slots": [],
-                        "fishing_level": 1,
-                        "fishing": {"dismantle_slots": [], "rod": 0, "spot_level": 0},
-                        "total_investigations": 0,
-                        "total_subjugations": 0,
-                        "construction_step": 0
-                    },
-                    "fertilizers": []
-                }
+                return await _get_new_user_data(user_name)
 
-            # 2. Inventory 조회
-            await cur.execute("SELECT item_name, quantity FROM inventory WHERE user_id = %s", (str(user_id),))
-            inventory = {row['item_name']: row['quantity'] for row in await cur.fetchall()}
+            # 각 부분별 데이터 로드
+            inventory = await _get_inventory(cur, user_id)
+            characters, artifacts = await _get_characters_and_artifacts(cur, user_id)
+            unlocked_regions = await _get_unlocked_regions(cur, user_id)
+            recruit_progress = await _get_recruit_progress(cur, user_id)
+            myhome_data = await _get_myhome_data(cur, user_id, user_row)
 
-            # 3. Characters 조회
-            await cur.execute("SELECT * FROM characters WHERE user_id = %s", (str(user_id),))
-            char_rows = await cur.fetchall()
-            characters = []
-            for row in char_rows:
-                char_data = {
-                    "name": row['name'],
-                    "hp": row['hp'],
-                    "current_hp": row['current_hp'],
-                    "max_mental": row['max_mental'],
-                    "current_mental": row['current_mental'],
-                    "attack": row['attack'],
-                    "defense": row['defense'],
-                    "defense_rate": row['defense_rate'],
-                    "card_slots": row['card_slots'],
-                    "equipped_cards": json.loads(row['equipped_cards']) if row['equipped_cards'] else [],
-                    "status_effects": {}, 
-                    "is_recruited": True,
-                    "is_down": False
-                }
-                characters.append(char_data)
-
-            # 4. Artifacts 조회
-            await cur.execute("SELECT * FROM artifacts WHERE user_id = %s", (str(user_id),))
-            art_rows = await cur.fetchall()
-            artifacts = []
-            for row in art_rows:
-                art = {
-                    "id": row['id'],
-                    "name": row['name'],
-                    "rank": row['rank_level'],
-                    "grade": row['grade'],
-                    "level": row['level'],
-                    "prefix": row['prefix'],
-                    "stats": json.loads(row['stats']) if row['stats'] else {},
-                    "special": row['special'],
-                    "description": row['description']
-                }
-                artifacts.append(art)
-                
-                # 캐릭터 장착 연결
-                eq_idx = row.get('equipped_char_index', -1)
-                if eq_idx != -1 and 0 <= eq_idx < len(characters):
-                    characters[eq_idx]["equipped_artifact"] = art
-
-            # 5. Unlocked Regions 조회
-            await cur.execute("SELECT region_name FROM unlocked_regions WHERE user_id = %s", (str(user_id),))
-            unlocked_regions = [r['region_name'] for r in await cur.fetchall()]
-            if not unlocked_regions: unlocked_regions = ["기원의 쌍성"]
-
-            # 6. Recruit Progress 조회
-            await cur.execute("SELECT char_key, progress FROM recruit_progress WHERE user_id = %s", (str(user_id),))
-            recruit_progress = {r['char_key']: r['progress'] for r in await cur.fetchall()}
-
-            # 7. MyHome 데이터 조회
-            await cur.execute("SELECT * FROM garden_slots WHERE user_id = %s ORDER BY slot_index", (str(user_id),))
-            g_slots = [{"planted": bool(r['planted']), "plant_name": r['plant_name'], "stage": r['stage'], "last_invest_count": r['last_invest_count'], "fertilizer": None} for r in await cur.fetchall()]
-            
             await cur.execute("SELECT target FROM user_fertilizers WHERE user_id = %s", (str(user_id),))
             fertilizers = [{"target": r['target']} for r in await cur.fetchall()]
 
-            await cur.execute("SELECT * FROM workshop_slots WHERE user_id = %s", (str(user_id),))
-            w_slots = [{"slot_index": r['slot_index'], "craft_item": r['craft_item'], "start_count": r['start_count'], "required_count": r['required_count']} for r in await cur.fetchall()]
-
-            await cur.execute("SELECT * FROM fishing_slots WHERE user_id = %s", (str(user_id),))
-            f_slots = [{"fish": r['fish_name'], "start_count": r['start_count']} for r in await cur.fetchall()]
-
             return {
-                "pt": user_row['pt'],
-                "money": user_row['money'],
+                "pt": user_row['pt'] or 0,
+                "money": user_row['money'] or 0,
                 "last_checkin": str(user_row['last_checkin']) if user_row['last_checkin'] else None,
-                "investigator_index": user_row['investigator_index'],
-                "main_quest_id": user_row['main_quest_id'],
-                "main_quest_current": user_row['main_quest_current'],
-                "main_quest_index": user_row['main_quest_index'],
+                "investigator_index": user_row['investigator_index'] or 0,
+                "main_quest_id": user_row['main_quest_id'] or 0,
+                "main_quest_current": user_row['main_quest_current'] or 0,
+                "main_quest_index": user_row['main_quest_index'] or 0,
                 "main_quest_progress": json.loads(user_row['main_quest_progress']) if user_row.get('main_quest_progress') else {},
                 "cards": json.loads(user_row['cards']) if user_row['cards'] else ["기본공격", "기본방어", "기본반격"],
                 "buffs": json.loads(user_row['buffs']) if user_row['buffs'] else {},
@@ -248,16 +293,7 @@ async def get_user_data(user_id, user_name=None):
                 "artifacts": artifacts,
                 "unlocked_regions": unlocked_regions,
                 "recruit_progress": recruit_progress,
-                "myhome": {
-                    "garden": {"level": user_row['garden_level'], "slots": g_slots, "water_can": 0},
-                    "workshop_level": user_row['workshop_level'],
-                    "workshop_slots": w_slots,
-                    "fishing_level": user_row['fishing_level'],
-                    "total_investigations": user_row.get('total_investigations', 0),
-                    "fishing": {"dismantle_slots": f_slots, "rod": 0, "spot_level": 0},
-                    "total_subjugations": user_row['total_subjugations'],
-                    "construction_step": 5 if user_row['garden_level'] > 0 else 0
-                },
+                "myhome": myhome_data,
                 "fertilizers": fertilizers
             }
 
@@ -281,36 +317,48 @@ async def save_user_data(user_id, data):
                 mq_prog_json = json.dumps(data.get("main_quest_progress", {}))
                 
                 # 마이홈 레벨 추출 (없으면 기본값 1)
-                g_lvl = myhome.get("garden", {}).get("level", 1)
+                g_lvl = myhome.get("garden", {}).get("level") or 1
+                w_can = myhome.get("garden", {}).get("water_can") or 0
                 # JSON 구조에 따라 위치가 다를 수 있음, 안전하게 탐색
-                w_lvl = myhome.get("workshop_level", myhome.get("level", 1)) 
-                f_lvl = myhome.get("fishing_level", 1)
-                t_subj = myhome.get("total_subjugations", 0)
-                t_invest = myhome.get("total_investigations", 0)
+                w_lvl = myhome.get("workshop_level") or myhome.get("level") or 1
+                f_lvl = myhome.get("fishing_level") or 1
+                f_rod = myhome.get("fishing", {}).get("rod") or 0
+                f_spot = myhome.get("fishing", {}).get("spot_level") or 0
+                t_subj = myhome.get("total_subjugations") or 0
+                t_invest = myhome.get("total_investigations") or 0
 
                 sql_users = """
                     INSERT INTO users 
                     (user_id, pt, money, last_checkin, investigator_index, 
                      main_quest_id, main_quest_current, main_quest_index,
-                     garden_level, workshop_level, fishing_level, total_subjugations,
-                     cards, buffs, main_quest_progress, total_investigations)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    AS new
+                     garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations,
+                     cards, buffs, main_quest_progress, total_investigations, fishing_max_slots)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
                     ON DUPLICATE KEY UPDATE
                     pt=new.pt, money=new.money, last_checkin=new.last_checkin,
                     investigator_index=new.investigator_index,
-                    main_quest_id=new.main_quest_id, main_quest_current=new.main_quest_current,
+                    main_quest_id=new.main_quest_id, 
+                    main_quest_current=new.main_quest_current,
                     main_quest_index=new.main_quest_index,
-                    garden_level=new.garden_level, workshop_level=new.workshop_level,
-                    fishing_level=new.fishing_level, total_subjugations=new.total_subjugations,
-                    cards=new.cards, buffs=new.buffs, main_quest_progress=new.main_quest_progress, total_investigations=new.total_investigations
+                    garden_level=new.garden_level, 
+                    water_can=new.water_can, 
+                    workshop_level=new.workshop_level,
+                    fishing_level=new.fishing_level, 
+                    fishing_rod=new.fishing_rod, 
+                    fishing_spot_level=new.fishing_spot_level,
+                    total_subjugations=new.total_subjugations,
+                    cards=new.cards, buffs=new.buffs, 
+                    main_quest_progress=new.main_quest_progress, 
+                    total_investigations=new.total_investigations,
+                    fishing_max_slots=new.fishing_max_slots
                 """
                 await cur.execute(sql_users, (
                     str(user_id), data.get("pt", 0), data.get("money", 0), data.get("last_checkin"),
                     data.get("investigator_index", 0),
                     data.get("main_quest_id", 0), data.get("main_quest_current", 0), data.get("main_quest_index", 0),
-                    g_lvl, w_lvl, f_lvl, t_subj, 
-                    cards_json, buffs_json, mq_prog_json, t_invest
+                    g_lvl, w_can, w_lvl, f_lvl, f_rod, f_spot, t_subj, 
+                    cards_json, buffs_json, mq_prog_json, t_invest,
+                    myhome.get("fishing", {}).get("max_dismantle_slots", 3)
                 ))
 
                 # ---------------------------------------------------------
@@ -381,11 +429,11 @@ async def save_user_data(user_id, data):
                     for idx, s in enumerate(g_slots):
                         g_rows.append((
                             user_id, idx, s.get("planted", False), s.get("plant_name"),
-                            s.get("stage", 0), s.get("last_invest_count", 0)
+                            s.get("stage", 0), s.get("last_invest_count", 0), s.get("fertilizer")
                         ))
                     await cur.executemany("""
-                        INSERT INTO garden_slots (user_id, slot_index, planted, plant_name, stage, last_invest_count)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO garden_slots (user_id, slot_index, planted, plant_name, stage, last_invest_count, fertilizer)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, g_rows)
 
                 # (2) Fertilizers
@@ -417,6 +465,19 @@ async def save_user_data(user_id, data):
                             user_id, s.get("fish"), s.get("start_count", 0)
                         ))
                     await cur.executemany("INSERT INTO fishing_slots (user_id, fish_name, start_count) VALUES (%s, %s, %s)", f_rows)
+
+                # ---------------------------------------------------------
+                # 7. RECRUIT PROGRESS (전체 삭제 후 재삽입)
+                # ---------------------------------------------------------
+                await cur.execute("DELETE FROM recruit_progress WHERE user_id = %s", (user_id,))
+                recruit_progress = data.get("recruit_progress", {})
+                if recruit_progress:
+                    rp_rows = []
+                    for char_key, progress in recruit_progress.items():
+                        rp_rows.append((user_id, char_key, progress))
+                    await cur.executemany("INSERT INTO recruit_progress (user_id, char_key, progress) VALUES (%s, %s, %s)", rp_rows)
+
+
 
                 await conn.commit()
                 # logger.info(f"Saved data for user {user_id}")

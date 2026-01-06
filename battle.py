@@ -48,10 +48,25 @@ class BattleView(discord.ui.View):
 
         # [신규] 전투 시작 시 기간제 버프 적용
         buffs = self.user_data.get("buffs", {})
-        if "attack" in buffs:
-            self.player.attack += buffs["attack"].get("value", 0)
-        if "defense" in buffs:
-            self.player.defense += buffs["defense"].get("value", 0)
+        for b_name, b_info in buffs.items():
+            # 캐릭터 전용 버프 필터링
+            target = b_info.get("target")
+            if target != self.player.name:
+                continue
+                
+            stat = b_info.get("stat")
+            val = b_info.get("value", 0)
+            
+            if stat == "attack": self.player.attack += val
+            elif stat == "defense": self.player.defense += val
+            elif stat == "max_hp":
+                self.player.max_hp += val
+                self.player.current_hp += val
+            elif stat == "max_mental":
+                self.player.max_mental += val
+                self.player.current_mental += val
+            elif stat == "defense_rate":
+                self.player.defense_rate += val
         
         self.update_buttons()
 
@@ -96,24 +111,28 @@ class BattleView(discord.ui.View):
 
     async def prev_page_callback(self, interaction):
         if interaction.user != self.author: return
+        await interaction.response.defer()
         self.card_page -= 1
         self.update_buttons()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
     async def next_page_callback(self, interaction):
         if interaction.user != self.author: return
+        await interaction.response.defer()
         self.card_page += 1
         self.update_buttons()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
     async def panic_callback(self, interaction):
         if interaction.user != self.author: return
+        await interaction.response.defer()
         self.selected_card = None 
         await self.show_target_selection(interaction)
 
     def make_skill_callback(self, card_name):
         async def callback(interaction):
             if interaction.user != self.author: return
+            await interaction.response.defer()
             self.selected_card = get_card(card_name)
             await self.show_target_selection(interaction)
         return callback
@@ -138,13 +157,14 @@ class BattleView(discord.ui.View):
             
             async def select_callback(i):
                 if i.user != self.author: return
+                await i.response.defer()
                 target_idx = int(select.values[0])
                 await self.process_battle_round(i, self.monsters[target_idx])
                 
             select.callback = select_callback
             view = discord.ui.View()
             view.add_item(select)
-            await interaction.response.edit_message(content=f"⚔️ **[제 {self.turn_count}턴]** 타겟을 선택하세요.", view=view)
+            await interaction.edit_original_response(content=f"⚔️ **[제 {self.turn_count}턴]** 타겟을 선택하세요.", view=view)
 
     # apply_stat_scaling 제거 (battle_engine 사용)
 
@@ -245,7 +265,7 @@ class BattleView(discord.ui.View):
         else:
             self.turn_count += 1
             self.update_buttons()
-            await interaction.response.edit_message(content=None, embed=self.make_embed(log), view=self)
+            await interaction.edit_original_response(content=None, embed=self.make_embed(log), view=self)
 
     def get_emoji(self, atype):
         return battle_engine.get_emoji(atype)
@@ -280,13 +300,16 @@ class BattleView(discord.ui.View):
         buffs = self.user_data.setdefault("buffs", {})
         expired_buffs = []
         
-        # [수정] 전투 관련 버프만 차감하도록 변경 (조사 버프 등은 유지)
-        battle_buff_stats = ["attack", "defense"]
+        # 전투 관련 스탯 목록 (체력, 정신력, 방어율 포함)
+        battle_buff_stats = ["attack", "defense", "max_hp", "max_mental", "defense_rate"]
         for b_name, b_info in list(buffs.items()):
-            if b_name in battle_buff_stats and "duration" in b_info:
-                b_info["duration"] -= 1
-                if b_info["duration"] <= 0:
-                    expired_buffs.append(b_name)
+            target = b_info.get("target")
+            # 해당 캐릭터의 버프이거나, 타겟 정보가 없는 레거시 버프인 경우 차감
+            if (target == self.player.name or target is None) and b_info.get("stat") in battle_buff_stats:
+                if "duration" in b_info:
+                    b_info["duration"] -= 1
+                    if b_info["duration"] <= 0:
+                        expired_buffs.append(b_name)
         
         for b in expired_buffs:
             del buffs[b]
@@ -339,7 +362,7 @@ class BattleView(discord.ui.View):
         final_embed = self.make_embed(log + res_msg)
         final_embed.color = color
         
-        await interaction.response.edit_message(content=None, embed=final_embed, view=None)
+        await interaction.edit_original_response(content=None, embed=final_embed, view=None)
         
         if is_win and self.victory_callback:
             await self.victory_callback(interaction, {"money": total_money, "pt": total_pt, "items": loot})

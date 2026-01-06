@@ -11,11 +11,10 @@ DATA_FILE = "user_data.json"
 
 
 class WorkshopView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.page = 0
         # [DB 호환 수정] self.workshop 대신 myhome, workshop_slots 직접 사용
@@ -97,11 +96,11 @@ class WorkshopView(discord.ui.View):
         elif cid == "prev_page":
             self.page -= 1
             self.update_components()
-            await i.response.edit_message(view=self)
+            await i.edit_original_response(view=self)
         elif cid == "next_page":
             self.page += 1
             self.update_components()
-            await i.response.edit_message(view=self)
+            await i.edit_original_response(view=self)
         return True
 
     async def start_craft(self, i):
@@ -115,7 +114,7 @@ class WorkshopView(discord.ui.View):
             "start_count": self.myhome.get("total_subjugations", 0),
             "required_count": 10
         })
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         await i.response.edit_message(embed=self.get_embed(), view=self)
 
     async def claim_craft(self, i):
@@ -131,7 +130,7 @@ class WorkshopView(discord.ui.View):
             self.user_data.setdefault("artifacts", []).append(art)
             got.append(art["name"])
             
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         await i.response.edit_message(content=f"🎁 획득: {', '.join(got)}", embed=self.get_embed(), view=self)
 
     async def expand_shop(self, i):
@@ -146,34 +145,34 @@ class WorkshopView(discord.ui.View):
         self.workshop_level += 1
         self.myhome["workshop_level"] = self.workshop_level
         self.max_slots = 2 + self.workshop_level
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         self.update_components()
         await i.response.edit_message(content=f"🏗️ 작업실 확장 완료! (슬롯 {self.max_slots-1} -> {self.max_slots})", embed=self.get_embed(), view=self)
 
     async def go_reroll(self, i):
-        view = WorkshopRerollView(self.author, self.user_data, self.all_data, self.save_func)
+        view = WorkshopRerollView(self.author, self.user_data, self.save_func)
         await i.response.edit_message(embed=view.get_embed(), view=view)
 
     async def go_imprint(self, i):
-        view = ImprintView(self.author, self.user_data, self.all_data, self.save_func)
+        view = ImprintView(self.author, self.user_data, self.save_func)
         await i.response.edit_message(embed=view.get_embed(), view=view)
 
     async def go_modifier(self, i):
-        view = ModifierView(self.author, self.user_data, self.all_data, self.save_func)
+        view = ModifierView(self.author, self.user_data, self.save_func)
         await i.response.edit_message(embed=view.get_embed(), view=view)
 
     async def go_home(self, interaction):
         # [중요] 순환 참조 방지를 위해 함수 내부에서 import
         from myhome import MyHomeView
-        view = MyHomeView(self.author, self.user_data, self.all_data, self.save_func)
+        view = MyHomeView(self.author, self.user_data, self.save_func)
         await interaction.response.edit_message(content="🏠 마이홈으로 이동했습니다.", embed=view.get_embed(), view=view)
 
 
 # --- 리롤 뷰 ---
 class WorkshopRerollView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         self.add_select()
         self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=1, custom_id="back"))
 
@@ -194,7 +193,7 @@ class WorkshopRerollView(discord.ui.View):
     async def interaction_check(self, i):
         if i.user != self.author: return False
         if i.data.get("custom_id") == "back":
-            view = WorkshopView(self.author, self.user_data, self.all_data, self.save_func)
+            view = WorkshopView(self.author, self.user_data, self.save_func)
             await i.response.edit_message(embed=view.get_embed(), view=view)
             return True
             
@@ -210,16 +209,16 @@ class WorkshopRerollView(discord.ui.View):
         self.user_data["money"] -= 5000
         self.user_data["pt"] -= 1000
         reroll_artifact_stats(self.user_data["artifacts"][idx])
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         await i.response.edit_message(content=f"🎲 리롤 완료! -> {self.user_data['artifacts'][idx]['description']}", embed=self.get_embed(), view=self)
         return True
 
 # --- 각인 시스템 뷰 ---
 class ImprintView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         self.add_char_select()
         self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=1, custom_id="back"))
 
@@ -236,7 +235,7 @@ class ImprintView(discord.ui.View):
     async def interaction_check(self, i):
         if i.user != self.author: return False
         if i.data.get("custom_id") == "back":
-            view = WorkshopView(self.author, self.user_data, self.all_data, self.save_func)
+            view = WorkshopView(self.author, self.user_data, self.save_func)
             await i.response.edit_message(embed=view.get_embed(), view=view)
             return True
             
@@ -254,7 +253,7 @@ class ImprintView(discord.ui.View):
             }
             # [중요] Character.py와 키 이름 통일
             char_data["equipped_engraved_artifact"] = imprint_art
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             await i.response.edit_message(content=f"🔮 **{char_data['name']}**에게 각인 아티팩트를 장착했습니다!", embed=self.get_embed(), view=self)
         else:
             await i.response.edit_message(content="❌ 해당 캐릭터의 전용 각인 로직이 없습니다. (현재 '영산'만 가능)", embed=self.get_embed(), view=self)
@@ -262,9 +261,9 @@ class ImprintView(discord.ui.View):
 
 # --- 수식어 변경 뷰 (3성 전용) ---
 class ModifierView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         self.add_art_select()
         self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=1, custom_id="back"))
 
@@ -293,7 +292,7 @@ class ModifierView(discord.ui.View):
     async def interaction_check(self, i):
         if i.user != self.author: return False
         if i.data.get("custom_id") == "back":
-            view = WorkshopView(self.author, self.user_data, self.all_data, self.save_func)
+            view = WorkshopView(self.author, self.user_data, self.save_func)
             await i.response.edit_message(embed=view.get_embed(), view=view)
             return True
             
@@ -323,6 +322,6 @@ class ModifierView(discord.ui.View):
             target_art["special"] = SPECIAL_EFFECTS.get(new_prefix)
             target_art["description"] = _make_description(target_art["stats"], target_art["special"])
             
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         await i.response.edit_message(content=f"🏷️ 수식어가 **{new_prefix}**로 변경되었습니다!", embed=self.get_embed(), view=self)
         return True

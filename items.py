@@ -179,6 +179,7 @@ ITEM_CATEGORIES = {
     "무지개 열매 조각": {"type": "crafted", "price": 100},
     "달빛 머금은 잎사귀": {"type": "crafted", "price": 12000, "area": "생명의 숲"},
     "생명의 정수": {"type": "crafted", "price": 12000, "area": "생명의 숲"},
+    "행운의 부적": {"type": "crafted", "price": 15000, "description": "가방에 소지하고 있으면 조사 성공 확률이 5% 증가합니다."},
 
     # --- [신규 소모품 (부적 등)] ---
     "건승의 부적": {"type": "consumable", "price": 5000},
@@ -284,7 +285,7 @@ CRAFT_RECIPES = {
 
     # [기본]
     "make_box_common": {"need": {"평범한 나무판자": 3}, "result": "낡은 보물상자"},
-    "make_box_rare": {"need": {"평범한 나무판자": 10}, "result": "섬세한 보물상자"},
+    "make_box_rare": {"need": {"섬세한 열쇠": 1, "평범한 나무판자": 5}, "result": "섬세한 보물상자"},
     "make_key": {"need": {"녹슨 철": 3}, "result": "낡은 열쇠"},
     "salad": {"need": {"설국 열매": 1, "무지개 열매": 1}, "result": "열매 샐러드"},
     "ornament": {"need": {"녹슨 철": 1, "깃털나무 잎사귀": 1}, "result": "허술한 장식품"},
@@ -343,6 +344,7 @@ CRAFT_RECIPES = {
     "scale_necklace": {"need": {"물고기 비늘": 2, "나뭇가지": 3}, "result": "비늘 목걸이", "region": "노드 해역"},
     "sashimi": {"need": {"물고기 비늘": 3, "창공마크": 1}, "result": "바닷물고기 회", "region": "노드 해역"},
     "kai_mercy": {"need": {"자그마한 바람": 1, "정교한 나무조각상": 2, "물고기 비늘": 2}, "result": "카이의 자비", "region": "노드 해역"},
+    "lucky_charm": {"need": {"장식용 열쇠": 3, "반짝가루": 5, "물고기 비늘": 5}, "result": "행운의 부적", "region": "노드 해역"},
 
     # [공간의 신전]
     "party_set": {"need": {"간단한 다과": 3, "구름다리 스낵": 1, "파티용 모자": 4, "눈 스프레이": 2}, "result": "파티 풀세트", "region": "공간의 신전"},

@@ -5,6 +5,8 @@ import os
 from items import ITEM_PRICES, ITEM_CATEGORIES, REGIONS, CRAFT_RECIPES
 from cards import CARD_PRICES
 from artifacts import generate_artifact
+from data_manager import get_user_data
+from decorators import auto_defer
 
 DATA_FILE = "user_data.json"
 
@@ -33,11 +35,10 @@ CARD_REGION_MAP = {
 
 
 class ShopView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
 
     
@@ -56,39 +57,36 @@ class ShopView(discord.ui.View):
 
     # --- [1] 구매 섹션 ---
     @discord.ui.button(label="🧪 소모품 구매", style=discord.ButtonStyle.success, row=0)
+    @auto_defer()
     async def buy_consumable(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_buy_dropdown(interaction, "consumable", "🧪 **[소모품]** 구매 목록입니다.", use_pt=False)
 
     @discord.ui.button(label="🃏 카드 구매", style=discord.ButtonStyle.danger, row=0)
+    @auto_defer()
     async def buy_card(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.open_buy_dropdown(interaction, "card", "🃏 **[기술 카드]** 구매 목록입니다.\n(해금된 지역의 카드만 등장합니다)", use_pt=True)
 
     # --- [2] 포인트 상점 (통합) ---
     @discord.ui.button(label="⚡ 포인트 상점", style=discord.ButtonStyle.secondary, row=1)
+    @auto_defer(reload_data=True)
     async def pt_shop_tab(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
-        view = PointShopView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(content="⚡ **[포인트 상점]** 충전이나 뽑기를 할 수 있어!", embed=self.create_shop_embed(), view=view)
+        view = PointShopView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(content="⚡ **[포인트 상점]** 충전이나 뽑기를 할 수 있어!", embed=self.create_shop_embed(), view=view)
 
     # --- [3] 판매 섹션 (지역별) ---
     @discord.ui.button(label="💰 아이템 판매", style=discord.ButtonStyle.primary, row=1)
+    @auto_defer(reload_data=True)
     async def sell_tab(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
-        view = SellRegionView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(content="💵 **[판매]** 판매할 아이템의 지역을 선택해줘.", embed=self.create_shop_embed(), view=view)
+        view = SellRegionView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(content="💵 **[판매]** 판매할 아이템의 지역을 선택해줘.", embed=self.create_shop_embed(), view=view)
 
     @discord.ui.button(label="👋 나가기", style=discord.ButtonStyle.gray, row=2)
+    @auto_defer()
     async def exit_shop(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user != self.author: return
-        await interaction.response.edit_message(content="👋 상점을 나갔습니다.", embed=None, view=None)
+        await interaction.edit_original_response(content="👋 상점을 나갔습니다.", embed=None, view=None)
 
     # --- Helper Methods ---
     async def open_buy_dropdown(self, interaction, category, text, use_pt=False):
-        if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
-        
         # 신규 지역 제작 아이템 식별 (구매 불가 리스트)
         excluded_crafts = set()
         for r_data in CRAFT_RECIPES.values():
@@ -127,17 +125,17 @@ class ShopView(discord.ui.View):
                     options.append(discord.SelectOption(label=f"{item} ({p:,}원)", value=item))
         
         if not options:
-            return await interaction.response.send_message("❌ 현재 구매 가능한 상품이 없습니다. (지역 해금 필요)", ephemeral=True)
+            return await interaction.followup.send("❌ 현재 구매 가능한 상품이 없습니다. (지역 해금 필요)", ephemeral=True)
         
-        view = BuyDropdownView(self.author, self.user_data, self.all_data, self.save_func, options, use_pt)
-        await interaction.response.edit_message(content=text, embed=self.create_shop_embed(), view=view)
+        view = BuyDropdownView(self.author, self.user_data, self.save_func, options, use_pt)
+        await interaction.edit_original_response(content=text, embed=self.create_shop_embed(), view=view)
 
 
 # --- [포인트 상점] 뷰 (충전 & 뽑기) ---
 class PointShopView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         
         # 1. 충전 버튼 생성
         for label, price in PT_PRICES.items():
@@ -167,10 +165,8 @@ class PointShopView(discord.ui.View):
         embed.add_field(name="⚡ 보유 포인트", value=f"{pt:,}pt", inline=True)
         return embed
 
+    @auto_defer(reload_data=True)
     async def artifact_gacha_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
-        
         COST = 1000
         current_pt = self.user_data.get("pt", 0)
         
@@ -183,24 +179,23 @@ class PointShopView(discord.ui.View):
             self.user_data["artifacts"] = []
         self.user_data["artifacts"].append(new_artifact)
         
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         res_embed = discord.Embed(title="🎉 아티팩트 획득!", color=discord.Color.purple())
         res_embed.add_field(name=new_artifact["name"], value=new_artifact["description"], inline=False)
         res_embed.set_footer(text=f"남은 포인트: {self.user_data['pt']}pt")
         
         # 화면 유지
-        await interaction.response.edit_message(content="🎲 뽑기 완료!", embed=res_embed, view=self)
+        await interaction.edit_original_response(content="🎲 뽑기 완료!", embed=res_embed, view=self)
 
+    @auto_defer()
     async def back_callback(self, interaction: discord.Interaction):
-        main_v = ShopView(self.author, self.user_data, self.all_data, self.save_func)
-        await interaction.response.edit_message(content="🛒 상점 메인", embed=main_v.create_shop_embed(), view=main_v)
+        main_v = ShopView(self.author, self.user_data, self.save_func)
+        await interaction.edit_original_response(content="🛒 상점 메인", embed=main_v.create_shop_embed(), view=main_v)
 
     def make_pt_callback(self, label, price):
+        @auto_defer(reload_data=True)
         async def callback(interaction: discord.Interaction):
-            if interaction.user != self.author: return
-            self.user_data = self.all_data.get(str(self.author.id))
-            
             if self.user_data.get("money", 0) < price:
                 return await interaction.response.send_message("❌ 머니 부족!", ephemeral=True)
             
@@ -208,18 +203,18 @@ class PointShopView(discord.ui.View):
             pt_val = int(label.replace("pt", ""))
             self.user_data["pt"] = self.user_data.get("pt", 0) + pt_val
             
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             
             # 충전 후 화면 유지 및 갱신
-            await interaction.response.edit_message(content=f"✅ **{label}** 충전 완료!", embed=self.create_shop_embed(), view=self)
+            await interaction.edit_original_response(content=f"✅ **{label}** 충전 완료!", embed=self.create_shop_embed(), view=self)
         return callback
 
 
 # --- [구매] 드롭다운 뷰 (페이지네이션 적용) ---
 class BuyDropdownView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, all_options, use_pt):
+    def __init__(self, author, user_data, save_func, all_options, use_pt):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         self.use_pt = use_pt
         self.selected_item = None
         self.all_options = all_options
@@ -271,12 +266,13 @@ class BuyDropdownView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user != self.author: return False
+        await interaction.response.defer()
         cid = interaction.data.get("custom_id")
-        if cid == "prev": self.page -= 1; self.update_view(); await interaction.response.edit_message(view=self)
-        elif cid == "next": self.page += 1; self.update_view(); await interaction.response.edit_message(view=self)
+        if cid == "prev": self.page -= 1; self.update_view(); await interaction.edit_original_response(view=self)
+        elif cid == "next": self.page += 1; self.update_view(); await interaction.edit_original_response(view=self)
         elif cid == "back":
-            v = ShopView(self.author, self.user_data, self.all_data, self.save_func)
-            await interaction.response.edit_message(content="🛒 상점 메인", embed=v.create_shop_embed(), view=v)
+            v = ShopView(self.author, self.user_data, self.save_func)
+            await interaction.edit_original_response(content="🛒 상점 메인", embed=v.create_shop_embed(), view=v)
         elif cid == "b1": await self.process_buy(interaction, 1)
         elif cid == "b5": await self.process_buy(interaction, 5)
         elif cid == "b10": await self.process_buy(interaction, 10)
@@ -319,13 +315,13 @@ class BuyDropdownView(discord.ui.View):
             inv = self.user_data.setdefault("inventory", {})
             inv["강화키트"] = inv.get("강화키트", 0) + amount
             
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             
             # [UI 유지] 임베드 갱신
             self.update_view()
             embed = self.create_shop_embed(title_suffix=" - 완료")
             
-            return await i.response.edit_message(
+            return await i.edit_original_response(
                 content=f"✅ **강화키트** {amount}개 구매 성공! (💰{total_money:,} / ⚡{total_pt:,} 소모)",
                 embed=embed,
                 view=self
@@ -342,20 +338,20 @@ class BuyDropdownView(discord.ui.View):
             if amount < 1: amount = 1 
             
         total = base_p * amount
-        if self.user_data.get(cur, 0) < total: return await i.response.send_message("❌ 잔액 부족", ephemeral=True)
+        if self.user_data.get(cur, 0) < total: return await i.followup.send("❌ 잔액 부족", ephemeral=True)
 
         # [특수] 이름 변경권
         if self.selected_item == "이름 변경권":
             pt_cost = 4000 * amount
             if self.user_data.get("pt", 0) < pt_cost:
-                return await i.response.send_message(f"❌ 포인트 부족! ({pt_cost}pt 필요)", ephemeral=True)
+                return await i.followup.send(f"❌ 포인트 부족! ({pt_cost}pt 필요)", ephemeral=True)
             self.user_data["pt"] -= pt_cost
             total = 0 # 위에서 차감함
 
         # 구매 처리
         if self.use_pt: # 카드
-            if self.selected_item in self.user_data.get("cards", []): 
-                return await i.response.send_message("❌ 이미 보유한 카드입니다.", ephemeral=True)
+            if self.selected_item in self.user_data.get("cards", []):
+                return await i.followup.send("❌ 이미 보유한 카드입니다.", ephemeral=True)
             self.user_data.setdefault("cards", []).append(self.selected_item)
             
             # 카드는 1회성 구매이므로 목록에서 사라짐 -> 옵션 갱신 필요
@@ -369,13 +365,13 @@ class BuyDropdownView(discord.ui.View):
         if total > 0:
             self.user_data[cur] -= total
             
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         # [UI 유지] 뷰 리프레시 및 결과 표시
         self.update_view()
         embed = self.create_shop_embed(title_suffix=" - 완료")
         
-        await i.response.edit_message(
+        await i.edit_original_response(
             content=f"✅ **{self.selected_item if self.selected_item else '카드'}** {amount}개 구매 성공!",
             embed=embed,
             view=self
@@ -384,9 +380,9 @@ class BuyDropdownView(discord.ui.View):
 
 # --- [판매] 지역 선택 뷰 ---
 class SellRegionView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         self.page = 0
         self.items_per_page = 3
         self.update_buttons()
@@ -429,32 +425,33 @@ class SellRegionView(discord.ui.View):
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
+        await i.response.defer()
         cid = i.data.get("custom_id")
         
-        if cid == "prev": self.page -= 1; self.update_buttons(); await i.response.edit_message(view=self)
-        elif cid == "next": self.page += 1; self.update_buttons(); await i.response.edit_message(view=self)
+        if cid == "prev": self.page -= 1; self.update_buttons(); await i.edit_original_response(view=self)
+        elif cid == "next": self.page += 1; self.update_buttons(); await i.edit_original_response(view=self)
         elif cid == "back":
-            v = ShopView(self.author, self.user_data, self.all_data, self.save_func)
-            await i.response.edit_message(content="🛒 상점 메인", embed=v.create_shop_embed(), view=v)
+            v = ShopView(self.author, self.user_data, self.save_func)
+            await i.edit_original_response(content="🛒 상점 메인", embed=v.create_shop_embed(), view=v)
         elif str(cid).startswith("sell_"):
             region = cid.replace("sell_", "")
             await self.open_sell_item_view(i, region)
         return True
 
     async def open_sell_item_view(self, interaction, region_key):
-        view = SellItemView(self.author, self.user_data, self.all_data, self.save_func, region_key)
+        view = SellItemView(self.author, self.user_data, self.save_func, region_key)
         
         if not view.all_options:
-             return await interaction.response.send_message(f"❌ 해당 지역에 판매 가능한 아이템이 없습니다.", ephemeral=True)
+             return await interaction.followup.send(f"❌ 해당 지역에 판매 가능한 아이템이 없습니다.", ephemeral=True)
              
-        await interaction.response.edit_message(content=f"💰 **[{region_key}]** 판매할 아이템을 선택하세요.", embed=view.create_shop_embed(), view=view)
+        await interaction.edit_original_response(content=f"💰 **[{region_key}]** 판매할 아이템을 선택하세요.", embed=view.create_shop_embed(), view=view)
 
 
 # --- [판매] 아이템 선택 및 실행 뷰 ---
 class SellItemView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func, region_key):
+    def __init__(self, author, user_data, save_func, region_key):
         super().__init__(timeout=60)
-        self.author, self.user_data, self.all_data, self.save_func = author, user_data, all_data, save_func
+        self.author, self.user_data, self.save_func = author, user_data, save_func
         self.region_key = region_key
         self.selected_item = None
         self.page = 0
@@ -466,11 +463,6 @@ class SellItemView(discord.ui.View):
 
     def generate_options(self):
         """현재 인벤토리와 지역 키를 기반으로 판매 옵션 생성"""
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                self.all_data = json.load(f)
-                self.user_data = self.all_data.get(str(self.author.id))
-
         inv = self.user_data.get("inventory", {})
         options = []
         
@@ -540,36 +532,38 @@ class SellItemView(discord.ui.View):
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
+        await i.response.defer()
         cid = i.data.get("custom_id")
-        if cid == "prev": self.page -= 1; self.update_view(); await i.response.edit_message(view=self)
-        elif cid == "next": self.page += 1; self.update_view(); await i.response.edit_message(view=self)
+        if cid == "prev": self.page -= 1; self.update_view(); await i.edit_original_response(view=self)
+        elif cid == "next": self.page += 1; self.update_view(); await i.edit_original_response(view=self)
         elif cid == "cancel":
-            v = SellRegionView(self.author, self.user_data, self.all_data, self.save_func)
-            await i.response.edit_message(content="판매 지역 선택", embed=v.create_shop_embed(), view=v)
+            v = SellRegionView(self.author, self.user_data, self.save_func)
+            await i.edit_original_response(content="판매 지역 선택", embed=v.create_shop_embed(), view=v)
         elif cid == "s1": await self.process_sell(i, 1)
         elif cid == "s5": await self.process_sell(i, 5)
         elif cid == "s10": await self.process_sell(i, 10)
         elif cid == "sall": await self.process_sell(i, "all")
         return True
 
+    @auto_defer()
     async def on_select(self, interaction: discord.Interaction):
         self.selected_item = self.select.values[0]
         # 선택 UI 반영
         for opt in self.select.options:
             opt.default = (opt.value == self.selected_item)
-        await interaction.response.edit_message(content=f"💰 **[{self.selected_item}]** 몇 개 판매할까요?", view=self)
+        await interaction.edit_original_response(content=f"💰 **[{self.selected_item}]** 몇 개 판매할까요?", view=self)
 
     async def process_sell(self, interaction, amount):
         if not self.selected_item: 
-            return await interaction.response.send_message("❌ 먼저 아이템을 선택해주세요.", ephemeral=True)
-        self.user_data = self.all_data.get(str(self.author.id))
+            return await interaction.followup.send("❌ 먼저 아이템을 선택해주세요.", ephemeral=True)
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         
         inv = self.user_data.setdefault("inventory", {})
         current = inv.get(self.selected_item, 0)
         num = current if amount == "all" else amount
         
         if current < num or num <= 0:
-            return await interaction.response.send_message("❌ 판매할 수량이 부족합니다.", ephemeral=True)
+            return await interaction.followup.send("❌ 판매할 수량이 부족합니다.", ephemeral=True)
             
         price_unit = ITEM_PRICES.get(self.selected_item, 0) // 2
         total_price = price_unit * num
@@ -579,7 +573,7 @@ class SellItemView(discord.ui.View):
             del inv[self.selected_item]
             
         self.user_data["money"] += total_price
-        await self.save_func(self.all_data)
+        await self.save_func(self.author.id, self.user_data)
         
         # [수정] 판매 후 화면 유지 (목록 갱신)
         if amount == "all" or inv.get(self.selected_item, 0) <= 0:
@@ -588,7 +582,7 @@ class SellItemView(discord.ui.View):
         self.all_options = self.generate_options()
         self.update_view()
         
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=f"✅ **{self.selected_item if self.selected_item else '아이템'}** {num}개를 **{total_price:,}원**에 판매했습니다!",
             embed=self.create_shop_embed(title_suffix=" - 완료"),
             view=self

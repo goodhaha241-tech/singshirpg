@@ -15,11 +15,10 @@ SUBJUGATION_COST = 150
 
 
 class SubjugationRegionView(discord.ui.View):
-    def __init__(self, author, p_data, all_data, save_func):
+    def __init__(self, author, p_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.p_data = p_data        
-        self.all_data = all_data    
         self.save_func = save_func
         
         self.selected_char_index = 0
@@ -51,9 +50,9 @@ class SubjugationRegionView(discord.ui.View):
         unlocked = self.p_data.get("unlocked_regions", ["기원의 쌍성"])
         options = []
         
-        # items.py의 REGIONS 순서대로 정렬 (비용순 등)
-        # 딕셔너리 순서가 보장되지 않을 수 있으므로 unlock_cost 등으로 정렬 권장
-        sorted_regions = sorted(unlocked, key=lambda x: REGIONS.get(x, {}).get("unlock_cost", 0))
+        # items.py의 REGIONS 순서(해금 순서)대로 정렬
+        region_order = list(REGIONS.keys())
+        sorted_regions = sorted(unlocked, key=lambda x: region_order.index(x) if x in region_order else 999)
 
         for name in sorted_regions:
             # [수정] 노드 해역은 토벌 목록에서 제외 (조사/낚시 전용)
@@ -177,6 +176,6 @@ class SubjugationRegionView(discord.ui.View):
         embed = view.make_embed(f"⚔️ **{region_name}** 토벌을 시작합니다!\n**{player.name}** vs 적 **{len(monsters)}명**")
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
-async def start_subjugation(ctx, p_data, all_data, save_func):
-    view = SubjugationRegionView(ctx.author, p_data, all_data, save_func)
+async def start_subjugation(ctx, p_data, save_func):
+    view = SubjugationRegionView(ctx.author, p_data, save_func)
     await ctx.send("🗺️ **토벌 지역 선택**\n해금된 지역에서만 토벌 파견이 가능합니다.", view=view)

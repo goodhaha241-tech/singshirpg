@@ -7,6 +7,7 @@ from character import Character
 from cards import get_card
 from battle import BattleView
 from story import update_quest_progress
+from data_manager import get_user_data
 
 DATA_FILE = "user_data.json"
 
@@ -329,11 +330,10 @@ RECRUIT_REGISTRY = {
 
 class RecruitProcessView(discord.ui.View):
     """선택한 캐릭터의 영입 퀘스트를 진행하는 뷰"""
-    def __init__(self, author, user_data, all_data, save_func, char_key, back_callback):
+    def __init__(self, author, user_data, save_func, char_key, back_callback):
         super().__init__(timeout=180)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.char_key = char_key
         self.back_callback = back_callback 
@@ -346,7 +346,7 @@ class RecruitProcessView(discord.ui.View):
     @discord.ui.button(label="발자취 따라가기 (퀘스트 진행)", style=discord.ButtonStyle.success)
     async def proceed(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user != self.author: return
-        self.user_data = self.all_data.get(str(self.author.id))
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         
         quests = self.recruit_info["quests"]
         if self.progress >= len(quests):
@@ -377,7 +377,7 @@ class RecruitProcessView(discord.ui.View):
             self.user_data["money"] -= req_money
             for item, count in current_quest["req_items"].items():
                 inv[item] -= count
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
 
             # 전투 준비
             m_data = current_quest["monster_data"]
@@ -391,15 +391,15 @@ class RecruitProcessView(discord.ui.View):
             player = Character.from_dict(self.user_data["characters"][char_idx])
 
             async def on_victory(i, results=None):
-                self.user_data = self.all_data.get(str(self.author.id))
+                self.user_data = await get_user_data(self.author.id, self.author.display_name)
                 self.progress += 1
                 self.user_data["recruit_progress"][self.char_key] = self.progress
-                await self.save_func(self.all_data)
+                await self.save_func(self.author.id, self.user_data)
                 await self.show_quest_result(i)
 
             view = BattleView(
                 self.author, player, [monster], 
-                self.user_data, self.all_data, self.save_func, 
+                self.user_data, self.save_func, 
                 char_index=char_idx,
                 victory_callback=on_victory
             )
@@ -413,7 +413,7 @@ class RecruitProcessView(discord.ui.View):
             
             self.progress += 1
             self.user_data["recruit_progress"][self.char_key] = self.progress
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             
             await self.show_quest_result(interaction)
 
@@ -451,10 +451,10 @@ class RecruitProcessView(discord.ui.View):
             if "characters" not in self.user_data:
                 self.user_data["characters"] = []
             self.user_data["characters"].append(new_char.to_dict())
-            await self.save_func(self.all_data)
+            await self.save_func(self.author.id, self.user_data)
             
             # [신규] 메인 스토리 진행도 업데이트
-            await update_quest_progress(interaction.user.id, self.all_data, self.save_func, "recruit", 1, self.char_key)
+            await update_quest_progress(interaction.user.id, self.user_data, self.save_func, "recruit", 1, self.char_key)
             
             embed.add_field(name="🎉 영입 성공!", value=f"**[{c_data['name']}]**이(가) 파티에 합류했어!", inline=False)
             
@@ -469,7 +469,7 @@ class RecruitProcessView(discord.ui.View):
             embed.add_field(name="다음 단계", value=f"**{next_q['title']}**\n{req_str}\n💰 {next_q.get('req_money', 0)}원", inline=False)
             embed.set_footer(text=f"진행도: {self.progress}/{len(quests)}")
             
-            new_view = RecruitProcessView(self.author, self.user_data, self.all_data, self.save_func, self.char_key, self.back_callback)
+            new_view = RecruitProcessView(self.author, self.user_data, self.save_func, self.char_key, self.back_callback)
             
             if interaction.response.is_done():
                 await interaction.channel.send(embed=embed, view=new_view)
@@ -478,16 +478,15 @@ class RecruitProcessView(discord.ui.View):
 
     @discord.ui.button(label="목록으로", style=discord.ButtonStyle.secondary)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = RecruitSelectView(self.author, self.user_data, self.all_data, self.save_func, self.back_callback)
+        view = RecruitSelectView(self.author, self.user_data, self.save_func, self.back_callback)
         await interaction.response.edit_message(embed=None, content="영입 대상을 선택해줘.", view=view)
 
 class RecruitSelectView(discord.ui.View):
     """영입 가능한 캐릭터 목록 뷰"""
-    def __init__(self, author, user_data, all_data, save_func, back_callback):
+    def __init__(self, author, user_data, save_func, back_callback):
         super().__init__(timeout=180)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         self.back_callback = back_callback
         self.init_buttons()
@@ -523,7 +522,7 @@ class RecruitSelectView(discord.ui.View):
     def make_callback(self, char_key):
         async def callback(interaction: discord.Interaction):
             if interaction.user != self.author: return
-            self.user_data = self.all_data.get(str(self.author.id))
+            self.user_data = await get_user_data(self.author.id, self.author.display_name)
             
             info = RECRUIT_REGISTRY[char_key]
             progress = self.user_data.get("recruit_progress", {}).get(char_key, 0)
@@ -543,7 +542,7 @@ class RecruitSelectView(discord.ui.View):
                 desc = "모든 퀘스트를 완료했습니다."
 
             embed = discord.Embed(title=f"🕵️ 영입 퀘스트: {info['name']}", description=desc, color=discord.Color.blue())
-            view = RecruitProcessView(self.author, self.user_data, self.all_data, self.save_func, char_key, self.back_callback)
+            view = RecruitProcessView(self.author, self.user_data, self.save_func, char_key, self.back_callback)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         return callback
 

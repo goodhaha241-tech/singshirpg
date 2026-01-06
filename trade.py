@@ -4,6 +4,7 @@ from discord import SelectOption, ButtonStyle
 import aiomysql
 # [수정] DB 연결 풀을 공유하기 위해 data_manager에서 import
 from data_manager import get_db_pool
+from decorators import auto_defer
 
 # --- 카페 메뉴 데이터 설정 ---
 CAFE_MENU = [
@@ -48,16 +49,16 @@ class CafeView(View):
         self.save_func = save_func
 
     @discord.ui.button(label="거래 게시판", style=ButtonStyle.primary, emoji="📜")
+    @auto_defer()
     async def trade_board(self, interaction: discord.Interaction, button: Button):
-        if interaction.user != self.author: return
         # 뷰 진입 시 테이블 체크
         await check_trade_table()
         view = TradeBoardView(self.author, self.user_data, self.get_user_data_func, self.save_func)
         await view.update_message(interaction)
 
     @discord.ui.button(label="카페 주문", style=ButtonStyle.success, emoji="☕")
+    @auto_defer()
     async def order_cafe(self, interaction: discord.Interaction, button: Button):
-        if interaction.user != self.author: return
         view = CafeOrderView(self.author, self.user_data, self.get_user_data_func, self.save_func)
         await view.update_message(interaction)
 
@@ -145,33 +146,33 @@ class TradeBoardView(View):
                 ))
             
             if options:
-                select = Select(placeholder="구매할 아이템 선택", options=options)
+                select = Select(placeholder="구매할 아이템 선택", options=options, row=1)
                 select.callback = self.buy_callback
                 self.add_item(select)
 
         # 페이지 이동 버튼
         if trades and len(trades) > self.PER_PAGE:
-            prev_btn = Button(label="◀️", style=ButtonStyle.secondary, disabled=(self.page == 0))
+            prev_btn = Button(label="◀️", style=ButtonStyle.secondary, row=2, disabled=(self.page == 0))
             prev_btn.callback = self.prev_page
             self.add_item(prev_btn)
             
-            total_pages = (len(trades) - 1) // self.PER_PAGE + 1
-            next_btn = Button(label="▶️", style=ButtonStyle.secondary, disabled=(self.page >= total_pages - 1))
+            total_pages = max(1, (len(trades) - 1) // self.PER_PAGE + 1)
+            next_btn = Button(label="▶️", style=ButtonStyle.secondary, row=2, disabled=(self.page >= total_pages - 1))
             next_btn.callback = self.next_page
             self.add_item(next_btn)
 
         if interaction.response.is_done():
-            await interaction.message.edit(content="", embed=embed, view=self)
+            await interaction.edit_original_response(content="", embed=embed, view=self)
         else:
             await interaction.response.edit_message(content="", embed=embed, view=self)
 
+    @auto_defer()
     async def prev_page(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         self.page -= 1
         await self.update_message(interaction)
 
+    @auto_defer()
     async def next_page(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         self.page += 1
         await self.update_message(interaction)
 
@@ -183,8 +184,8 @@ class TradeBoardView(View):
         if interaction.user != self.author: return
         await interaction.response.send_modal(RegisterTradeModal(self.user_data, self.save_func, self))
 
+    @auto_defer()
     async def buy_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         trade_id = int(interaction.data['values'][0])
         
         # [수정] 비동기 DB 연결 사용
@@ -208,7 +209,7 @@ class TradeBoardView(View):
                         inv[trade['item_name']] = inv.get(trade['item_name'], 0) + trade['quantity']
                         await self.save_func(self.author.id, self.user_data)
                         
-                        await interaction.response.send_message(f"✅ **{trade['item_name']}** 판매를 취소하고 회수했습니다.", ephemeral=True)
+                        await interaction.followup.send(f"✅ **{trade['item_name']}** 판매를 취소하고 회수했습니다.", ephemeral=True)
                         await self.update_message(interaction)
                         return
 
@@ -218,7 +219,7 @@ class TradeBoardView(View):
                     user_balance = self.user_data.get(currency, 0)
                     
                     if user_balance < price:
-                        return await interaction.response.send_message(f"❌ 잔액이 부족합니다. (필요: {price}{currency})", ephemeral=True)
+                        return await interaction.followup.send(f"❌ 잔액이 부족합니다. (필요: {price}{currency})", ephemeral=True)
                     
                     # 3. 거래 실행 (트랜잭션)
                     # 3-1. 구매자 차감 및 아이템 지급
@@ -237,12 +238,12 @@ class TradeBoardView(View):
                     # 3-4. 구매자 데이터 저장
                     await self.save_func(self.author.id, self.user_data)
                     
-                    await interaction.response.send_message(f"✅ **{trade['item_name']}** 구매 완료!", ephemeral=True)
+                    await interaction.followup.send(f"✅ **{trade['item_name']}** 구매 완료!", ephemeral=True)
                     await self.update_message(interaction)
 
         except Exception as e:
             print(f"Trade Error: {e}")
-            await interaction.response.send_message("❌ 거래 처리 중 오류가 발생했습니다.", ephemeral=True)
+            await interaction.followup.send("❌ 거래 처리 중 오류가 발생했습니다.", ephemeral=True)
 
 
 class RegisterTradeModal(Modal):
@@ -380,11 +381,14 @@ class CafeOrderView(View):
         self.page = 0
         self.PER_PAGE = 7
         self.selected_indices = []
+        self.target_char_index = 0
 
     async def update_message(self, interaction: discord.Interaction):
         total_price = sum(CAFE_MENU[i]['price'] for i in self.selected_indices)
-        
-        embed = discord.Embed(title="☕ 카페 주문", description="원하는 음료나 음식을 주문하세요.\n(최대 2개, 같은 효과 중복 불가)", color=discord.Color.gold())
+        chars = self.user_data.get("characters", [])
+        target_char_name = chars[self.target_char_index]["name"] if chars else "알 수 없음"
+
+        embed = discord.Embed(title="☕ 카페 주문", description=f"**음식을 먹을 캐릭터:** {target_char_name}\n(최대 2개, 같은 효과 중복 불가)", color=discord.Color.gold())
         embed.add_field(name="내 지갑", value=f"💰 {self.user_data['money']}원", inline=False)
         
         if self.selected_indices:
@@ -409,6 +413,18 @@ class CafeOrderView(View):
 
         self.clear_items()
 
+        # 1. 캐릭터 선택 드롭다운 (Row 0)
+        char_options = []
+        for idx, c in enumerate(chars):
+            char_options.append(SelectOption(
+                label=c['name'], value=str(idx), 
+                default=(idx == self.target_char_index)
+            ))
+        char_select = Select(placeholder="음식을 먹을 캐릭터 선택", options=char_options, row=0)
+        char_select.callback = self.char_select_callback
+        self.add_item(char_select)
+
+        # 2. 메뉴 선택 드롭다운 (Row 1)
         options = []
         for i, item in enumerate(current_menu):
             real_idx = start + i
@@ -419,44 +435,48 @@ class CafeOrderView(View):
                 default=(real_idx in self.selected_indices)
             ))
         
-        select = Select(placeholder="메뉴를 선택하세요 (클릭하여 추가/제거)", min_values=1, max_values=min(len(current_menu), 2), options=options)
+        select = Select(placeholder="메뉴를 선택하세요 (클릭하여 추가/제거)", min_values=1, max_values=min(len(current_menu), 2), options=options, row=1)
         select.callback = self.select_callback
         self.add_item(select)
 
         if total_pages > 1:
-            prev_btn = Button(label="◀️", style=ButtonStyle.secondary, row=1, disabled=(self.page == 0))
+            prev_btn = Button(label="◀️", style=ButtonStyle.secondary, row=2, disabled=(self.page == 0))
             prev_btn.callback = self.prev_page
             self.add_item(prev_btn)
-            next_btn = Button(label="▶️", style=ButtonStyle.secondary, row=1, disabled=(self.page >= total_pages - 1))
+            next_btn = Button(label="▶️", style=ButtonStyle.secondary, row=2, disabled=(self.page >= total_pages - 1))
             next_btn.callback = self.next_page
             self.add_item(next_btn)
 
-        order_btn = Button(label="주문하기", style=ButtonStyle.primary, row=2, disabled=(not self.selected_indices))
+        order_btn = Button(label="주문하기", style=ButtonStyle.primary, row=3, disabled=(not self.selected_indices))
         order_btn.callback = self.order_callback
         self.add_item(order_btn)
 
-        cancel_btn = Button(label="취소", style=ButtonStyle.danger, row=2)
+        cancel_btn = Button(label="취소", style=ButtonStyle.danger, row=3)
         cancel_btn.callback = self.cancel_callback
         self.add_item(cancel_btn)
 
         if interaction.response.is_done():
-            await interaction.message.edit(content="", embed=embed, view=self)
+            await interaction.edit_original_response(content="", embed=embed, view=self)
         else:
             await interaction.response.edit_message(content="", embed=embed, view=self)
 
+    @auto_defer()
     async def prev_page(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         self.page -= 1
         await self.update_message(interaction)
 
+    @auto_defer()
     async def next_page(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         self.page += 1
         await self.update_message(interaction)
 
+    @auto_defer()
+    async def char_select_callback(self, interaction: discord.Interaction):
+        self.target_char_index = int(interaction.data['values'][0])
+        await self.update_message(interaction)
+
+    @auto_defer()
     async def select_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        
         current_page_selection = [int(v) for v in interaction.data['values']]
         
         start = self.page * self.PER_PAGE
@@ -466,26 +486,25 @@ class CafeOrderView(View):
         new_selection = other_page_selection + current_page_selection
         
         if len(new_selection) > 2:
-            await interaction.response.send_message("❌ 한 번에 최대 2개까지만 주문할 수 있습니다.", ephemeral=True)
+            await interaction.followup.send("❌ 한 번에 최대 2개까지만 주문할 수 있습니다.", ephemeral=True)
             return
 
         stats = []
         for idx in new_selection:
             stat = CAFE_MENU[idx]['stat']
             if stat in stats:
-                await interaction.response.send_message(f"❌ 같은 효과({stat})를 가진 메뉴는 동시에 주문할 수 없습니다.", ephemeral=True)
+                await interaction.followup.send(f"❌ 같은 효과({stat})를 가진 메뉴는 동시에 주문할 수 없습니다.", ephemeral=True)
                 return
             stats.append(stat)
 
         self.selected_indices = new_selection
         await self.update_message(interaction)
 
+    @auto_defer()
     async def order_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        
         total_price = sum(CAFE_MENU[i]['price'] for i in self.selected_indices)
         if self.user_data['money'] < total_price:
-            await interaction.response.send_message("❌ 돈이 부족합니다.", ephemeral=True)
+            await interaction.followup.send("❌ 돈이 부족합니다.", ephemeral=True)
             return
 
         self.user_data['money'] -= total_price
@@ -493,26 +512,35 @@ class CafeOrderView(View):
         if 'buffs' not in self.user_data:
             self.user_data['buffs'] = {}
             
+        chars = self.user_data.get("characters", [])
+        target_char_name = chars[self.target_char_index]["name"] if chars else "Unknown"
+
         applied_names = []
         for idx in self.selected_indices:
             item = CAFE_MENU[idx]
             self.user_data['buffs'][item['name']] = {
                 "stat": item['stat'],
                 "value": item['value'],
-                "duration": item['duration']
+                "duration": item['duration'],
+                "target": target_char_name
             }
             applied_names.append(item['name'])
+            
+        # [신규] 버프 개수 제한 (최대 2개, 오래된 순으로 삭제)
+        while len(self.user_data['buffs']) > 2:
+            oldest_key = next(iter(self.user_data['buffs']))
+            del self.user_data['buffs'][oldest_key]
             
         # [수정] save_func 비동기 호출 및 인자 수정
         await self.save_func(self.author.id, self.user_data)
         
-        embed = discord.Embed(title="🧾 주문 완료", description="맛있게 드세요! 버프가 적용되었습니다.", color=discord.Color.green())
+        embed = discord.Embed(title="🧾 주문 완료", description=f"**{target_char_name}**님, 맛있게 드세요! 버프가 적용되었습니다.", color=discord.Color.green())
         embed.add_field(name="주문 메뉴", value=", ".join(applied_names), inline=False)
         embed.add_field(name="지불 금액", value=f"{total_price}원", inline=False)
         embed.add_field(name="남은 돈", value=f"{self.user_data['money']}원", inline=False)
         
-        await interaction.response.edit_message(content="", embed=embed, view=None)
+        await interaction.edit_original_response(content="", embed=embed, view=None)
 
+    @auto_defer()
     async def cancel_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        await interaction.response.edit_message(content="주문을 취소했습니다.", embed=None, view=None)
+        await interaction.edit_original_response(content="주문을 취소했습니다.", embed=None, view=None)

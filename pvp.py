@@ -355,7 +355,7 @@ class PVPSelectView(discord.ui.View):
             sc = get_card(c_name)
             await self.battle_view.receive_action(i, self.player_num, sc)
         return cb
-    async def prev_cb(self, i): self.page=max(0,self.page-1); self.update_buttons(); await i.response.edit_message(view=self)
-    async def next_cb(self, i): self.page+=1; self.update_buttons(); await i.response.edit_message(view=self)
+    async def prev_cb(self, i): self.page=max(0,self.page-1); self.update_buttons(); await i.edit_original_response(view=self)
+    async def next_cb(self, i): self.page+=1; self.update_buttons(); await i.edit_original_response(view=self)
     async def panic_callback(self, i):
         await self.battle_view.receive_action(i, self.player_num, None)

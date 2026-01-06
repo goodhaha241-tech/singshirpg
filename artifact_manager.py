@@ -9,6 +9,7 @@ from items import RARE_ITEMS
 from artifacts import _make_description, apply_upgrade_bonus
 from fishing import FISH_TIERS
 from data_manager import get_user_data
+from decorators import auto_defer
 
 DATA_FILE = "user_data.json"
 
@@ -44,11 +45,10 @@ UPGRADE_COSTS = {
 }
 
 class ArtifactManageView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.all_data = all_data
         self.save_func = save_func
         
         self.mode = "equip" # equip, dismantle, enhance
@@ -73,7 +73,7 @@ class ArtifactManageView(discord.ui.View):
         if char_list and 0 <= self.char_index < len(char_list):
             self.char = Character.from_dict(char_list[self.char_index])
         else:
-            self.char = Character("모험가", 100, 10, 5)
+            self.char = Character("모험가", 170, 170, 90, 90, 5, 3)
 
     def get_artifact_rank(self, art):
         if "rank" in art: return art["rank"]
@@ -135,27 +135,24 @@ class ArtifactManageView(discord.ui.View):
             self.add_item(btn)
 
     # --- Mode Switching ---
+    @auto_defer(reload_data=True)
     async def switch_to_equip(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         self.mode = "equip"
         self.selected_artifact_idx = None
         self.artifact_page = 0
         self.update_view_components()
-        await interaction.response.edit_message(embed=self.make_base_embed("💍 장착 모드", "캐릭터에게 아티팩트를 장착합니다."), view=self)
+        await interaction.edit_original_response(embed=self.make_base_embed("💍 장착 모드", "캐릭터에게 아티팩트를 장착합니다."), view=self)
 
+    @auto_defer(reload_data=True)
     async def switch_to_dismantle(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         self.mode = "dismantle"
         self.selected_artifact_idx = None
         self.artifact_page = 0
         self.update_view_components()
-        await interaction.response.edit_message(embed=self.make_base_embed("🔨 분해 모드", "아티팩트를 분해하여 재료를 얻습니다."), view=self)
+        await interaction.edit_original_response(embed=self.make_base_embed("🔨 분해 모드", "아티팩트를 분해하여 재료를 얻습니다."), view=self)
 
+    @auto_defer(reload_data=True)
     async def switch_to_enhance(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         self.mode = "enhance"
         self.selected_artifact_idx = None
         self.artifact_page = 0
@@ -165,7 +162,7 @@ class ArtifactManageView(discord.ui.View):
         kit = self.user_data.get("inventory", {}).get("강화키트", 0)
         desc = (f"아티팩트를 강화합니다. (최대 5강)\n"
                 f"**[보유 자원]**\n💰 {money:,}원 | ⚡ {pt:,}pt | 📦 강화키트: {kit}개")
-        await interaction.response.edit_message(embed=self.make_base_embed("✨ 강화 모드", desc), view=self)
+        await interaction.edit_original_response(embed=self.make_base_embed("✨ 강화 모드", desc), view=self)
 
     # --- Select Components (Pagination) ---
     def add_character_select(self):
@@ -322,39 +319,36 @@ class ArtifactManageView(discord.ui.View):
             next_btn.callback = self.next_art_page
             self.add_item(next_btn)
 
+    @auto_defer()
     async def prev_art_page(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         self.artifact_page -= 1
         self.update_view_components()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
+    @auto_defer()
     async def next_art_page(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         self.artifact_page += 1
         self.update_view_components()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
     # --- Callbacks ---
+    @auto_defer()
     async def on_char_select(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         val = interaction.data['values'][0]
         
         if val == "next_char_page":
             self.char_page += 1
-            self.update_view_components()
-            return await interaction.response.edit_message(view=self)
         elif val == "prev_char_page":
             self.char_page -= 1
-            self.update_view_components()
-            return await interaction.response.edit_message(view=self)
-            
-        self.char_index = int(val)
-        self.load_character()
-        self.update_view_components()
-        await interaction.response.edit_message(view=self)
+        else:
+            self.char_index = int(val)
+            self.load_character()
 
+        self.update_view_components()
+        await interaction.edit_original_response(view=self)
+
+    @auto_defer()
     async def on_filter_select(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         val = interaction.data['values'][0]
         if val == "next_page": self.filter_page += 1
         elif val == "prev_page": self.filter_page = max(0, self.filter_page - 1)
@@ -363,26 +357,32 @@ class ArtifactManageView(discord.ui.View):
         self.selected_artifact_idx = None
         self.artifact_page = 0
         self.update_view_components()
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(view=self)
 
     # --- ACTION HANDLER ---
+    @auto_defer(reload_data=True)
     async def on_artifact_select(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         val = interaction.data['values'][0]
-        if val == "none": return await interaction.response.defer()
+        if val == "none": return
 
         # [중요] 행동 전 데이터 리로드 (동시성 문제 및 롤백 방지)
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
 
         if self.mode == "equip":
             if val == "unequip":
+                # 메인 리스트에서 해당 아티팩트의 장착 정보 해제
+                if self.char.equipped_artifact:
+                    art_id = self.char.equipped_artifact.get("id")
+                    for a in self.user_data.get("artifacts", []):
+                        if a.get("id") == art_id:
+                            a["equipped_char_index"] = -1
+                
                 self.char.equipped_artifact = None
                 msg = f"✅ **{self.char.name}**: 장착 해제 완료."
             else:
                 idx = int(val)
                 # 인덱스 유효성 체크
                 if idx >= len(self.user_data["artifacts"]):
-                    return await interaction.response.send_message("❌ 아티팩트 정보가 변경되었습니다. 다시 선택해주세요.", ephemeral=True)
+                    return await interaction.followup.send("❌ 아티팩트 정보가 변경되었습니다. 다시 선택해주세요.", ephemeral=True)
                 art = self.user_data["artifacts"][idx]
                 
                 # 중복 장착 체크
@@ -390,7 +390,17 @@ class ArtifactManageView(discord.ui.View):
                     if i == self.char_index: continue
                     eq = c.get("equipped_artifact")
                     if eq and eq.get("id") == art.get("id"):
-                        return await interaction.response.send_message(f"❌ 이미 **{c['name']}**에게 장착되어 있습니다.", ephemeral=True)
+                        return await interaction.followup.send(f"❌ 이미 **{c['name']}**에게 장착되어 있습니다.", ephemeral=True)
+                
+                # 기존에 이 캐릭터가 장착하고 있던 아티팩트가 있다면 리스트에서 인덱스 초기화
+                if self.char.equipped_artifact:
+                    old_id = self.char.equipped_artifact.get("id")
+                    for a in self.user_data.get("artifacts", []):
+                        if a.get("id") == old_id:
+                            a["equipped_char_index"] = -1
+
+                # 새 아티팩트에 장착 정보 설정 (DB 저장을 위해)
+                art["equipped_char_index"] = self.char_index
                 
                 self.char.equipped_artifact = art
                 msg = f"💍 **{self.char.name}**: **{art['name']}** 장착 완료!"
@@ -398,12 +408,12 @@ class ArtifactManageView(discord.ui.View):
             self.user_data["characters"][self.char_index] = self.char.to_dict()
             await self.save_func(self.author.id, self.user_data)
             self.update_view_components()
-            await interaction.response.edit_message(content=msg, embed=self.make_base_embed("💍 장착 모드", msg), view=self)
+            await interaction.edit_original_response(content=msg, embed=self.make_base_embed("💍 장착 모드", msg), view=self)
 
         elif self.mode == "dismantle":
             idx = int(val)
             if idx >= len(self.user_data["artifacts"]):
-                return await interaction.response.send_message("❌ 아티팩트 정보가 변경되었습니다.", ephemeral=True)
+                return await interaction.followup.send("❌ 아티팩트 정보가 변경되었습니다.", ephemeral=True)
             art = self.user_data["artifacts"][idx]
             
             # 장착 체크
@@ -414,7 +424,7 @@ class ArtifactManageView(discord.ui.View):
                     is_equipped = True
                     break
             if is_equipped:
-                return await interaction.response.send_message("❌ 장착 중인 아티팩트는 분해할 수 없습니다.", ephemeral=True)
+                return await interaction.followup.send("❌ 장착 중인 아티팩트는 분해할 수 없습니다.", ephemeral=True)
 
             del self.user_data["artifacts"][idx]
             rank = self.get_artifact_rank(art)
@@ -436,20 +446,20 @@ class ArtifactManageView(discord.ui.View):
             await self.save_func(self.author.id, self.user_data)
             self.update_view_components()
             msg = f"🔨 **{art['name']}** 분해 완료! (획득: {', '.join(rewards)})"
-            await interaction.response.edit_message(content=msg, embed=self.make_base_embed("🔨 분해 모드", msg), view=self)
+            await interaction.edit_original_response(content=msg, embed=self.make_base_embed("🔨 분해 모드", msg), view=self)
 
         elif self.mode == "enhance":
             idx = int(val)
             if idx >= len(self.user_data["artifacts"]):
-                return await interaction.response.send_message("❌ 아티팩트 정보가 변경되었습니다.", ephemeral=True)
+                return await interaction.followup.send("❌ 아티팩트 정보가 변경되었습니다.", ephemeral=True)
             
             self.selected_artifact_idx = idx
             embed = self.make_enhance_preview_embed(idx)
             self.update_view_components() 
-            await interaction.response.edit_message(embed=embed, view=self)
+            await interaction.edit_original_response(embed=embed, view=self)
 
+    @auto_defer()
     async def cancel_enhance_selection(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         self.selected_artifact_idx = None
         self.update_view_components()
         money = self.user_data.get("money", 0)
@@ -457,22 +467,19 @@ class ArtifactManageView(discord.ui.View):
         kit = self.user_data.get("inventory", {}).get("강화키트", 0)
         desc = (f"아티팩트를 강화합니다. (최대 5강)\n"
                 f"**[보유 자원]**\n💰 {money:,}원 | ⚡ {pt:,}pt | 📦 강화키트: {kit}개")
-        await interaction.response.edit_message(embed=self.make_base_embed("✨ 강화 모드", desc), view=self)
+        await interaction.edit_original_response(embed=self.make_base_embed("✨ 강화 모드", desc), view=self)
 
+    @auto_defer(reload_data=True)
     async def confirm_enhance_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
         if self.selected_artifact_idx is None:
-            return await interaction.response.send_message("❌ 선택된 아티팩트가 없습니다.", ephemeral=True)
+            return await interaction.followup.send("❌ 선택된 아티팩트가 없습니다.", ephemeral=True)
         
-        # [중요] 강화 직전 데이터 리로드
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
-            
         try:
             art = self.user_data["artifacts"][self.selected_artifact_idx]
         except IndexError:
             self.selected_artifact_idx = None
             self.update_view_components()
-            return await interaction.response.edit_message(content="❌ 아티팩트 정보를 찾을 수 없습니다.", view=self)
+            return await interaction.edit_original_response(content="❌ 아티팩트 정보를 찾을 수 없습니다.", view=self)
 
         await self.process_enhance(interaction, art, self.selected_artifact_idx)
 
@@ -481,7 +488,7 @@ class ArtifactManageView(discord.ui.View):
         level = art.get("level", 0)
         
         if level >= 5:
-            return await interaction.response.send_message("⚠️ 이미 최대 레벨(5강)입니다.", ephemeral=True)
+            return await interaction.followup.send("⚠️ 이미 최대 레벨(5강)입니다.", ephemeral=True)
 
         inv = self.user_data.setdefault("inventory", {})
         money = self.user_data.get("money", 0)
@@ -496,9 +503,9 @@ class ArtifactManageView(discord.ui.View):
         req_items = cost_data["items"]
 
         if money < req_money:
-            return await interaction.response.send_message(f"❌ 돈이 부족합니다. ({req_money:,}원 필요)", ephemeral=True)
+            return await interaction.followup.send(f"❌ 돈이 부족합니다. ({req_money:,}원 필요)", ephemeral=True)
         if pt < req_pt:
-            return await interaction.response.send_message(f"❌ 포인트가 부족합니다. ({req_pt:,}pt 필요)", ephemeral=True)
+            return await interaction.followup.send(f"❌ 포인트가 부족합니다. ({req_pt:,}pt 필요)", ephemeral=True)
         
         missing_items = []
         for item, count in req_items.items():
@@ -506,7 +513,7 @@ class ArtifactManageView(discord.ui.View):
                 missing_items.append(f"{item} ({inv.get(item,0)}/{count})")
         
         if missing_items:
-            return await interaction.response.send_message(f"❌ 재료가 부족합니다: {', '.join(missing_items)}", ephemeral=True)
+            return await interaction.followup.send(f"❌ 재료가 부족합니다: {', '.join(missing_items)}", ephemeral=True)
 
         inv["강화키트"] -= 1
         if inv["강화키트"] <= 0: del inv["강화키트"]
@@ -551,13 +558,10 @@ class ArtifactManageView(discord.ui.View):
         embed.description = f"**{art['name']}**\n\n" + "\n".join(log_lines)
         embed.set_footer(text=f"남은 강화키트: {inv.get('강화키트', 0)}개")
         
-        await interaction.response.edit_message(content=None, embed=embed, view=self)
+        await interaction.edit_original_response(content=None, embed=embed, view=self)
 
+    @auto_defer(reload_data=True)
     async def bulk_dismantle(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        
-        # [중요] 분해 전 리로드
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         
         artifacts = self.user_data.get("artifacts", [])
         characters = self.user_data.get("characters", [])
@@ -590,7 +594,7 @@ class ArtifactManageView(discord.ui.View):
                 new_artifacts.append(art)
 
         if dismantled == 0:
-            return await interaction.response.send_message("❌ 분해할 1~2성 아티팩트가 없습니다.", ephemeral=True)
+            return await interaction.followup.send("❌ 분해할 1~2성 아티팩트가 없습니다.", ephemeral=True)
 
         self.user_data["artifacts"] = new_artifacts
         inv = self.user_data.setdefault("inventory", {})
@@ -601,7 +605,7 @@ class ArtifactManageView(discord.ui.View):
         self.update_view_components()
         
         r_str = ", ".join([f"{k} x{v}" for k, v in rewards.items()])
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=f"🗑️ **{dismantled}개** 분해 완료!\n획득: {r_str}", 
             embed=self.make_base_embed("🔨 분해 모드", "일괄 분해가 완료되었습니다."),
             view=self

@@ -17,15 +17,20 @@ CREATE TABLE IF NOT EXISTS users (
     main_quest_current INT DEFAULT 0,
     main_quest_index INT DEFAULT 0,
 
-    -- 마이홈 레벨 (JSON의 myhome 내부 값을 여기로 풀어서 저장)
+    -- 마이홈 정보
+    water_can INT DEFAULT 0,
+    fishing_rod INT DEFAULT 0,
+    fishing_spot_level INT DEFAULT 0,
     garden_level INT DEFAULT 1,
     workshop_level INT DEFAULT 1,
     fishing_level INT DEFAULT 1,
-    total_subjugations INT DEFAULT 0,
+    total_investigations BIGINT DEFAULT 0,
+    total_subjugations BIGINT DEFAULT 0,
 
     -- JSON 형태로 저장할 가벼운 데이터들
     cards JSON,           -- 보유 카드 리스트
     buffs JSON,           -- 적용 중인 버프
+    main_quest_progress JSON, -- 퀘스트 진행 상세
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -34,14 +39,14 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS inventory (
     user_id VARCHAR(50),
     item_name VARCHAR(100),
-    quantity INT,
+    quantity BIGINT DEFAULT 0,
     PRIMARY KEY (user_id, item_name),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
 -- 3. 캐릭터 (보유 캐릭터 목록)
 CREATE TABLE IF NOT EXISTS characters (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id VARCHAR(50),
     name VARCHAR(100),
     hp INT,
@@ -91,13 +96,14 @@ CREATE TABLE IF NOT EXISTS recruit_progress (
 
 -- 7. 마이홈 - 텃밭 슬롯
 CREATE TABLE IF NOT EXISTS garden_slots (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id VARCHAR(50),
     slot_index INT,
     planted BOOLEAN DEFAULT FALSE,
     plant_name VARCHAR(100),
     stage INT DEFAULT 0,
-    last_invest_count INT DEFAULT 0,
+    last_invest_count BIGINT DEFAULT 0, -- 조사 성공 턴 수와 비교를 위해 BIGINT 확장
+    fertilizer VARCHAR(100),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
@@ -111,20 +117,20 @@ CREATE TABLE IF NOT EXISTS user_fertilizers (
 
 -- 9. 마이홈 - 작업실 슬롯
 CREATE TABLE IF NOT EXISTS workshop_slots (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id VARCHAR(50),
     slot_index INT,
     craft_item VARCHAR(100),
-    start_count INT DEFAULT 0,
-    required_count INT DEFAULT 0,
+    start_count BIGINT DEFAULT 0,
+    required_count BIGINT DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
 -- 10. 마이홈 - 낚시 분해 슬롯
 CREATE TABLE IF NOT EXISTS fishing_slots (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id VARCHAR(50),
     fish_name VARCHAR(100),
-    start_count INT DEFAULT 0,
+    start_count BIGINT DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );

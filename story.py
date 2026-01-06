@@ -3,6 +3,7 @@ import discord
 import json
 import os
 from character import Character
+from decorators import auto_defer
 
 DATA_FILE = "user_data.json"
 
@@ -673,7 +674,7 @@ async def update_quest_progress(user_id, user_data, save_func, event_type, value
     elif q_type == "kill_boss_limited_turn" and event_type == "kill":
         if sub_key == current_quest["target"]:
             # extra_info로 턴 수가 넘어와야 함
-            turn_taken = extra_info if extra_info else 999
+            turn_taken = extra_info if extra_info is not None else 999
             if turn_taken <= current_quest["limit_turn"]:
                 q_prog["current"] = 1  # [중요] 완료 상태를 저장 (이 부분이 누락되어 있었음)
                 is_completed = True
@@ -746,26 +747,14 @@ async def update_quest_progress(user_id, user_data, save_func, event_type, value
 
 # --- UI 뷰 ---
 class MainStoryView(discord.ui.View):
-    def __init__(self, author, user_data, all_data, save_func):
+    def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        # self.all_data = all_data # 사용하지 않음
         self.save_func = save_func
         self.current_quest_idx = self.user_data.get("main_quest_index", 0)
         self.display_idx = self.current_quest_idx
         self.update_view()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user != self.author:
-            await interaction.response.send_message("본인의 스토리만 조작할 수 있습니다.", ephemeral=True)
-            return False
-        
-        # 데이터 갱신 로직이 필요하다면 get_user_data를 주입받아야 하지만, 
-        # 현재 구조상 self.user_data를 신뢰하거나 외부에서 갱신해야 합니다.
-        # 여기서는 JSON 리로드를 제거하여 NoneType 에러를 방지합니다.
-        self.current_quest_idx = self.user_data.get("main_quest_index", 0)
-        return True
 
     def update_view(self):
         self.clear_items()
@@ -849,13 +838,13 @@ class MainStoryView(discord.ui.View):
             elif q_type == "kill_any_in_region":
                 status_text = f"🗺️ **{quest['region']}** 몬스터 : {curr}/{quest['count']} 처치"
             elif q_type == "investigate":
-                status_text = f"🔍 **{quest['region']}** 조사 : {curr}/{quest['count']}회"
+                status_text = f"🔍 **{quest['region']}** 조사 성공 : {curr}/{quest['count']}턴"
             elif q_type == "investigate_with_char":
                 char_name = quest['char_name']
                 if char_name == "__USER__":
                     first_char_name = self.user_data.get("characters", [{}])[0].get("name", "첫 번째 동료")
                     char_name = f"[{first_char_name}]"
-                status_text = f"🕵️ **{char_name}**(으)로 **{quest['region']}** 조사 : {curr}/{quest['count']}회"
+                status_text = f"🕵️ **{char_name}**(으)로 **{quest['region']}** 조사 성공 : {curr}/{quest['count']}턴"
             elif q_type == "craft":
                 status_text = f"🔨 **{quest['target']}** 제작 : {curr}/{quest['count']}개"
             elif q_type == "region_unlock":
@@ -874,7 +863,7 @@ class MainStoryView(discord.ui.View):
 
     async def complete_quest(self, interaction: discord.Interaction):
         if self.current_quest_idx >= len(MAIN_STORY):
-            return await interaction.response.edit_message(content="🎉 현재 공개된 모든 메인 스토리를 완료했습니다!", embed=None, view=None)
+            return await interaction.edit_original_response(content="🎉 현재 공개된 모든 메인 스토리를 완료했습니다!", embed=None, view=None)
 
         quest = MAIN_STORY[self.current_quest_idx]
         progress = self.user_data.get("main_quest_progress", {})
@@ -926,7 +915,7 @@ class MainStoryView(discord.ui.View):
                 chars = self.user_data.get("characters", [])
                 
                 if not chars:
-                    return await interaction.response.send_message("❌ 전투에 나갈 캐릭터가 없습니다.", ephemeral=True)
+                    return await interaction.followup.send("❌ 전투에 나갈 캐릭터가 없습니다.", ephemeral=True)
                 
                 if char_idx >= len(chars):
                     char_idx = 0
@@ -956,7 +945,7 @@ class MainStoryView(discord.ui.View):
                 )
                 
                 # 기존 메시지를 전투 화면으로 교체
-                await interaction.response.edit_message(content=None, embed=embed, view=view)
+                await interaction.edit_original_response(content=None, embed=embed, view=view)
                 return  # 전투로 넘어갔으므로 이후 로직(퀘스트 완료 메시지 등)은 실행하지 않음
 
         # 4. 그 외 진행도 체크형 퀘스트
@@ -991,7 +980,7 @@ class MainStoryView(discord.ui.View):
                 if curr >= quest["count"]: is_done = True
                 
             elif quest["type"] == "investigate":
-                status_text = f"🔍 **{quest['region']}** 조사 : {curr}/{quest['count']}회"
+                status_text = f"🔍 **{quest['region']}** 조사 성공 : {curr}/{quest['count']}턴"
                 if curr >= quest["count"]: is_done = True
             
             elif quest["type"] == "investigate_multi":
@@ -1000,13 +989,13 @@ class MainStoryView(discord.ui.View):
                 curr_dict = curr if isinstance(curr, dict) else {}
                 for t_name, t_req in quest["targets"].items():
                     c_val = curr_dict.get(t_name, 0)
-                    t_status.append(f"🔍 **{t_name}** : {c_val}/{t_req}")
+                    t_status.append(f"🔍 **{t_name}** 성공 : {c_val}/{t_req}턴")
                     if c_val < t_req: all_pass = False
                 status_text = "\n".join(t_status)
                 if all_pass: is_done = True
 
             elif quest["type"] == "investigate_with_char":
-                status_text = f"🕵️ **[{quest['char_name']}]**으로 **{quest['region']}** 조사 : {curr}/{quest['count']}회"
+                status_text = f"🕵️ **[{quest['char_name']}]**으로 **{quest['region']}** 조사 성공 : {curr}/{quest['count']}턴"
                 if curr >= quest["count"]: is_done = True
 
             elif quest["type"] == "craft":
@@ -1088,7 +1077,14 @@ class MainStoryView(discord.ui.View):
             
             # 완료 메시지 수정
             embed.title = f"✅ {embed.title} 완료!"
-            await interaction.response.edit_message(content="퀘스트를 완료했습니다! 다음 이야기를 확인하세요.", embed=embed, view=self)
+            try:
+                await interaction.edit_original_response(content="퀘스트를 완료했습니다! 다음 이야기를 확인하세요.", embed=embed, view=self)
+            except (discord.errors.NotFound, discord.errors.HTTPException):
+                # 웹훅 만료 시 새로운 메시지로 결과 전송
+                await interaction.followup.send(content="✅ 퀘스트를 완료했습니다! 다음 이야기를 확인하세요.", embed=embed)
         else:
             # 아직 완료되지 않았으면, 현재 상태만 다시 보여줌
-            await interaction.response.edit_message(content="❌ 아직 조건을 달성하지 못했습니다.", embed=embed, view=self)
+            try:
+                await interaction.edit_original_response(content="❌ 아직 조건을 달성하지 못했습니다.", embed=embed, view=self)
+            except (discord.errors.NotFound, discord.errors.HTTPException):
+                await interaction.followup.send(content="❌ 아직 조건을 달성하지 못했습니다.", embed=embed, ephemeral=True)
