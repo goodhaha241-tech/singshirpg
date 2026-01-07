@@ -344,8 +344,8 @@ class BattleView(discord.ui.View):
         return embed
 
     async def finish_battle(self, interaction, log, is_win):
-        # 던전 런일 경우 버프 유지 (던전 종료 시 일괄 제거)
-        if not self.is_dungeon_run and hasattr(self.player, "remove_battle_buffs"):
+        # 전투 종료 시 아티팩트 수치 제거 (던전 포함 모든 전투 공통)
+        if hasattr(self.player, "remove_battle_buffs"):
             self.player.remove_battle_buffs()
         
         buffs = self.user_data.setdefault("buffs", {})

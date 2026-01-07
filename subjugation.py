@@ -204,11 +204,12 @@ class DungeonItemUseView(discord.ui.View):
         elif item_name in ITEM_CATEGORIES and ITEM_CATEGORIES[item_name].get("type") == "consumable":
             info = ITEM_CATEGORIES[item_name]
             eff, val = info.get("effect"), info.get("value", 0)
+            # 던전 내에서는 던전 전용 스탯(증강제 등)이 포함된 max_hp를 기준으로 회복 제한
             if eff == "hp":
-                char_data["current_hp"] = min(char_data["hp"], char_data["current_hp"] + val)
+                char_data["current_hp"] = min(self.dungeon_view.player.max_hp, char_data["current_hp"] + val)
                 used = True
             elif eff == "mental":
-                char_data["current_mental"] = min(char_data["max_mental"], char_data["current_mental"] + val)
+                char_data["current_mental"] = min(self.dungeon_view.player.max_mental, char_data["current_mental"] + val)
                 used = True
 
         if used:
@@ -216,6 +217,10 @@ class DungeonItemUseView(discord.ui.View):
             if inv[item_name] <= 0: del inv[item_name]
             await self.save_func(self.author.id, self.user_data)
             self.update_components()
+            
+            # 던전 뷰의 플레이어 객체 상태 동기화
+            self.dungeon_view.player.current_hp = char_data["current_hp"]
+            self.dungeon_view.player.current_mental = char_data["current_mental"]
             
             embed = discord.Embed(title=f"✅ {item_name} 사용 완료", color=discord.Color.green())
             embed.add_field(name="현재 상태", value=f"❤️ HP: {char_data['current_hp']}/{char_data['hp']}\n🧠 멘탈: {char_data['current_mental']}/{char_data['max_mental']}")
@@ -232,7 +237,7 @@ class DungeonItemUseView(discord.ui.View):
         
         new_char_data = self.user_data["characters"][self.dungeon_view.char_index]
         self.dungeon_view.player = Character.from_dict(new_char_data)
-        self.dungeon_view.player.apply_battle_start_buffs()
+        self.dungeon_view.apply_stat_item_effect() # 던전 전용 스탯 아이템 효과 재적용
 
         await interaction.response.edit_message(embed=self.recovery_view.get_embed(), view=self.recovery_view)
 
@@ -272,6 +277,28 @@ class DungeonRecoveryView(discord.ui.View):
         if interaction.user.id != self.author.id: return
         await self.dungeon_view.end_dungeon(interaction, "탐사를 중단하고 던전에서 나왔습니다.")
 
+class BossEncounterView(discord.ui.View):
+    """보스 조우 시 정보를 보여주는 뷰"""
+    def __init__(self, author, dungeon_view, boss, extra_msg=""):
+        super().__init__(timeout=180)
+        self.author = author
+        self.dungeon_view = dungeon_view
+        self.boss = boss
+        self.extra_msg = extra_msg
+
+    def get_embed(self):
+        embed = discord.Embed(title=f"☠️ 보스 출현: {self.boss.name}", description=self.boss.description, color=discord.Color.dark_red())
+        embed.add_field(name="정보", value=f"❤️ HP: {self.boss.max_hp}\n⚔️ 공격력: {self.boss.attack}\n🛡️ 방어력: {self.boss.defense}", inline=False)
+        if self.extra_msg:
+            embed.add_field(name="⚠️ 알림", value=self.extra_msg, inline=False)
+        embed.set_footer(text="준비가 되었다면 전투를 시작하세요.")
+        return embed
+
+    @discord.ui.button(label="⚔️ 전투 시작", style=discord.ButtonStyle.danger)
+    async def start_battle(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author.id: return
+        await self.dungeon_view.start_boss_battle(interaction, self.boss)
+
 class DungeonMainView(discord.ui.View):
     """던전 탐사 메인 뷰"""
     def __init__(self, author, user_data, save_func, char_index, region_name):
@@ -286,7 +313,6 @@ class DungeonMainView(discord.ui.View):
         self.accumulated_loot = {"items": {}, "money": 0, "pt": 0}
 
         self.player = Character.from_dict(user_data["characters"][char_index])
-        self.player.apply_battle_start_buffs()
         
         self.choices = []
         self.dungeon_item = None # 현재 소지한 던전 전용 아이템
@@ -425,10 +451,27 @@ class DungeonMainView(discord.ui.View):
     async def enter_boss_room(self, interaction: discord.Interaction, extra_msg=""):
         # [수정] monsters.py의 get_dungeon_boss 함수를 사용하여 보스 로드
         boss = get_dungeon_boss(self.region_name, self.depth)
-        monsters = [boss]
         
         # get_dungeon_boss 내부에서 이미 기본 스케일링이 되었으나, 추가 버프 적용 가능
-        self.apply_monster_buffs(monsters, is_boss=True)
+        self.apply_monster_buffs([boss], is_boss=True)
+
+        view = BossEncounterView(self.author, self, boss, extra_msg)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=view.get_embed(), view=view)
+        else:
+            await interaction.response.edit_message(embed=view.get_embed(), view=view)
+
+    async def start_boss_battle(self, interaction: discord.Interaction, boss):
+        monsters = [boss]
+        
+        # [추가] 아티팩트 정보 동기화 (안전장치)
+        if not self.player.equipped_artifact:
+            self.player.equipped_artifact = self.user_data["characters"][self.char_index].get("equipped_artifact")
+        if not self.player.equipped_engraved_artifact:
+            self.player.equipped_engraved_artifact = self.user_data["characters"][self.char_index].get("equipped_engraved_artifact")
+            
+        # [수정] 전투 시작 시에만 아티팩트 수치 적용
+        self.player.apply_battle_start_buffs()
 
         async def on_victory(i, battle_results):
             self.player.current_hp = battle_results.get("player_hp", self.player.current_hp)
@@ -450,7 +493,7 @@ class DungeonMainView(discord.ui.View):
             is_dungeon_run=True,
             dungeon_item=self.dungeon_item # 던전 아이템 전달
         )
-        embed = discord.Embed(title="☠️ 보스 출현!", description=f"강력한 존재가 앞을 막아섭니다!{extra_msg}", color=discord.Color.dark_red())
+        embed = discord.Embed(title=f"⚔️ {boss.name} 교전 개시!", description="전투가 시작됩니다!", color=discord.Color.dark_red())
         
         if interaction.response.is_done():
             await interaction.edit_original_response(embed=embed, view=view)
@@ -463,9 +506,14 @@ class DungeonMainView(discord.ui.View):
         for i, m in enumerate(monsters):
             if len(monsters) > 1: m.name = f"{m.name} {chr(65+i)}"
 
-        original_char = self.user_data["characters"][self.char_index]
-        self.player.equipped_artifact = original_char.get("equipped_artifact")
-        self.player.equipped_engraved_artifact = original_char.get("equipped_engraved_artifact")
+        # [추가] 아티팩트 정보 동기화 (안전장치)
+        if not self.player.equipped_artifact:
+            self.player.equipped_artifact = self.user_data["characters"][self.char_index].get("equipped_artifact")
+        if not self.player.equipped_engraved_artifact:
+            self.player.equipped_engraved_artifact = self.user_data["characters"][self.char_index].get("equipped_engraved_artifact")
+
+        # [수정] 전투 시작 시에만 아티팩트 수치 적용
+        self.player.apply_battle_start_buffs()
 
         self.apply_monster_buffs(monsters)
 
@@ -636,8 +684,6 @@ class SubjugationRegionView(discord.ui.View):
             desc = f"HP: {c.get('hp')} | 공격력: {c.get('attack')}"
             options.append(discord.SelectOption(label=label, description=desc, value=str(i), default=(i == self.selected_char_index)))
         select = discord.ui.Select(placeholder="던전을 탐색할 캐릭터 선택", options=options, row=0)
-        options.append(discord.SelectOption(label=label, description=desc, value=str(i), default=(i == self.selected_char_index)))
-        select = discord.ui.Select(placeholder="던전을 탐색할 캐릭터 선택", options=options, row=0)
         select.callback = self.char_select_callback
         self.add_item(select)
 
@@ -649,12 +695,8 @@ class SubjugationRegionView(discord.ui.View):
 
         for name in sorted_regions:
             if name == "노드 해역": continue
-            if name == "노드 해역": continue
             if name in REGIONS:
                 options.append(discord.SelectOption(label=name, description=f"{name} 지역 던전 ({SUBJUGATION_COST}pt 소모)", value=name))
-        if not options: options.append(discord.SelectOption(label="해금된 탐사 지역 없음", value="none"))
-        select = discord.ui.Select(placeholder="탐사할 지역을 선택하세요", options=options, row=1)
-        options.append(discord.SelectOption(label=name, description=f"{name} 지역 던전 ({SUBJUGATION_COST}pt 소모)", value=name))
         if not options: options.append(discord.SelectOption(label="해금된 탐사 지역 없음", value="none"))
         select = discord.ui.Select(placeholder="탐사할 지역을 선택하세요", options=options, row=1)
         select.callback = self.region_select_callback
@@ -706,7 +748,6 @@ class SubjugationRegionView(discord.ui.View):
         region_name = interaction.data['values'][0]
         if region_name == "none": return
 
-        self.p_data = await get_user_data(self.author.id, self.author.display_name)
         self.p_data = await get_user_data(self.author.id, self.author.display_name)
         current_pt = self.p_data.get("pt", 0)
         if current_pt < SUBJUGATION_COST:

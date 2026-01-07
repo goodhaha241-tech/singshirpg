@@ -34,22 +34,22 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
     damage_taken2 = 0
 
     # [수정] 이펙트 리스트가 비어있을 경우 캐릭터 객체에서 직접 추출 시도 (BattleView 누락 대비)
-    if not effs1:
+    if not effs1 and char1:
         effs1 = []
         art = getattr(char1, "equipped_artifact", None)
-        if art and isinstance(art, dict) and art.get("special"): 
+        if isinstance(art, dict) and art.get("special"): 
             effs1.append(art.get("special"))
         eng = getattr(char1, "equipped_engraved_artifact", None)
-        if eng and isinstance(eng, dict) and eng.get("special"): 
+        if isinstance(eng, dict) and eng.get("special"): 
             effs1.append(eng.get("special"))
 
-    if not effs2:
+    if not effs2 and char2:
         effs2 = []
         art = getattr(char2, "equipped_artifact", None)
-        if art and isinstance(art, dict) and art.get("special"): 
+        if isinstance(art, dict) and art.get("special"): 
             effs2.append(art.get("special"))
         eng = getattr(char2, "equipped_engraved_artifact", None)
-        if eng and isinstance(eng, dict) and eng.get("special"): 
+        if isinstance(eng, dict) and eng.get("special"): 
             effs2.append(eng.get("special"))
     
     max_len = max(len(res1), len(res2))
@@ -267,6 +267,23 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         # 패닉 시 피해 2배
         if is_stunned1 and dmg1 > 0: dmg1 *= 2; mental_dmg1 *= 2; clash_log += " (⚠️패닉 2배)"
         if is_stunned2 and dmg2 > 0: dmg2 *= 2; mental_dmg2 *= 2; clash_log += " (⚠️패닉 2배)"
+
+        # [출혈: 행동 시 준 피해의 반절 * 스택]
+        bleed1 = char1.status_effects.get("bleed", 0)
+        if bleed1 > 0 and dmg2 > 0:
+            b_dmg1 = int(dmg2 * 0.5 * bleed1)
+            if b_dmg1 > 0:
+                char1.current_hp = max(0, char1.current_hp - b_dmg1)
+                clash_log += f" 🩸출혈(-{b_dmg1})"
+                damage_taken1 += b_dmg1
+
+        bleed2 = char2.status_effects.get("bleed", 0)
+        if bleed2 > 0 and dmg1 > 0:
+            b_dmg2 = int(dmg1 * 0.5 * bleed2)
+            if b_dmg2 > 0:
+                char2.current_hp = max(0, char2.current_hp - b_dmg2)
+                clash_log += f" 🩸출혈(-{b_dmg2})"
+                damage_taken2 += b_dmg2
 
         # 반사
         if "reflection" in effs1 and dmg1 > 0:

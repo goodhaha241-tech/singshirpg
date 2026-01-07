@@ -86,12 +86,14 @@ def apply_upgrade_bonus(stats):
     if not valid_keys: 
         valid_keys = ["max_hp"] # 예외 처리
         
-    target = random.choice(valid_keys)
-    
-    if target in ["max_hp", "max_mental"]:
-        stats[target] += random.randint(20, 40)
-    else:
-        stats[target] += random.randint(2, 5)
+    # [수정] 강화 시 2개의 스탯이 동시에 상승하도록 변경
+    for _ in range(2):
+        target = random.choice(valid_keys)
+        
+        if target in ["max_hp", "max_mental"]:
+            stats[target] += random.randint(20, 40)
+        else:
+            stats[target] += random.randint(5, 9)
         
     return stats
 
@@ -181,7 +183,8 @@ def reroll_artifact_stats(artifact_data):
     - 접두사(Prefix)는 변경되지 않음 (수식어 변경 기능은 별도)
     - 따라서 특수 능력(Special)도 유지됨
     """
-    rank = artifact_data.get("rank", 1)
+    # rank와 grade 키 모두 대응하도록 수정
+    rank = artifact_data.get("rank") or artifact_data.get("grade") or 1
     level = artifact_data.get("level", 0)
     
     # 1. 베이스 스탯 재설정

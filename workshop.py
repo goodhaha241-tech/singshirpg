@@ -5,6 +5,7 @@ import os
 import random
 from items import RARE_ITEMS
 from artifacts import generate_artifact, reroll_artifact_stats, PREFIXES
+from data_manager import get_user_data
 
 DATA_FILE = "user_data.json"
 
@@ -173,22 +174,79 @@ class WorkshopRerollView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author, self.user_data, self.save_func = author, user_data, save_func
-        self.add_select()
-        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=1, custom_id="back"))
+        self.page = 0
+        self.PER_PAGE = 7
+        self.filter_option = "all"
+        self.last_rerolled_idx = None
+        self.update_components()
 
     def get_embed(self):
-        return discord.Embed(title="🎲 아티팩트 리롤", description="아티팩트의 옵션을 재설정합니다. (비용: 5000원 + 1000pt)", color=discord.Color.blue())
+        return discord.Embed(title="🎲 아티팩트 리롤", description="3성 아티팩트의 옵션을 재설정합니다. (비용: 5000원 + 1000pt)", color=discord.Color.blue())
+
+    def update_components(self):
+        self.clear_items()
+        
+        # 1. 필터 선택 메뉴 (Row 0)
+        self.add_filter_select()
+        
+        # 2. 아티팩트 선택 메뉴 (Row 1)
+        self.add_select()
+        
+        # 페이지네이션 계산을 위한 필터링된 리스트 재구성
+        all_arts = self.user_data.get("artifacts", [])
+        filtered_arts = []
+        for idx, art in enumerate(all_arts):
+            rank = art.get("rank") or art.get("grade") or 1
+            if rank != 3: continue
+            if self.filter_option != "all" and art.get("prefix") != self.filter_option: continue
+            filtered_arts.append(idx)
+
+        total_pages = (len(filtered_arts) - 1) // self.PER_PAGE + 1 if filtered_arts else 1
+
+        if total_pages > 1:
+            self.add_item(discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, row=2, disabled=(self.page == 0), custom_id="prev_page"))
+            self.add_item(discord.ui.Button(label=f"{self.page + 1}/{total_pages}", style=discord.ButtonStyle.secondary, row=2, disabled=True))
+            self.add_item(discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, row=2, disabled=(self.page >= total_pages - 1), custom_id="next_page"))
+
+        if self.last_rerolled_idx is not None:
+             self.add_item(discord.ui.Button(label="🎲 다시 리롤", style=discord.ButtonStyle.primary, row=3, custom_id="reroll_again"))
+
+        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=3, custom_id="back"))
+
+    def add_filter_select(self):
+        arts = [art for art in self.user_data.get("artifacts", []) if (art.get("rank") or art.get("grade") or 1) == 3]
+        prefixes = sorted(list(set(art.get("prefix", "Unknown") for art in arts if art.get("prefix"))))
+        
+        options = [discord.SelectOption(label="전체 보기", value="all", default=(self.filter_option == "all"))]
+        for p in prefixes[:24]:
+            options.append(discord.SelectOption(label=p, value=p, default=(self.filter_option == p)))
+            
+        self.add_item(discord.ui.Select(placeholder="수식어 필터", options=options, row=0, custom_id="filter_sel"))
 
     def add_select(self):
-        arts = self.user_data.get("artifacts", [])
+        all_arts = self.user_data.get("artifacts", [])
+        filtered_arts = []
+        for idx, art in enumerate(all_arts):
+            rank = art.get("rank") or art.get("grade") or 1
+            if rank != 3: continue
+            if self.filter_option != "all" and art.get("prefix") != self.filter_option: continue
+            filtered_arts.append((idx, art))
+        
+        start = self.page * self.PER_PAGE
+        end = start + self.PER_PAGE
+        current_page = filtered_arts[start:end]
+        
         opts = []
-        for idx, art in enumerate(arts[:25]): # 최대 25개
+        for original_idx, art in current_page:
             name = art["name"]
             if art.get("level", 0) > 0:
                 name += f" (+{art['level']})"
-            opts.append(discord.SelectOption(label=name, value=str(idx)))
-        if not opts: opts.append(discord.SelectOption(label="없음", value="none"))
-        self.add_item(discord.ui.Select(placeholder="아티팩트 선택", options=opts, custom_id="sel"))
+            opts.append(discord.SelectOption(label=name, value=str(original_idx)))
+            
+        if not opts:
+            self.add_item(discord.ui.Select(placeholder="조건에 맞는 아티팩트 없음", options=[discord.SelectOption(label="없음", value="none")], disabled=True, row=1, custom_id="art_sel"))
+        else:
+            self.add_item(discord.ui.Select(placeholder=f"아티팩트 선택 ({self.page+1})", options=opts, row=1, custom_id="art_sel"))
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
@@ -196,11 +254,40 @@ class WorkshopRerollView(discord.ui.View):
             view = WorkshopView(self.author, self.user_data, self.save_func)
             await i.response.edit_message(embed=view.get_embed(), view=view)
             return True
+        elif i.data.get("custom_id") == "prev_page":
+            self.page -= 1
+            self.update_components()
+            await i.response.edit_message(view=self)
+            return True
+        elif i.data.get("custom_id") == "next_page":
+            self.page += 1
+            self.update_components()
+            await i.response.edit_message(view=self)
+            return True
+        elif i.data.get("custom_id") == "filter_sel":
+            self.filter_option = i.data["values"][0]
+            self.page = 0
+            self.last_rerolled_idx = None
+            self.update_components()
+            await i.response.edit_message(view=self)
+            return True
+        elif i.data.get("custom_id") == "reroll_again":
+            if self.last_rerolled_idx is not None:
+                await self.process_reroll(i, self.last_rerolled_idx)
+            return True
             
-        val = i.data["values"][0]
-        if val == "none": return
+        if i.data.get("custom_id") == "art_sel" and "values" in i.data:
+            val = i.data["values"][0]
+            if val == "none": return True
+            await self.process_reroll(i, int(val))
+            return True
+            
+        return True
+
+    async def process_reroll(self, i, idx):
+        # 최신 데이터 리로드
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         
-        idx = int(val)
         money = self.user_data.get("money", 0)
         pt = self.user_data.get("pt", 0)
         
@@ -208,11 +295,25 @@ class WorkshopRerollView(discord.ui.View):
         
         self.user_data["money"] -= 5000
         self.user_data["pt"] -= 1000
-        reroll_artifact_stats(self.user_data["artifacts"][idx])
+        
+        if idx >= len(self.user_data["artifacts"]):
+            return await i.response.send_message("❌ 아티팩트 정보를 찾을 수 없습니다.", ephemeral=True)
+
+        target_art = self.user_data["artifacts"][idx]
+        reroll_artifact_stats(target_art)
+        
+        # 장착 중인 캐릭터 데이터 동기화 (중요)
+        for c in self.user_data.get("characters", []):
+            eq = c.get("equipped_artifact")
+            if eq and eq.get("id") == target_art.get("id"):
+                c["equipped_artifact"] = target_art
+
         await self.save_func(self.author.id, self.user_data)
         
-        await i.response.edit_message(content=f"🎲 리롤 완료! -> {self.user_data['artifacts'][idx]['description']}", embed=self.get_embed(), view=self)
-        return True
+        self.last_rerolled_idx = idx
+        self.update_components()
+        
+        await i.response.edit_message(content=f"🎲 리롤 완료! -> {target_art['description']}", embed=self.get_embed(), view=self)
 
 # --- 각인 시스템 뷰 ---
 class ImprintView(discord.ui.View):
@@ -264,30 +365,47 @@ class ModifierView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
         self.author, self.user_data, self.save_func = author, user_data, save_func
-        self.add_art_select()
-        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=1, custom_id="back"))
+        self.page = 0
+        self.PER_PAGE = 7
+        self.update_components()
 
     def get_embed(self):
         return discord.Embed(title="🏷️ 수식어 변경", description="3성 아티팩트의 접두사를 변경합니다. (비용: 1000pt)", color=discord.Color.gold())
 
-    def add_art_select(self):
-        arts = self.user_data.get("artifacts", [])
-        opts = []
+    def update_components(self):
+        self.clear_items()
+        self.add_art_select()
         
-        # 3성 아티팩트만 필터링
-        for idx, art in enumerate(arts):
-            if art.get("rank", 1) == 3:
-                name = art["name"]
-                if art.get("level", 0) > 0:
-                    name += f" (+{art['level']})"
-                opts.append(discord.SelectOption(label=name, value=str(idx)))
-                
-            if len(opts) >= 25: break 
+        # 3성 필터링된 리스트로 페이지 계산
+        arts = [art for art in self.user_data.get("artifacts", []) if (art.get("rank") or art.get("grade") or 1) == 3]
+        total_pages = (len(arts) - 1) // self.PER_PAGE + 1 if arts else 1
+
+        if total_pages > 1:
+            self.add_item(discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, row=1, disabled=(self.page == 0), custom_id="prev_page"))
+            self.add_item(discord.ui.Button(label=f"{self.page + 1}/{total_pages}", style=discord.ButtonStyle.secondary, row=1, disabled=True))
+            self.add_item(discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, row=1, disabled=(self.page >= total_pages - 1), custom_id="next_page"))
+
+        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=2, custom_id="back"))
+
+    def add_art_select(self):
+        all_arts = self.user_data.get("artifacts", [])
+        filtered_arts = [(idx, art) for idx, art in enumerate(all_arts) if (art.get("rank") or art.get("grade") or 1) == 3]
+        
+        start = self.page * self.PER_PAGE
+        end = start + self.PER_PAGE
+        current_page = filtered_arts[start:end]
+        
+        opts = []
+        for original_idx, art in current_page:
+            name = art["name"]
+            if art.get("level", 0) > 0:
+                name += f" (+{art['level']})"
+            opts.append(discord.SelectOption(label=name, value=str(original_idx)))
         
         if not opts:
-            self.add_item(discord.ui.Button(label="변경 가능한 3성 아티팩트 없음", disabled=True))
+            self.add_item(discord.ui.Select(placeholder="3성 아티팩트 없음", options=[discord.SelectOption(label="없음", value="none")], disabled=True))
         else:
-            self.add_item(discord.ui.Select(placeholder="수식어 변경할 아티팩트 (3성 전용)", options=opts))
+            self.add_item(discord.ui.Select(placeholder=f"아티팩트 선택 ({self.page+1})", options=opts, custom_id="sel"))
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
@@ -295,12 +413,24 @@ class ModifierView(discord.ui.View):
             view = WorkshopView(self.author, self.user_data, self.save_func)
             await i.response.edit_message(embed=view.get_embed(), view=view)
             return True
+        elif i.data.get("custom_id") == "prev_page":
+            self.page -= 1
+            self.update_components()
+            await i.response.edit_message(view=self)
+            return True
+        elif i.data.get("custom_id") == "next_page":
+            self.page += 1
+            self.update_components()
+            await i.response.edit_message(view=self)
+            return True
             
+        if "values" not in i.data: return True
         idx = int(i.data["values"][0])
-        
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
+
         target_art = self.user_data["artifacts"][idx]
         
-        if target_art.get("rank", 1) < 3:
+        if (target_art.get("rank") or target_art.get("grade") or 1) < 3:
             return await i.response.send_message("❌ 1, 2성 아티팩트는 수식어를 변경할 수 없습니다.", ephemeral=True)
 
         if self.user_data.get("pt", 0) < 1000:
@@ -322,6 +452,12 @@ class ModifierView(discord.ui.View):
             target_art["special"] = SPECIAL_EFFECTS.get(new_prefix)
             target_art["description"] = _make_description(target_art["stats"], target_art["special"])
             
+        # 장착 중인 캐릭터 데이터 동기화
+        for c in self.user_data.get("characters", []):
+            eq = c.get("equipped_artifact")
+            if eq and eq.get("id") == target_art.get("id"):
+                c["equipped_artifact"] = target_art
+
         await self.save_func(self.author.id, self.user_data)
         await i.response.edit_message(content=f"🏷️ 수식어가 **{new_prefix}**로 변경되었습니다!", embed=self.get_embed(), view=self)
         return True

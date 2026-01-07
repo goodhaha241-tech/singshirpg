@@ -381,7 +381,10 @@ def get_card(name):
     elif name == "모닝 글로리":
         return MorningGloryCard(name)
     
-    return SKILL_CARDS.get(name)
+    card = SKILL_CARDS.get(name)
+    if not card:
+        card = BOSS_CARDS.get(name)
+    return card
 
 CARD_PRICES = {
     "기본공격": 700, "기본방어": 700, "기본회복": 1000, "기본반격": 1000,

@@ -195,8 +195,10 @@ class Character:
         mental_bonus = stats.get("max_mental", 0)
 
         self.max_hp += hp_bonus
+        self.current_hp += hp_bonus
         
         self.max_mental += mental_bonus
+        self.current_mental += mental_bonus
         
         self.attack += stats.get("attack", 0)
         self.defense += stats.get("defense", 0)
@@ -208,13 +210,11 @@ class Character:
         mental_bonus = stats.get("max_mental", 0)
 
         self.max_hp -= hp_bonus
-        # 버프 해제 시 현재 체력이 최대 체력을 넘지 않도록 조정
-        if self.current_hp > self.max_hp:
-            self.current_hp = self.max_hp
+        # [수정] 버프 해제 시 증가했던 수치만큼 감소 (최소 1 유지)
+        self.current_hp = max(1, self.current_hp - hp_bonus)
         
         self.max_mental -= mental_bonus
-        if self.current_mental > self.max_mental:
-            self.current_mental = self.max_mental
+        self.current_mental = max(1, self.current_mental - mental_bonus)
         
         self.attack -= stats.get("attack", 0)
         self.defense -= stats.get("defense", 0)
