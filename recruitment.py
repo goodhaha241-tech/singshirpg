@@ -73,7 +73,7 @@ RECRUIT_REGISTRY = {
     },
     "Earthreg": {
         "name": "어즈렉",
-        "description": "신이 빚은 거인이자 심복",
+        "description": "신에게 가장 먼저 조아린 이",
         "emoji": "🛡️",
         "quests": [
             {
@@ -424,7 +424,7 @@ class RecruitProcessView(discord.ui.View):
         
         desc = completed_quest['story']
         if completed_quest.get("type") == "battle":
-            desc += f"\n\n⚔️ **[{completed_quest['monster_data']['name']}]** 토벌에 성공했습니다!"
+            desc += f"\n\n⚔️ **[{completed_quest['monster_data']['name']}]** 던전에 성공했습니다!"
 
         embed = discord.Embed(
             title=f"📜 {completed_quest['title']} 완료!", 

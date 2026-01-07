@@ -171,7 +171,7 @@ class PointShopView(discord.ui.View):
         current_pt = self.user_data.get("pt", 0)
         
         if current_pt < COST:
-            return await interaction.response.send_message(f"❌ 포인트가 부족합니다! (보유: {current_pt}pt)", ephemeral=True)
+            return await interaction.followup.send(f"❌ 포인트가 부족합니다! (보유: {current_pt}pt)", ephemeral=True)
         
         self.user_data["pt"] -= COST
         new_artifact = generate_artifact()
@@ -197,7 +197,7 @@ class PointShopView(discord.ui.View):
         @auto_defer(reload_data=True)
         async def callback(interaction: discord.Interaction):
             if self.user_data.get("money", 0) < price:
-                return await interaction.response.send_message("❌ 머니 부족!", ephemeral=True)
+                return await interaction.followup.send("❌ 머니 부족!", ephemeral=True)
             
             self.user_data["money"] -= price
             pt_val = int(label.replace("pt", ""))
@@ -287,12 +287,13 @@ class BuyDropdownView(discord.ui.View):
         for option in self.select.options:
             option.default = (option.value == self.selected_item)
         
-        await i.response.edit_message(content=f"🛍️ **[{self.selected_item}]** 선택됨. 수량을 골라주세요.", view=self)
+        await i.edit_original_response(content=f"🛍️ **[{self.selected_item}]** 선택됨. 수량을 골라주세요.", view=self)
 
     async def process_buy(self, i, amount):
         if not self.selected_item: 
-            return await i.response.send_message("❌ 먼저 아이템을 선택해주세요.", ephemeral=True)
-        self.user_data = self.all_data.get(str(self.author.id))
+            return await i.followup.send("❌ 먼저 아이템을 선택해주세요.", ephemeral=True)
+        
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
 
         # [특수] 강화키트: 돈+포인트 복합 결제
         if self.selected_item == "강화키트":
@@ -305,9 +306,9 @@ class BuyDropdownView(discord.ui.View):
             total_pt = 3000 * amount
             
             if self.user_data.get("money", 0) < total_money:
-                return await i.response.send_message(f"❌ 돈이 부족합니다! ({total_money:,}원 필요)", ephemeral=True)
+                return await i.followup.send(f"❌ 돈이 부족합니다! ({total_money:,}원 필요)", ephemeral=True)
             if self.user_data.get("pt", 0) < total_pt:
-                return await i.response.send_message(f"❌ 포인트가 부족합니다! ({total_pt:,}pt 필요)", ephemeral=True)
+                return await i.followup.send(f"❌ 포인트가 부족합니다! ({total_pt:,}pt 필요)", ephemeral=True)
             
             self.user_data["money"] -= total_money
             self.user_data["pt"] -= total_pt

@@ -340,6 +340,31 @@ SKILL_CARDS = {
     ])
 }
 
+# ==================================================================================
+# [신규] 던전 보스 전용 스킬 (SKILL_CARDS에 병합)
+# ==================================================================================
+BOSS_CARDS = {
+    # 1단계 보스용
+    "강철타격": SkillCard("강철타격", [Dice("attack", 10, 20), Dice("attack", 10, 20)]),
+    "광란": SkillCard("광란", [Dice("attack", 5, 10), Dice("attack", 5, 10), Dice("attack", 5, 10)]),
+    "단단한껍질": SkillCard("단단한껍질", [Dice("defense", 15, 25), Dice("counter", 5, 15)]),
+    "아쿠아건": SkillCard("아쿠아건", [Dice("attack", 12, 18), Dice("attack", 8, 12)]), # 폭풍의 세이렌용
+    "만년설창": SkillCard("만년설창", [Dice("attack", 15, 25), Dice("defense", 5, 10)]), # 만년설의 정령용
+    
+    # 2단계 보스용
+    "심연의주시": SkillCard("심연의주시", [Dice("mental_heal", 1, 1), Dice("attack", 15, 25)]), # mental_attack 대체
+    "대지진": SkillCard("대지진", [Dice("attack", 20, 40, effect="stun_1")]),
+    "시간역행": SkillCard("시간역행", [Dice("heal", 20, 40), Dice("defense", 20, 30)]),
+    "맹독포자": SkillCard("맹독포자", [Dice("attack", 10, 15, effect="bleed_5"), Dice("attack", 10, 15, effect="bleed_5")]),
+
+    # 3단계 보스용 (필살기급)
+    "멸망의노래": SkillCard("멸망의노래", [Dice("attack", 30, 50), Dice("attack", 10, 20)]), # mental_attack 대체
+    "공간절단": SkillCard("공간절단", [Dice("attack", 50, 80)]),
+    "절대방어": SkillCard("절대방어", [Dice("defense", 50, 100), Dice("heal", 20, 50)]),
+    "영혼수확": SkillCard("영혼수확", [Dice("attack", 30, 50, effect="absorb_hp")]), 
+    "신성한심판": SkillCard("신성한심판", [Dice("attack", 40, 60), Dice("attack", 40, 60)])
+}
+
 def get_card(name):
     if name == "전부매입": 
         return GoldMechanicCard("전부매입", [("attack", 3, 7), ("defense", 3, 7)])

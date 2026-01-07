@@ -10,9 +10,11 @@ import battle_engine
 
 DATA_FILE = "user_data.json"
 
-
 class BattleView(discord.ui.View):
-    def __init__(self, author, player, monsters, user_data, save_func, char_index=0, victory_callback=None, region_name=None):
+    # [수정] dungeon_item 매개변수 추가
+    def __init__(self, author, player, monsters, user_data, save_func, char_index=0, 
+                 victory_callback=None, defeat_callback=None, region_name=None, 
+                 is_dungeon_run=False, dungeon_item=None):
         super().__init__(timeout=180)
         self.author = author
         self.player = player
@@ -23,13 +25,18 @@ class BattleView(discord.ui.View):
         self.save_func = save_func
         self.char_index = char_index
         self.victory_callback = victory_callback 
+        self.defeat_callback = defeat_callback
         self.region_name = region_name
+        self.is_dungeon_run = is_dungeon_run
+        self.dungeon_item = dungeon_item # 던전 아이템 정보 저장
         
         self.turn_count = 1
         self.selected_card = None
         self.is_panic = False
         
-        self.revived = False 
+        self.revived = False # 일반 부활(불멸의 아티팩트 등)
+        self.item_revived = False # 던전 아이템 부활 체크
+        
         self.damage_taken_last_turn = 0
         self.next_turn_bonus = 0 
         self.card_page = 0
@@ -42,21 +49,16 @@ class BattleView(discord.ui.View):
             if not hasattr(m, "status_effects"):
                 m.status_effects = {"bleed": 0, "paralysis": 0}
 
-        # 전투 시작 시 버프 적용
-        if hasattr(self.player, "apply_battle_start_buffs"):
+        # 던전 런 체크: 외부에서 버프를 적용했으므로 중복 적용 방지
+        if not self.is_dungeon_run and hasattr(self.player, "apply_battle_start_buffs"):
             self.player.apply_battle_start_buffs()
 
-        # [신규] 전투 시작 시 기간제 버프 적용
+        # 기간제 버프 적용 로직
         buffs = self.user_data.get("buffs", {})
         for b_name, b_info in buffs.items():
-            # 캐릭터 전용 버프 필터링
             target = b_info.get("target")
-            if target != self.player.name:
-                continue
-                
-            stat = b_info.get("stat")
-            val = b_info.get("value", 0)
-            
+            if target != self.player.name: continue
+            stat, val = b_info.get("stat"), b_info.get("value", 0)
             if stat == "attack": self.player.attack += val
             elif stat == "defense": self.player.defense += val
             elif stat == "max_hp":
@@ -110,28 +112,28 @@ class BattleView(discord.ui.View):
                 self.add_item(nxt)
 
     async def prev_page_callback(self, interaction):
-        if interaction.user != self.author: return
+        if interaction.user.id != self.author.id: return
         await interaction.response.defer()
         self.card_page -= 1
         self.update_buttons()
         await interaction.edit_original_response(view=self)
 
     async def next_page_callback(self, interaction):
-        if interaction.user != self.author: return
+        if interaction.user.id != self.author.id: return
         await interaction.response.defer()
         self.card_page += 1
         self.update_buttons()
         await interaction.edit_original_response(view=self)
 
     async def panic_callback(self, interaction):
-        if interaction.user != self.author: return
+        if interaction.user.id != self.author.id: return
         await interaction.response.defer()
         self.selected_card = None 
         await self.show_target_selection(interaction)
 
     def make_skill_callback(self, card_name):
         async def callback(interaction):
-            if interaction.user != self.author: return
+            if interaction.user.id != self.author.id: return
             await interaction.response.defer()
             self.selected_card = get_card(card_name)
             await self.show_target_selection(interaction)
@@ -156,7 +158,7 @@ class BattleView(discord.ui.View):
             select = discord.ui.Select(placeholder="🎯 공격 대상을 선택하세요", options=options)
             
             async def select_callback(i):
-                if i.user != self.author: return
+                if i.user.id != self.author.id: return
                 await i.response.defer()
                 target_idx = int(select.values[0])
                 await self.process_battle_round(i, self.monsters[target_idx])
@@ -165,8 +167,6 @@ class BattleView(discord.ui.View):
             view = discord.ui.View()
             view.add_item(select)
             await interaction.edit_original_response(content=f"⚔️ **[제 {self.turn_count}턴]** 타겟을 선택하세요.", view=view)
-
-    # apply_stat_scaling 제거 (battle_engine 사용)
 
     async def process_battle_round(self, interaction, target):
         log = ""
@@ -235,29 +235,71 @@ class BattleView(discord.ui.View):
                 self.player.runtime_cooldowns["escalation"] = self.turn_count
                 log += f"🔥 **[고조된]** 주사위 폭주! (+{bonus})\n"
 
-        # [수정] battle_engine을 사용한 합 진행
+        # 합 및 데미지 계산
         clash_log, dmg_p, dmg_m = battle_engine.process_clash_loop(
             self.player, target, p_res, m_res, effects, [], self.turn_count, is_stunned1=is_stunned
         )
         
+        # [던전 아이템] 피해 무시 (소모성)
+        if self.dungeon_item and self.dungeon_item["type"] == "consumable" and self.dungeon_item.get("effect") == "ignore_dmg":
+            if dmg_p > 0 and self.dungeon_item.get("remaining", 0) > 0:
+                self.dungeon_item["remaining"] -= 1
+                dmg_p = 0
+                log += f"\n🛡️ **{self.dungeon_item['name']}** 발동! 피해를 무효화했습니다. (남은 횟수: {self.dungeon_item['remaining']})\n"
+
         log += clash_log
         self.damage_taken_last_turn = dmg_p
         
+        # [던전 아이템] 흡혈 (지속성)
+        if self.dungeon_item and self.dungeon_item["type"] == "passive" and self.dungeon_item.get("effect") == "lifesteal":
+            if dmg_m > 0:
+                heal_val = int(dmg_m * (self.dungeon_item["value"] / 100))
+                if heal_val > 0:
+                    self.player.current_hp = min(self.player.max_hp, self.player.current_hp + heal_val)
+                    log += f" 🧛 **{self.dungeon_item['name']}** 효과로 체력 {heal_val} 회복!"
+
+        # [던전 아이템] 고정 피해 (지속성 - 턴당/공격시)
+        if self.dungeon_item and self.dungeon_item["type"] == "passive" and self.dungeon_item.get("effect") == "fixed_dmg":
+            fix_dmg = self.dungeon_item["value"]
+            target.current_hp -= fix_dmg
+            log += f" 🗡️ **{self.dungeon_item['name']}** 추가 피해 {fix_dmg}!"
+
         if target.current_hp <= 0:
             self.killed_monsters.append(target)
             self.monsters.remove(target)
 
-        if self.player.current_hp <= 0 and "immortality" in effects and not self.revived:
-            self.revived = True
-            self.player.current_hp = self.player.max_hp
-            log += "\n\n👼 **[불멸의]** 권능으로 부활했습니다! (HP 완전 회복)"
+        # [던전 아이템] 턴 종료 체력 회복 (지속성)
+        if self.dungeon_item and self.dungeon_item["type"] == "passive" and self.dungeon_item.get("effect") == "hp_regen":
+            regen = self.dungeon_item["value"]
+            if self.player.current_hp < self.player.max_hp:
+                self.player.current_hp = min(self.player.max_hp, self.player.current_hp + regen)
+                log += f"\n🌿 **{self.dungeon_item['name']}** 효과로 체력 {regen} 회복."
 
+        # 플레이어 사망 처리 및 부활 로직
+        if self.player.current_hp <= 0:
+            # 1. 아티팩트 불멸
+            if "immortality" in effects and not self.revived:
+                self.revived = True
+                self.player.current_hp = self.player.max_hp
+                log += "\n\n👼 **[불멸의]** 권능으로 부활했습니다! (HP 완전 회복)"
+            # 2. [던전 아이템] 부활 (소모성)
+            elif self.dungeon_item and self.dungeon_item["type"] == "consumable" and self.dungeon_item.get("effect") == "revive":
+                if self.dungeon_item.get("remaining", 0) > 0:
+                    self.dungeon_item["remaining"] -= 1
+                    self.player.current_hp = self.player.max_hp
+                    log += f"\n\n✨ **{self.dungeon_item['name']}** 사용! 기적적으로 되살아났습니다. (남은 횟수: {self.dungeon_item['remaining']})"
+                else:
+                    # 횟수 소진
+                    pass
+
+        # 출혈 상태이상 감소
         pb = self.player.status_effects.get("bleed", 0)
         if pb > 0: self.player.status_effects["bleed"] = max(0, pb - 1)
         
         mb = target.status_effects.get("bleed", 0)
         if mb > 0: target.status_effects["bleed"] = max(0, mb - 1)
 
+        # 전투 종료 판정
         if not self.monsters:
             await self.finish_battle(interaction, log, True)
         elif self.player.current_hp <= 0:
@@ -291,20 +333,27 @@ class BattleView(discord.ui.View):
         for m in self.monsters:
             m_list.append(f"👾 {m.name} {status_str(m)}: {bar(m.current_hp, m.max_hp, '🔸', '▫️')}")
         embed.add_field(name="적군", value="\n".join(m_list) or "모두 처치됨", inline=False)
+        
+        # [던전 아이템 표시]
+        if self.dungeon_item:
+            di = self.dungeon_item
+            info = f"**{di['name']}**"
+            if di["type"] == "consumable": info += f" (남은 횟수: {di['remaining']})"
+            embed.set_footer(text=f"🎒 던전 아이템: {info}")
+
         return embed
 
     async def finish_battle(self, interaction, log, is_win):
-        if hasattr(self.player, "remove_battle_buffs"):
+        # 던전 런일 경우 버프 유지 (던전 종료 시 일괄 제거)
+        if not self.is_dungeon_run and hasattr(self.player, "remove_battle_buffs"):
             self.player.remove_battle_buffs()
         
         buffs = self.user_data.setdefault("buffs", {})
         expired_buffs = []
         
-        # 전투 관련 스탯 목록 (체력, 정신력, 방어율 포함)
         battle_buff_stats = ["attack", "defense", "max_hp", "max_mental", "defense_rate"]
         for b_name, b_info in list(buffs.items()):
             target = b_info.get("target")
-            # 해당 캐릭터의 버프이거나, 타겟 정보가 없는 레거시 버프인 경우 차감
             if (target == self.player.name or target is None) and b_info.get("stat") in battle_buff_stats:
                 if "duration" in b_info:
                     b_info["duration"] -= 1
@@ -335,9 +384,9 @@ class BattleView(discord.ui.View):
                     cnt = getattr(m, "reward_count", 1)
                     loot[m.reward] = loot.get(m.reward, 0) + cnt
             
-            if self.region_name:
-                if not isinstance(self.user_data.get("myhome"), dict):
-                    self.user_data["myhome"] = {}
+            # 던전 런이 아닐 때만 지역 통계 저장
+            if self.region_name and not self.is_dungeon_run:
+                if not isinstance(self.user_data.get("myhome"), dict): self.user_data["myhome"] = {}
                 self.user_data["myhome"]["total_subjugations"] = self.user_data["myhome"].get("total_subjugations", 0) + 1
                 await update_quest_progress(self.author.id, self.user_data, self.save_func, "kill_region", len(self.killed_monsters), self.region_name)
 
@@ -353,11 +402,11 @@ class BattleView(discord.ui.View):
             color = discord.Color.dark_grey()
             self.player.current_hp = 1
 
-        char_data = self.user_data["characters"][self.char_index]
-        char_data["current_hp"] = self.player.current_hp
-        char_data["current_mental"] = self.player.current_mental
-        
-        await self.save_func(self.author.id, self.user_data)
+        if not self.is_dungeon_run:
+            char_data = self.user_data["characters"][self.char_index]
+            char_data["current_hp"] = self.player.current_hp
+            char_data["current_mental"] = self.player.current_mental
+            await self.save_func(self.author.id, self.user_data)
         
         final_embed = self.make_embed(log + res_msg)
         final_embed.color = color
@@ -365,4 +414,12 @@ class BattleView(discord.ui.View):
         await interaction.edit_original_response(content=None, embed=final_embed, view=None)
         
         if is_win and self.victory_callback:
-            await self.victory_callback(interaction, {"money": total_money, "pt": total_pt, "items": loot})
+            await self.victory_callback(interaction, {
+                "money": total_money, 
+                "pt": total_pt, 
+                "items": loot,
+                "player_hp": self.player.current_hp,
+                "player_mental": self.player.current_mental
+            })
+        elif not is_win and self.defeat_callback:
+            await self.defeat_callback(interaction)

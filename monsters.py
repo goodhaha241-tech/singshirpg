@@ -209,6 +209,52 @@ def spawn_monster(name):
     data = MONSTER_DATA.get(name)
     if not data: return Monster("이름 없는 원념", 50, 2, 1)
     
+# ==================================================================================
+# [신규] 던전 지역별 보스 데이터 (1, 2, 3단계)
+# ==================================================================================
+DUNGEON_BOSSES = {
+    "기원의 쌍성": {
+        1: {"name": "별의 파편", "hp": 600, "atk": 20, "def": 20, "deck": ["강철타격", "단단한껍질", "기본공격"], "desc": "떨어진 별똥별들이 뭉쳤습니다."},
+        2: {"name": "쌍둥이 성좌의 영령", "hp": 1800, "atk": 35, "def": 25, "deck": ["광란", "강철타격", "회피기동"], "desc": "잊혀진 별자리의 기억이 형상화되었습니다."},
+        3: {"name": "주신의 흔적", "hp": 5000, "atk": 60, "def": 50, "deck": ["신성한심판", "절대방어", "강철타격"], "desc": "안녕, 나의 작은 친구,"}
+    },
+    "시간의 신전": {
+        1: {"name": "태엽지기 오토마톤", "hp": 550, "atk": 25, "def": 15, "deck": ["강철타격", "연속공격", "기본방어"], "desc": "영원히 작동하는 낡은 기계 병사입니다."},
+        2: {"name": "뒤틀린 시간의 망령", "hp": 1700, "atk": 40, "def": 20, "deck": ["심연의주시", "시간역행", "찌릿찌릿"], "desc": "시간의 틈새에 끼어버린 불쌍한 영혼입니다."},
+        3: {"name": "과거의 얼룩", "hp": 4800, "atk": 70, "def": 40, "deck": ["멸망의노래", "공간절단", "시간역행"], "desc": "시간의 신화가 미처 보지 못한, 어쩌면 보고 싶지 않았던."}
+    },
+    "일한산 중턱": {
+        1: {"name": "설산의 요정", "hp": 700, "atk": 22, "def": 10, "deck": ["강철타격", "광란", "기본공격"], "desc": "눈보라 속에 숨어있는 하얀 요정입니다."},
+        2: {"name": "만년설의 정령", "hp": 2000, "atk": 30, "def": 40, "deck": ["단단한껍질", "얼음창", "대지진"], "desc": "절대 녹지 않는 얼음으로 이루어진 정령입니다."},
+        3: {"name": "날뛰는 산군", "hp": 5500, "atk": 80, "def": 30, "deck": ["신성한심판", "광란", "영혼수확"], "desc": "일한산을 지키는 전설 속의 영물입니다."}
+    },
+    "이루지 못한 꿈들의 별": {
+        1: {"name": "악몽 덩어리", "hp": 500, "atk": 15, "def": 5, "deck": ["심연의주시", "기본공격"], "desc": "아이들의 악몽이 뭉쳐 만들어진 슬라임입니다."},
+        2: {"name": "꿈을 먹는 맥", "hp": 1600, "atk": 30, "def": 30, "deck": ["영혼수확", "심연의주시", "자각몽"], "desc": "행복한 꿈을 먹어치우는 요괴입니다."},
+        3: {"name": "절망의 몽상가", "hp": 4500, "atk": 65, "def": 40, "deck": ["멸망의노래", "영혼수확", "심연의주시"], "desc": "영원히 깨지 않는 악몽 속에 갇힌 마법사입니다."}
+    },
+    "생명의 숲": {
+        1: {"name": "배고픈 고대수", "hp": 800, "atk": 18, "def": 25, "deck": ["단단한껍질", "기본방어", "회복"], "desc": "한동안 누군가를 먹지 못한 움직이는 나무입니다."},
+        2: {"name": "맹독 라플레시아", "hp": 1900, "atk": 35, "def": 10, "deck": ["맹독포자", "더러운 공격", "상처 벌리기"], "desc": "지독한 냄새와 독을 뿜는 거대 식물입니다."},
+        3: {"name": "생명에 취한 자", "hp": 5200, "atk": 60, "def": 45, "deck": ["영혼수확", "대지진", "맹독포자"], "desc": "생명과 힘에 취한 자의 최후란."}
+    },
+    "아르카워드 제도": {
+        1: {"name": "하늘독수리", "hp": 750, "atk": 25, "def": 30, "deck": ["단단한껍질", "강철타격"], "desc": "하늘을 호령하는 독수리입니다."},
+        2: {"name": "고요한 원념", "hp": 1800, "atk": 45, "def": 20, "deck": ["심연의주시", "멸망의노래", "물대포"], "desc": "결국 미쳐버린 주민의 말로입니다."},
+        3: {"name": "창공의 왕", "hp": 6000, "atk": 90, "def": 60, "deck": ["대지진", "공간절단", "강철타격"], "desc": "여전히 창공의 전설을 기다리고 있답니다."}
+    },
+    "공간의 신전": {
+        1: {"name": "차원문 파수꾼", "hp": 600, "atk": 30, "def": 10, "deck": ["차원베기", "회피기동"], "desc": "차원의 문을 지키는 기사입니다."},
+        2: {"name": "뒤틀린 원념", "hp": 2200, "atk": 50, "def": 30, "deck": ["공간절단", "심연의주시", "광란"], "desc": "왁자지껄함마저 몰아내지 못한 원념입니다."},
+        3: {"name": "공허의 불청객", "hp": 7000, "atk": 100, "def": 50, "deck": ["공간절단", "멸망의노래", "절대방어", "신성한심판"], "desc": "존재해서는 안 될 차원의 틈새에서 넘어왔습니다."}
+    }
+}
+
+def spawn_monster(name):
+    """일반 몬스터 소환 함수"""
+    data = MONSTER_DATA.get(name)
+    if not data: return Monster("이름 없는 원념", 50, 2, 1)
+    
     return Monster(
         name=name,
         hp=data["hp"],
@@ -222,3 +268,40 @@ def spawn_monster(name):
         money_range=data.get("money_range", (0, 0)),
         card_deck=data.get("card_deck")
     )
+
+def get_dungeon_boss(region_name, depth):
+    """던전 깊이에 따른 보스 몬스터 소환 함수"""
+    # 깊이에 따른 티어 계산 (30, 60, 90층 기준)
+    if depth < 60: tier = 1      # ~59층 (실제로는 29층에서 1단계 등장)
+    elif depth < 90: tier = 2    # 60~89층
+    else: tier = 3               # 90층 이상
+    
+    # 해당 지역의 보스 데이터 가져오기 (없으면 기본값: 기원의 쌍성)
+    region_bosses = DUNGEON_BOSSES.get(region_name, DUNGEON_BOSSES["기원의 쌍성"])
+    boss_data = region_bosses.get(tier, region_bosses[3]) # 티어가 없으면 가장 강한 보스
+    
+    # Monster 객체 생성
+    boss = Monster(
+        name=f"👑 {boss_data['name']}",
+        hp=boss_data['hp'],
+        attack=boss_data['atk'],
+        defense=boss_data['def'],
+        description=boss_data['desc'],
+        pattern_type="aggressive" if tier >= 2 else "balanced",
+        reward="보스 전리품", # 보상은 subjugation.py에서 처리
+        money_range=(boss_data['hp']*2, boss_data['hp']*4),
+        pt_range=(boss_data['atk']*10, boss_data['atk']*20),
+        card_deck=boss_data['deck']
+    )
+    
+    # 90층 이후 3단계 보스 반복 시 스탯 추가 보정 (무한 성장)
+    if depth > 90:
+        multiplier = (depth - 90) // 30
+        if multiplier > 0:
+            boss.max_hp += int(boss.max_hp * 0.2 * multiplier)
+            boss.current_hp = boss.max_hp
+            boss.attack += int(boss.attack * 0.1 * multiplier)
+            boss.defense += int(boss.defense * 0.1 * multiplier)
+            boss.name = f"👑 {boss_data['name']} (Lv.{multiplier+1})"
+
+    return boss

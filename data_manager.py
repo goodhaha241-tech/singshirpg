@@ -71,7 +71,8 @@ async def check_schema(pool):
                 ("water_can", "INT DEFAULT 0"),
                 ("fishing_rod", "INT DEFAULT 0"),
                 ("fishing_spot_level", "INT DEFAULT 0"),
-                ("fishing_max_slots", "INT DEFAULT 3")
+                ("fishing_max_slots", "INT DEFAULT 3"),
+                ("max_subjugation_depth", "INT DEFAULT 0")
             ]
             for col, col_type in updates:
                 if col not in u_cols:
@@ -160,7 +161,8 @@ async def _get_new_user_data(user_name=None):
             "fishing": {"dismantle_slots": [], "rod": 0, "spot_level": 0, "max_dismantle_slots": 3},
             "total_investigations": 0,
             "total_subjugations": 0,
-            "construction_step": 0
+            "construction_step": 0,
+            "max_subjugation_depth": 0
         },
         "fertilizers": []
     }
@@ -253,6 +255,7 @@ async def _get_myhome_data(cur, user_id, user_row):
         "total_investigations": user_row['total_investigations'] or 0,
         "fishing": {"dismantle_slots": f_slots, "rod": user_row['fishing_rod'] or 0, "spot_level": user_row['fishing_spot_level'] or 0, "max_dismantle_slots": user_row['fishing_max_slots'] or 3},
         "total_subjugations": user_row['total_subjugations'] or 0,
+        "max_subjugation_depth": user_row.get('max_subjugation_depth') or 0,
         "construction_step": 5 if (user_row['garden_level'] or 0) > 0 else 0
     }
 
@@ -306,6 +309,17 @@ async def save_user_data(user_id, data):
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             try:
+                # [신규] 아티팩트 소유자 매핑 (캐릭터 -> 아티팩트 ID)
+                # 캐릭터 정보에 있는 equipped_artifact를 기준으로 artifacts 테이블의 equipped_char_index를 갱신하기 위함
+                artifact_owner_map = {}
+                chars = data.get("characters", [])
+                for idx, c in enumerate(chars):
+                    eq_art = c.get("equipped_artifact")
+                    if eq_art and isinstance(eq_art, dict):
+                        art_id = eq_art.get("id")
+                        if art_id:
+                            artifact_owner_map[art_id] = idx
+
                 # ---------------------------------------------------------
                 # 1. USERS 테이블 (기본 정보 + 마이홈 레벨 추출)
                 # ---------------------------------------------------------
@@ -325,6 +339,7 @@ async def save_user_data(user_id, data):
                 f_rod = myhome.get("fishing", {}).get("rod") or 0
                 f_spot = myhome.get("fishing", {}).get("spot_level") or 0
                 t_subj = myhome.get("total_subjugations") or 0
+                m_depth = myhome.get("max_subjugation_depth") or 0
                 t_invest = myhome.get("total_investigations") or 0
 
                 sql_users = """
@@ -332,8 +347,8 @@ async def save_user_data(user_id, data):
                     (user_id, pt, money, last_checkin, investigator_index, 
                      main_quest_id, main_quest_current, main_quest_index,
                      garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations,
-                     cards, buffs, main_quest_progress, total_investigations, fishing_max_slots)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
+                     cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
                     ON DUPLICATE KEY UPDATE
                     pt=new.pt, money=new.money, last_checkin=new.last_checkin,
                     investigator_index=new.investigator_index,
@@ -350,7 +365,8 @@ async def save_user_data(user_id, data):
                     cards=new.cards, buffs=new.buffs, 
                     main_quest_progress=new.main_quest_progress, 
                     total_investigations=new.total_investigations,
-                    fishing_max_slots=new.fishing_max_slots
+                    fishing_max_slots=new.fishing_max_slots,
+                    max_subjugation_depth=new.max_subjugation_depth
                 """
                 await cur.execute(sql_users, (
                     str(user_id), data.get("pt", 0), data.get("money", 0), data.get("last_checkin"),
@@ -358,7 +374,8 @@ async def save_user_data(user_id, data):
                     data.get("main_quest_id", 0), data.get("main_quest_current", 0), data.get("main_quest_index", 0),
                     g_lvl, w_can, w_lvl, f_lvl, f_rod, f_spot, t_subj, 
                     cards_json, buffs_json, mq_prog_json, t_invest,
-                    myhome.get("fishing", {}).get("max_dismantle_slots", 3)
+                    myhome.get("fishing", {}).get("max_dismantle_slots", 3),
+                    m_depth
                 ))
 
                 # ---------------------------------------------------------
@@ -399,10 +416,13 @@ async def save_user_data(user_id, data):
                 if arts:
                     art_rows = []
                     for a in arts:
+                        # [수정] 매핑된 소유자 정보가 있으면 우선 사용
+                        owner_idx = artifact_owner_map.get(a.get("id"), a.get("equipped_char_index", -1))
+
                         art_rows.append((
                             a.get("id"), user_id, a.get("name"), a.get("rank", 1), a.get("grade", 1),
                             a.get("level", 0), a.get("prefix", ""), json.dumps(a.get("stats", {})),
-                            a.get("special"), a.get("description"), a.get("equipped_char_index", -1)
+                            a.get("special"), a.get("description"), owner_idx
                         ))
                     await cur.executemany("""
                         INSERT INTO artifacts (id, user_id, name, rank_level, grade, level, prefix, stats, special, description, equipped_char_index)
@@ -486,3 +506,17 @@ async def save_user_data(user_id, data):
                 await conn.rollback()
                 logger.error(f"Save Error for {user_id}: {e}")
                 raise e
+
+async def get_subjugation_ranking(limit=10):
+    """최대 탐사 층수 기준 상위 유저를 가져옵니다."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("""
+                SELECT user_id, max_subjugation_depth 
+                FROM users 
+                WHERE max_subjugation_depth > 0 
+                ORDER BY max_subjugation_depth DESC 
+                LIMIT %s
+            """, (limit,))
+            return await cur.fetchall()

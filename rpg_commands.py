@@ -17,7 +17,7 @@ from investigation import InvestigationView
 from shop import ShopView
 from trade import CafeView              # 카페
 from crafting import CraftView          # 제작
-from subjugation import SubjugationRegionView # 토벌
+from subjugation import SubjugationRegionView # 던전
 from recruitment import RecruitSelectView # 영입
 from use_item import ItemUseView        # 사용 (아이템 사용)
 from card_manager import CardManageView # 카드
@@ -75,7 +75,7 @@ class StatusMenuView(discord.ui.View):
         await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
 # ==============================================================================
-# 2. 외출 메뉴 View (조사, 대련, 토벌, 카페)
+# 2. 외출 메뉴 View (조사, 대련, 던전, 카페)
 # ==============================================================================
 class OutingMenuView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
@@ -98,11 +98,11 @@ class OutingMenuView(discord.ui.View):
         embed = discord.Embed(title="⚔️ 대련", description="대련 상대를 선택해주세요.", color=discord.Color.red())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
-    @discord.ui.button(label="토벌", style=discord.ButtonStyle.danger, emoji="👹")
+    @discord.ui.button(label="던전", style=discord.ButtonStyle.danger, emoji="🏰")
     @auto_defer()
     async def subjugation_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = SubjugationRegionView(self.author, self.user_data, self.save_func)
-        embed = discord.Embed(title="👹 토벌", description="토벌할 지역을 선택하세요.", color=discord.Color.dark_red())
+        embed = discord.Embed(title="🏰 던전", description="향할 던전이 있는 지역을 선택하세요.", color=discord.Color.dark_red())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="카페", style=discord.ButtonStyle.success, emoji="☕")
@@ -194,9 +194,9 @@ class RPGCommands(commands.Cog):
         await interaction.followup.send(embed=view.create_status_embed(), view=view)
 
     # ---------------------------------------------------------------------
-    # 2. 외출 커맨드 (조사, 대련, 토벌, 카페)
+    # 2. 외출 커맨드 (조사, 대련, 던전, 카페)
     # ---------------------------------------------------------------------
-    @app_commands.command(name="외출", description="[메뉴] 조사, 대련, 토벌, 카페 기능을 엽니다.")
+    @app_commands.command(name="외출", description="[메뉴] 조사, 대련, 던전, 카페 기능을 엽니다.")
     async def outing_menu(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer(ephemeral=False)

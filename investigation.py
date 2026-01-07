@@ -441,8 +441,25 @@ class TurnInvestigationView(discord.ui.View):
 
     def generate_loot(self, is_great):
         inv = self.user_data.setdefault("inventory", {})
-        common_pool = self.region_info["common"]
-        rare_pool = self.region_info.get("rare", [])
+        
+        # [수정] 아이템 필터링 (보물상자/열쇠 제한)
+        original_common = self.region_info["common"]
+        original_rare = self.region_info.get("rare", [])
+        
+        def filter_pool(pool):
+            filtered = []
+            for item in pool:
+                # 보물상자는 모든 지역 풀에서 제거 (노드 해역은 별도 로직으로 추가)
+                if "보물상자" in item: continue
+                # 열쇠는 장식용 열쇠 제외하고 제거
+                if "열쇠" in item:
+                    if item == "장식용 열쇠": filtered.append(item)
+                    continue
+                filtered.append(item)
+            return filtered
+
+        common_pool = filter_pool(original_common)
+        rare_pool = filter_pool(original_rare)
         
         loot_summary = []
         
@@ -467,11 +484,28 @@ class TurnInvestigationView(discord.ui.View):
                 if self.add_loot_internal(inv, item, qty):
                     loot_summary.append(f"{item} x{qty}")
 
+        # [신규] 노드 해역 보물상자 로직 (10턴 내 1개 확정/확률 드랍)
+        if self.region_name == "노드 해역":
+            has_chest = False
+            chests = ["낡은 보물상자", "섬세한 보물상자", "깔끔한 보물상자"]
+            for c in chests:
+                if self.accumulated_loot["items"].get(c, 0) > 0:
+                    has_chest = True
+                    break
+            
+            if not has_chest:
+                # 턴이 지날수록 확률 증가 (10턴째 100%)
+                prob = 1.0 / (11 - self.current_turn)
+                if random.random() < prob:
+                    target_chest = random.choice(chests)
+                    if self.add_loot_internal(inv, target_chest, 1):
+                        loot_summary.append(f"{target_chest} x1")
+
         if random.random() < 0.02:
             if self.add_loot_internal(inv, "신화의 발자취", 1):
                 loot_summary.append("신화의 발자취 x1")
             
-        return ", ".join(loot_summary)
+        return ", ".join(loot_summary) if loot_summary else "획득 가능한 아이템이 없습니다."
 
     def add_loot_internal(self, inventory, item_name, count):
         # LIMITED_CATEGORIES 및 LIMITED_ONE_TIME_ITEMS 규칙 적용
