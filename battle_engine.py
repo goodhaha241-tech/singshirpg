@@ -32,6 +32,25 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
     log = ""
     damage_taken1 = 0
     damage_taken2 = 0
+
+    # [수정] 이펙트 리스트가 비어있을 경우 캐릭터 객체에서 직접 추출 시도 (BattleView 누락 대비)
+    if not effs1:
+        effs1 = []
+        art = getattr(char1, "equipped_artifact", None)
+        if art and isinstance(art, dict) and art.get("special"): 
+            effs1.append(art.get("special"))
+        eng = getattr(char1, "equipped_engraved_artifact", None)
+        if eng and isinstance(eng, dict) and eng.get("special"): 
+            effs1.append(eng.get("special"))
+
+    if not effs2:
+        effs2 = []
+        art = getattr(char2, "equipped_artifact", None)
+        if art and isinstance(art, dict) and art.get("special"): 
+            effs2.append(art.get("special"))
+        eng = getattr(char2, "equipped_engraved_artifact", None)
+        if eng and isinstance(eng, dict) and eng.get("special"): 
+            effs2.append(eng.get("special"))
     
     max_len = max(len(res1), len(res2))
     

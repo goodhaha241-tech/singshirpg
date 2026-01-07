@@ -12,7 +12,7 @@ DATA_FILE = "user_data.json"
 
 
 class BattleView(discord.ui.View):
-    def __init__(self, author, player, monsters, user_data, save_func, char_index=0, victory_callback=None, region_name=None):
+    def __init__(self, author, player, monsters, user_data, save_func, char_index=0, victory_callback=None, region_name=None, is_dungeon_run=False):
         super().__init__(timeout=180)
         self.author = author
         self.player = player
@@ -24,6 +24,7 @@ class BattleView(discord.ui.View):
         self.char_index = char_index
         self.victory_callback = victory_callback 
         self.region_name = region_name
+        self.is_dungeon_run = is_dungeon_run
         
         self.turn_count = 1
         self.selected_card = None
@@ -43,7 +44,8 @@ class BattleView(discord.ui.View):
                 m.status_effects = {"bleed": 0, "paralysis": 0}
 
         # 전투 시작 시 버프 적용
-        if hasattr(self.player, "apply_battle_start_buffs"):
+        # [수정] 던전 런일 경우 외부(DungeonMainView)에서 이미 버프를 적용했으므로 중복 적용 방지
+        if not self.is_dungeon_run and hasattr(self.player, "apply_battle_start_buffs"):
             self.player.apply_battle_start_buffs()
 
         # [신규] 전투 시작 시 기간제 버프 적용
@@ -294,7 +296,8 @@ class BattleView(discord.ui.View):
         return embed
 
     async def finish_battle(self, interaction, log, is_win):
-        if hasattr(self.player, "remove_battle_buffs"):
+        # [수정] 던전 런일 경우 버프를 유지해야 하므로 제거하지 않음 (DungeonMainView 종료 시 제거)
+        if not self.is_dungeon_run and hasattr(self.player, "remove_battle_buffs"):
             self.player.remove_battle_buffs()
         
         buffs = self.user_data.setdefault("buffs", {})
@@ -357,7 +360,8 @@ class BattleView(discord.ui.View):
         char_data["current_hp"] = self.player.current_hp
         char_data["current_mental"] = self.player.current_mental
         
-        await self.save_func(self.author.id, self.user_data)
+        if not self.is_dungeon_run:
+            await self.save_func(self.author.id, self.user_data)
         
         final_embed = self.make_embed(log + res_msg)
         final_embed.color = color
@@ -365,4 +369,10 @@ class BattleView(discord.ui.View):
         await interaction.edit_original_response(content=None, embed=final_embed, view=None)
         
         if is_win and self.victory_callback:
-            await self.victory_callback(interaction, {"money": total_money, "pt": total_pt, "items": loot})
+            await self.victory_callback(interaction, {
+                "money": total_money, 
+                "pt": total_pt, 
+                "items": loot,
+                "player_hp": self.player.current_hp,
+                "player_mental": self.player.current_mental
+            })

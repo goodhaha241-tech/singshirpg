@@ -195,10 +195,8 @@ class Character:
         mental_bonus = stats.get("max_mental", 0)
 
         self.max_hp += hp_bonus
-        self.current_hp += hp_bonus # 최대치 증가분만큼 현재 체력도 회복시켜줌
         
         self.max_mental += mental_bonus
-        self.current_mental += mental_bonus
         
         self.attack += stats.get("attack", 0)
         self.defense += stats.get("defense", 0)

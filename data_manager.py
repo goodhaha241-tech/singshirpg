@@ -306,6 +306,17 @@ async def save_user_data(user_id, data):
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             try:
+                # [신규] 아티팩트 소유자 매핑 (캐릭터 -> 아티팩트 ID)
+                # 캐릭터 정보에 있는 equipped_artifact를 기준으로 artifacts 테이블의 equipped_char_index를 갱신하기 위함
+                artifact_owner_map = {}
+                chars = data.get("characters", [])
+                for idx, c in enumerate(chars):
+                    eq_art = c.get("equipped_artifact")
+                    if eq_art and isinstance(eq_art, dict):
+                        art_id = eq_art.get("id")
+                        if art_id:
+                            artifact_owner_map[art_id] = idx
+
                 # ---------------------------------------------------------
                 # 1. USERS 테이블 (기본 정보 + 마이홈 레벨 추출)
                 # ---------------------------------------------------------
@@ -399,10 +410,13 @@ async def save_user_data(user_id, data):
                 if arts:
                     art_rows = []
                     for a in arts:
+                        # [수정] 매핑된 소유자 정보가 있으면 우선 사용
+                        owner_idx = artifact_owner_map.get(a.get("id"), a.get("equipped_char_index", -1))
+
                         art_rows.append((
                             a.get("id"), user_id, a.get("name"), a.get("rank", 1), a.get("grade", 1),
                             a.get("level", 0), a.get("prefix", ""), json.dumps(a.get("stats", {})),
-                            a.get("special"), a.get("description"), a.get("equipped_char_index", -1)
+                            a.get("special"), a.get("description"), owner_idx
                         ))
                     await cur.executemany("""
                         INSERT INTO artifacts (id, user_id, name, rank_level, grade, level, prefix, stats, special, description, equipped_char_index)
