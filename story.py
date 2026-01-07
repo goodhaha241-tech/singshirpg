@@ -861,7 +861,9 @@ class MainStoryView(discord.ui.View):
         embed.add_field(name="진행 상황", value=status_text, inline=False)
         return embed
 
+    @auto_defer(reload_data=True)
     async def complete_quest(self, interaction: discord.Interaction):
+        self.current_quest_idx = self.user_data.get("main_quest_index", 0)
         if self.current_quest_idx >= len(MAIN_STORY):
             return await interaction.edit_original_response(content="🎉 현재 공개된 모든 메인 스토리를 완료했습니다!", embed=None, view=None)
 

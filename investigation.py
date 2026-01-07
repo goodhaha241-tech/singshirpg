@@ -369,11 +369,6 @@ class TurnInvestigationView(discord.ui.View):
             if b_info.get("target") == investigator_name and b_info.get("stat") == "success_rate":
                 buff_bonus += b_info.get("value", 0) / 100.0
             
-        # [신규] 행운의 부적 효과 적용 (인벤토리에 보유 시 패시브로 성공 확률 +5% 증가)
-        inv = self.user_data.get("inventory", {})
-        if inv.get("행운의 부적", 0) > 0:
-            buff_bonus += 0.05
-        
         final_fail_rate = max(0.0, base_fail - buff_bonus)
         
         if random.random() < final_fail_rate:

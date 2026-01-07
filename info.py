@@ -266,7 +266,7 @@ class InfoView(discord.ui.View):
                     art_stats[key] = art_stats.get(key, 0) + value
 
         # 2. 버프 스탯 계산 (카페 음식 및 부적 등)
-        buff_stats = {"max_hp": 0, "max_mental": 0, "attack": 0, "defense": 0, "defense_rate": 0}
+        buff_stats = {"max_hp": 0, "max_mental": 0, "attack": 0, "defense": 0, "defense_rate": 0, "success_rate": 0}
         buffs = self.user_data.get("buffs", {})
         for b_key, b_info in buffs.items():
             # [추가] 캐릭터 전용 버프 필터링 (타겟 정보가 있으면 현재 캐릭터와 일치하는지 확인)
@@ -303,8 +303,9 @@ class InfoView(discord.ui.View):
         atk_str = format_stat(char_data.get('attack', 0), art_stats["attack"], buff_stats["attack"])
         dfs_str = format_stat(char_data.get('defense', 0), art_stats["defense"], buff_stats["defense"])
         dr_str = format_stat(char_data.get('defense_rate', 0), art_stats["defense_rate"], buff_stats["defense_rate"], True)
+        sr_str = f"+{buff_stats['success_rate']}%" if buff_stats['success_rate'] > 0 else "0%"
 
-        ability_value = f"⚔️ 공격력: {atk_str}\n🛡️ 방어력: {dfs_str}\n✨ 피해감소: {dr_str}"
+        ability_value = f"⚔️ 공격력: {atk_str}\n🛡️ 방어력: {dfs_str}\n✨ 피해감소: {dr_str}\n🍀 조사보정: {sr_str}"
         embed.add_field(name="능력치", value=ability_value, inline=True)
         
         # 장비 정보

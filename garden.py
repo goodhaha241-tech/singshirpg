@@ -331,7 +331,7 @@ class SeedConvertView(discord.ui.View):
         if i.user != self.author: return
         self.selected_recipe = i.data['values'][0]
         self.update_components()
-        await i.edit_original_response(view=self)
+        await i.response.edit_message(embed=self.get_embed(), view=self)
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
@@ -404,7 +404,7 @@ class WaterRefillView(discord.ui.View):
         if i.user != self.author: return
         self.selected_material = i.data['values'][0]
         self.update_components()
-        await i.edit_original_response(view=self)
+        await i.response.edit_message(embed=self.get_embed(), view=self)
 
     async def interaction_check(self, i):
         if i.user != self.author: return False

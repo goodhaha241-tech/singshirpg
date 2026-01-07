@@ -94,18 +94,36 @@ class ItemUseView(discord.ui.View):
             
             desc = ""
             is_usable = False
+            
+            # 능력치 매핑용 딕셔너리
+            stat_map = {
+                "hp": "최대 체력", "max_hp": "최대 체력", "max_mental": "최대 정신력",
+                "attack": "공격력", "defense": "방어력", "defense_rate": "방어율",
+                "success_rate": "조사 성공률"
+            }
+
             if item_name in STAT_UP_ITEMS:
                 is_usable = True
                 info = STAT_UP_ITEMS[item_name]
-                desc = f"능력치 상승 (+{info['value']})"
+                s_name = stat_map.get(info.get("stat"), "능력치")
+                val = info.get("value", 0)
+                if "duration" in info:
+                    desc = f"{s_name} +{val} ({info['duration']}회 지속 버프)"
+                else:
+                    desc = f"{s_name} +{val} (영구, 최대 {info.get('max_stat', 999)})"
             elif item_name in ITEM_CATEGORIES:
                 info = ITEM_CATEGORIES[item_name]
                 if info.get("type") == "consumable":
                     is_usable = True
-                    desc = f"회복 아이템"
+                    if info.get("effect") == "hp": desc = f"체력 {info.get('value')} 회복"
+                    elif info.get("effect") == "mental": desc = f"정신력 {info.get('value')} 회복"
+                    else: desc = "회복 아이템"
                 elif item_name == "이름 변경권":
                     is_usable = True
                     desc = "캐릭터 이름 변경"
+                elif item_name == "행운의 부적":
+                    is_usable = True
+                    desc = "조사 성공률 +5% (1회 조사 지속)"
 
             if is_usable:
                 valid_items.append((item_name, count, desc))
@@ -245,6 +263,10 @@ class ItemUseView(discord.ui.View):
         # 아이템 사용 로직
         if item_name in STAT_UP_ITEMS:
             info = STAT_UP_ITEMS[item_name]
+
+            # [신규] 중복 사용 방지 (한번에 하나만)
+            if item_name in self.user_data.get("buffs", {}):
+                return await interaction.followup.send(f"❌ 이미 **{item_name}** 효과가 적용 중입니다.", ephemeral=True)
 
             # [제한] 능력치 강화 아이템은 첫 번째 캐릭터(인덱스 0)만 사용 가능
             if self.char_index != 0:

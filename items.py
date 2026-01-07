@@ -179,7 +179,7 @@ ITEM_CATEGORIES = {
     "무지개 열매 조각": {"type": "crafted", "price": 100},
     "달빛 머금은 잎사귀": {"type": "crafted", "price": 12000, "area": "생명의 숲"},
     "생명의 정수": {"type": "crafted", "price": 12000, "area": "생명의 숲"},
-    "행운의 부적": {"type": "crafted", "price": 15000, "description": "가방에 소지하고 있으면 조사 성공 확률이 5% 증가합니다."},
+    "행운의 부적": {"type": "crafted", "price": 15000, "description": "사용 시 다음 조사(10턴) 동안 성공 확률이 5% 증가합니다."},
 
     # --- [신규 소모품 (부적 등)] ---
     "건승의 부적": {"type": "consumable", "price": 5000},
@@ -385,6 +385,7 @@ STAT_UP_ITEMS = {
     "자그마한 바람": {"stat": "defense_rate", "value": 1, "max_stat": 15},
 
     # [신규 버프형 아이템 - battle.py에서 duration 처리 필요]
+    "행운의 부적": {"stat": "success_rate", "value": 5, "duration": 10},
     "건승의 부적": {"stat": "attack", "value": 10, "duration": 3},
     "행복의 부적": {"stat": "defense", "value": 10, "duration": 3},
     "성공의 부적": {"stat": "success_rate", "value": 10, "duration": 30},
