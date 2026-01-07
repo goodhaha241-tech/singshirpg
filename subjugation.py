@@ -636,6 +636,8 @@ class SubjugationRegionView(discord.ui.View):
             desc = f"HP: {c.get('hp')} | 공격력: {c.get('attack')}"
             options.append(discord.SelectOption(label=label, description=desc, value=str(i), default=(i == self.selected_char_index)))
         select = discord.ui.Select(placeholder="던전을 탐색할 캐릭터 선택", options=options, row=0)
+            options.append(discord.SelectOption(label=label, description=desc, value=str(i), default=(i == self.selected_char_index)))
+        select = discord.ui.Select(placeholder="던전을 탐색할 캐릭터 선택", options=options, row=0)
         select.callback = self.char_select_callback
         self.add_item(select)
 
@@ -647,7 +649,11 @@ class SubjugationRegionView(discord.ui.View):
 
         for name in sorted_regions:
             if name == "노드 해역": continue
+            if name == "노드 해역": continue
             if name in REGIONS:
+                options.append(discord.SelectOption(label=name, description=f"{name} 지역 던전 ({SUBJUGATION_COST}pt 소모)", value=name))
+        if not options: options.append(discord.SelectOption(label="해금된 탐사 지역 없음", value="none"))
+        select = discord.ui.Select(placeholder="탐사할 지역을 선택하세요", options=options, row=1)
                 options.append(discord.SelectOption(label=name, description=f"{name} 지역 던전 ({SUBJUGATION_COST}pt 소모)", value=name))
         if not options: options.append(discord.SelectOption(label="해금된 탐사 지역 없음", value="none"))
         select = discord.ui.Select(placeholder="탐사할 지역을 선택하세요", options=options, row=1)
@@ -700,6 +706,7 @@ class SubjugationRegionView(discord.ui.View):
         region_name = interaction.data['values'][0]
         if region_name == "none": return
 
+        self.p_data = await get_user_data(self.author.id, self.author.display_name)
         self.p_data = await get_user_data(self.author.id, self.author.display_name)
         current_pt = self.p_data.get("pt", 0)
         if current_pt < SUBJUGATION_COST:
