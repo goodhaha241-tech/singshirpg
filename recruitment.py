@@ -172,7 +172,7 @@ RECRUIT_REGISTRY = {
         }
     },
     # [신규] 센쇼
-    "Senshow": {
+    "SenshoSensho": {
         "name": "센쇼",
         "description": "천년을 잠들었던 별",
         "emoji": "🌟",

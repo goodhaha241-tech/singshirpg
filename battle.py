@@ -191,7 +191,7 @@ class BattleView(discord.ui.View):
 <<<<<<< HEAD
         Sensho_triggered = False
 =======
-        senshow_triggered = False
+        SenshoSensho_triggered = False
 >>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
         # 플레이어 행동
         if self.player.current_mental <= 0:
@@ -210,7 +210,7 @@ class BattleView(discord.ui.View):
 <<<<<<< HEAD
                 if eng and isinstance(eng, dict) and eng.get("special") == "Sensho_star" and self.selected_card.name == "별의 은총":
 =======
-                if eng and isinstance(eng, dict) and eng.get("special") == "senshow_star" and self.selected_card.name == "별의 은총":
+                if eng and isinstance(eng, dict) and eng.get("special") == "SenshoSensho_star" and self.selected_card.name == "별의 은총":
 >>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
                     # 1/8 확률 (약 12.5%)
                     if random.randint(1, 8) == 1:
@@ -219,7 +219,7 @@ class BattleView(discord.ui.View):
 <<<<<<< HEAD
                         Sensho_triggered = True
 =======
-                        senshow_triggered = True
+                        SenshoSensho_triggered = True
 >>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
 
                 p_res = self.selected_card.use_card(
@@ -238,7 +238,7 @@ class BattleView(discord.ui.View):
 <<<<<<< HEAD
                 if Sensho_triggered:
 =======
-                if senshow_triggered:
+                if SenshoSensho_triggered:
 >>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
                     for d in p_res:
                         if d["type"] == "defense":

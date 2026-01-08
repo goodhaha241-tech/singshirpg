@@ -686,7 +686,7 @@ async def update_quest_progress(user_id, user_data, save_func, event_type, value
 
     # 8. 캐릭터 영입
     elif q_type == "recruit" and event_type == "recruit":
-        recruit_map = {"영산": "Yeongsan", "어즈렉": "Earthreg", "루우데 10%": "Luude10", "센쇼": "Senshow", "샤일라": "Shayla"}
+        recruit_map = {"영산": "Yeongsan", "어즈렉": "Earthreg", "루우데 10%": "Luude10", "센쇼": "SenshoSensho", "샤일라": "Shayla"}
         target_key = recruit_map.get(current_quest["target_char"])
         if sub_key == target_key:
             is_completed = True
@@ -1012,7 +1012,7 @@ class MainStoryView(discord.ui.View):
                     status_text = f"🔒 **{quest['target_region']}** 미해금"
                     
             elif quest["type"] == "recruit":
-                recruit_map = {"영산": "Yeongsan", "어즈렉": "Earthreg", "루우데 10%": "Luude10", "센쇼": "Senshow", "샤일라": "Shayla"}
+                recruit_map = {"영산": "Yeongsan", "어즈렉": "Earthreg", "루우데 10%": "Luude10", "센쇼": "SenshoSensho", "샤일라": "Shayla"}
                 target_key = recruit_map.get(quest["target_char"])
                 owned = any(c.get("name") == quest["target_char"] for c in self.user_data.get("characters", []))
                 
