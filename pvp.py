@@ -112,6 +112,9 @@ class PVPBattleView(discord.ui.View):
         char_data = user_data["characters"][idx]
         char_obj = Character.from_dict(char_data)
         
+        if "equipped_engraved_artifact" in char_data:
+            char_obj.equipped_engraved_artifact = char_data["equipped_engraved_artifact"]
+        
         if hasattr(char_obj, "apply_battle_start_buffs"):
             char_obj.apply_battle_start_buffs()
             
@@ -193,9 +196,14 @@ class PVPBattleView(discord.ui.View):
             self.p1_char.current_mental += self.p1_char.max_mental//2
             log += f"😵 **{self.p1_char.name}** 패닉 회복!\n"
         else:
+            # [황금] 각인 효과 로그
+            eng = getattr(self.p1_char, "equipped_engraved_artifact", None)
+            if eng and isinstance(eng, dict) and eng.get("special") == "youngsan_gold" and self.p1_card.name in ["전부매입", "금융치료"]:
+                log += f"💰 **[{self.p1_char.name}:황금]** 비용 50% 절감!\n"
+
             p1_res = self.p1_card.use_card(
                 self.p1_char.attack, self.p1_char.defense, self.p1_char.current_mental,
-                damage_taken=self.p1_damage_last, character=self.p1_char
+                damage_taken=self.p1_damage_last, character=self.p1_char, user_data=self.p1_data
             )
             p1_res = battle_engine.apply_stat_scaling(p1_res, self.p1_char)
             if bonus1 > 0:
@@ -207,9 +215,14 @@ class PVPBattleView(discord.ui.View):
             self.p2_char.current_mental += self.p2_char.max_mental//2
             log += f"😵 **{self.p2_char.name}** 패닉 회복!\n"
         else:
+            # [황금] 각인 효과 로그
+            eng = getattr(self.p2_char, "equipped_engraved_artifact", None)
+            if eng and isinstance(eng, dict) and eng.get("special") == "youngsan_gold" and self.p2_card.name in ["전부매입", "금융치료"]:
+                log += f"💰 **[{self.p2_char.name}:황금]** 비용 50% 절감!\n"
+
             p2_res = self.p2_card.use_card(
                 self.p2_char.attack, self.p2_char.defense, self.p2_char.current_mental,
-                damage_taken=self.p2_damage_last, character=self.p2_char
+                damage_taken=self.p2_damage_last, character=self.p2_char, user_data=self.p2_data
             )
             p2_res = battle_engine.apply_stat_scaling(p2_res, self.p2_char)
             if bonus2 > 0:
@@ -325,7 +338,7 @@ class PVPCharSelectView(discord.ui.View):
         self.battle_view, self.user, self.user_data, self.player_num = battle_view, user, user_data, player_num
         self.add_select()
     def add_select(self):
-        char_list = user_data.get("characters", [])
+        char_list = self.user_data.get("characters", [])
         options = [discord.SelectOption(label=c.get("name"), description=f"HP:{c.get('hp')}", value=str(i)) for i, c in enumerate(char_list)]
         if not options: options.append(discord.SelectOption(label="없음", value="none"))
         self.select = discord.ui.Select(placeholder=f"캐릭터 1명 선택", options=options)

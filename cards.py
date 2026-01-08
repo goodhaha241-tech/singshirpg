@@ -67,13 +67,24 @@ class GoldMechanicCard(SkillCard):
 
     def use_card(self, attack_stat=0, defense_stat=0, current_mental=0, **kwargs):
         user_data = kwargs.get("user_data")
+        character = kwargs.get("character")
         bonus = 0
         if user_data:
             current_money = user_data.get("money", 0)
             spend = min(current_money, 700)
             spend = (spend // 100) * 100 
+            
+            # [황금] 각인 효과: 비용 50% 감소
+            cost_factor = 1.0
+            if character:
+                eng = getattr(character, "equipped_engraved_artifact", None)
+                if eng and isinstance(eng, dict) and eng.get("special") == "youngsan_gold":
+                    cost_factor = 0.5
+            
+            real_cost = int(spend * cost_factor)
+            
             if spend > 0:
-                user_data["money"] -= spend
+                user_data["money"] -= real_cost
                 bonus = spend // 100 
         
         results = []

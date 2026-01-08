@@ -120,6 +120,10 @@ class ShopView(discord.ui.View):
                 if info.get("area") in ["생명의 숲", "아르카워드 제도", "공간의 신전"]: continue
                 if item in excluded_crafts: continue
 
+                # [수정] 소모품 구매 시 부적, 비료, 씨앗 등 비매품 제외 (회복 아이템만 표시)
+                if category == "consumable" and any(x in item for x in ["부적", "비료", "씨앗"]):
+                    continue
+
                 if info.get("type") == category:
                     p = price * 2 if category == "rare_mat" else price
                     options.append(discord.SelectOption(label=f"{item} ({p:,}원)", value=item))

@@ -44,6 +44,13 @@ UPGRADE_COSTS = {
     ]
 }
 
+# [신규] 각인 아티팩트 강화 비용 (0->1, 1->2, 2->3)
+ENGRAVED_UPGRADE_COSTS = {
+    0: {"money": 300000, "pt": 10000, "items": {}},
+    1: {"money": 350000, "pt": 13000, "items": {}},
+    2: {"money": 600000, "pt": 20000, "items": {}}
+}
+
 class ArtifactManageView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
         super().__init__(timeout=60)
@@ -72,6 +79,9 @@ class ArtifactManageView(discord.ui.View):
         char_list = self.user_data.get("characters", [])
         if char_list and 0 <= self.char_index < len(char_list):
             self.char = Character.from_dict(char_list[self.char_index])
+            # [Patch] 캐릭터 객체에 각인 아티팩트 정보 수동 주입 (Character 클래스 미지원 대비)
+            if "equipped_engraved_artifact" in char_list[self.char_index]:
+                self.char.equipped_engraved_artifact = char_list[self.char_index]["equipped_engraved_artifact"]
         else:
             self.char = Character("모험가", 170, 170, 90, 90, 5, 3)
 
@@ -278,6 +288,18 @@ class ArtifactManageView(discord.ui.View):
         else: # enhance
             placeholder = f"강화할 아티팩트 선택 ({self.artifact_page+1}/{total_pages})"
 
+        # [신규] 강화 모드일 때 각인 아티팩트 선택지 추가 (맨 위에 표시)
+        if self.mode == "enhance":
+            engraved = self.char.equipped_engraved_artifact
+            if engraved and isinstance(engraved, dict):
+                lvl = engraved.get("level", 0)
+                label = f"🔮 [각인] {engraved['name']} (+{lvl})"
+                desc = engraved.get("description", "")[:90]
+                opt = discord.SelectOption(label=label, description=desc, value="engraved_art")
+                if self.selected_artifact_idx == "engraved_art":
+                    opt.default = True
+                options.insert(0, opt)
+
         for original_idx, art in current_page_artifacts:
             rank = self.get_artifact_rank(art)
             lvl = art.get("level", 0)
@@ -345,7 +367,10 @@ class ArtifactManageView(discord.ui.View):
             self.load_character()
 
         self.update_view_components()
-        await interaction.edit_original_response(view=self)
+        
+        # [수정] 캐릭터 변경 시 임베드 정보도 갱신 (이전 캐릭터 정보가 남는 문제 해결)
+        embed = self.make_base_embed("💍 장착 모드", "캐릭터에게 아티팩트를 장착합니다.")
+        await interaction.edit_original_response(embed=embed, view=self)
 
     @auto_defer()
     async def on_filter_select(self, interaction: discord.Interaction):
@@ -364,6 +389,14 @@ class ArtifactManageView(discord.ui.View):
     async def on_artifact_select(self, interaction: discord.Interaction):
         val = interaction.data['values'][0]
         if val == "none": return
+
+        # [신규] 각인 아티팩트 선택 처리
+        if self.mode == "enhance" and val == "engraved_art":
+            self.selected_artifact_idx = "engraved_art"
+            embed = self.make_enhance_preview_embed("engraved_art")
+            self.update_view_components()
+            await interaction.edit_original_response(embed=embed, view=self)
+            return
 
         # [중요] 행동 전 데이터 리로드 (동시성 문제 및 롤백 방지)
 
@@ -474,6 +507,13 @@ class ArtifactManageView(discord.ui.View):
         if self.selected_artifact_idx is None:
             return await interaction.followup.send("❌ 선택된 아티팩트가 없습니다.", ephemeral=True)
         
+        # [신규] 각인 아티팩트 처리
+        if self.selected_artifact_idx == "engraved_art":
+            art = self.char.equipped_engraved_artifact
+            if not art: return await interaction.followup.send("❌ 각인 아티팩트가 없습니다.", ephemeral=True)
+            await self.process_enhance(interaction, art, "engraved_art")
+            return
+
         try:
             art = self.user_data["artifacts"][self.selected_artifact_idx]
         except IndexError:
@@ -484,23 +524,33 @@ class ArtifactManageView(discord.ui.View):
         await self.process_enhance(interaction, art, self.selected_artifact_idx)
 
     async def process_enhance(self, interaction, art, idx):
+        is_engraved = (idx == "engraved_art")
         rank = self.get_artifact_rank(art)
         level = art.get("level", 0)
         
-        if level >= 5:
-            return await interaction.followup.send("⚠️ 이미 최대 레벨(5강)입니다.", ephemeral=True)
+        # [수정] 최대 레벨 체크 (각인: 3강, 일반: 5강)
+        max_level = 3 if is_engraved else 5
+        if level >= max_level:
+            return await interaction.followup.send(f"⚠️ 이미 최대 레벨({max_level}강)입니다.", ephemeral=True)
 
         inv = self.user_data.setdefault("inventory", {})
         money = self.user_data.get("money", 0)
         pt = self.user_data.get("pt", 0)
 
-        if inv.get("강화키트", 0) < 1:
-            return await interaction.response.send_message("❌ **강화키트**가 부족합니다.", ephemeral=True)
+        # [수정] 비용 계산 분기
+        if is_engraved:
+            cost_data = ENGRAVED_UPGRADE_COSTS.get(level, {})
+            req_money = cost_data.get("money", 0)
+            req_pt = cost_data.get("pt", 0)
+            req_items = cost_data.get("items", {})
+        else:
+            if inv.get("강화키트", 0) < 1:
+                return await interaction.response.send_message("❌ **강화키트**가 부족합니다.", ephemeral=True)
 
-        cost_data = UPGRADE_COSTS[rank][level]
-        req_money = cost_data["money"]
-        req_pt = cost_data["pt"]
-        req_items = cost_data["items"]
+            cost_data = UPGRADE_COSTS[rank][level]
+            req_money = cost_data["money"]
+            req_pt = cost_data["pt"]
+            req_items = cost_data["items"]
 
         if money < req_money:
             return await interaction.followup.send(f"❌ 돈이 부족합니다. ({req_money:,}원 필요)", ephemeral=True)
@@ -515,8 +565,9 @@ class ArtifactManageView(discord.ui.View):
         if missing_items:
             return await interaction.followup.send(f"❌ 재료가 부족합니다: {', '.join(missing_items)}", ephemeral=True)
 
-        inv["강화키트"] -= 1
-        if inv["강화키트"] <= 0: del inv["강화키트"]
+        if not is_engraved:
+            inv["강화키트"] -= 1
+            if inv["강화키트"] <= 0: del inv["강화키트"]
         
         self.user_data["money"] -= req_money
         self.user_data["pt"] -= req_pt
@@ -541,13 +592,18 @@ class ArtifactManageView(discord.ui.View):
         special = art.get("special")
         art["description"] = _make_description(stats, special)
         
-        self.user_data["artifacts"][idx] = art 
-        
-        # 장착 중인 모든 캐릭터 데이터 동기화
-        for c in self.user_data.get("characters", []):
-            eq = c.get("equipped_artifact")
-            if eq and eq.get("id") == art.get("id"):
-                c["equipped_artifact"] = art 
+        if is_engraved:
+            # 각인 아티팩트는 캐릭터 데이터에 직접 저장
+            self.char.equipped_engraved_artifact = art
+            self.user_data["characters"][self.char_index] = self.char.to_dict()
+        else:
+            self.user_data["artifacts"][idx] = art 
+            
+            # 장착 중인 모든 캐릭터 데이터 동기화
+            for c in self.user_data.get("characters", []):
+                eq = c.get("equipped_artifact")
+                if eq and eq.get("id") == art.get("id"):
+                    c["equipped_artifact"] = art 
 
         await self.save_func(self.author.id, self.user_data)
         
@@ -556,7 +612,8 @@ class ArtifactManageView(discord.ui.View):
         
         embed = discord.Embed(title=f"✨ 강화 성공! (+{art['level']})", color=discord.Color.gold())
         embed.description = f"**{art['name']}**\n\n" + "\n".join(log_lines)
-        embed.set_footer(text=f"남은 강화키트: {inv.get('강화키트', 0)}개")
+        if not is_engraved:
+            embed.set_footer(text=f"남은 강화키트: {inv.get('강화키트', 0)}개")
         
         await interaction.edit_original_response(content=None, embed=embed, view=self)
 
@@ -615,20 +672,39 @@ class ArtifactManageView(discord.ui.View):
         embed = discord.Embed(title=title, description=description, color=discord.Color.purple())
         if self.mode == "equip":
             equipped = self.char.equipped_artifact
+            # 일반 아티팩트
             if equipped and isinstance(equipped, dict):
                 name = equipped.get("name", "이름없음")
                 lvl = equipped.get("level", 0)
                 if lvl > 0: name += f" (+{lvl})"
                 desc = equipped.get("description", "설명없음")
+                embed.add_field(name="💍 장착 중", value=f"**{name}**\n{desc}", inline=False)
             else:
-                name = "없음"
-                desc = "장착된 아티팩트가 없습니다."
-            embed.add_field(name=f"👤 {self.char.name}의 장비", value=f"**{name}**\n{desc}", inline=False)
+                embed.add_field(name="💍 장착 중", value="없음", inline=False)
+            
+            # [신규] 각인 아티팩트 정보 표시
+            engraved = self.char.equipped_engraved_artifact
+            if engraved and isinstance(engraved, dict):
+                name = engraved.get("name", "이름없음")
+                lvl = engraved.get("level", 0)
+                if lvl > 0: name += f" (+{lvl})"
+                desc = engraved.get("description", "설명없음")
+                embed.add_field(name="🔮 각인", value=f"**{name}**\n{desc}", inline=False)
+            else:
+                embed.add_field(name="🔮 각인", value="없음", inline=False)
+                
+            embed.set_footer(text=f"선택된 캐릭터: {self.char.name}")
         return embed
 
     def make_enhance_preview_embed(self, idx):
-        art = self.user_data["artifacts"][idx]
-        rank = self.get_artifact_rank(art)
+        if idx == "engraved_art":
+            art = self.char.equipped_engraved_artifact
+            rank = 3 # 각인은 기본적으로 3성 취급
+            is_engraved = True
+        else:
+            art = self.user_data["artifacts"][idx]
+            rank = self.get_artifact_rank(art)
+            is_engraved = False
         level = art.get("level", 0)
         
         embed = discord.Embed(title="✨ 강화 준비", description=f"**{art['name']}** (+{level} ➔ +{level+1})", color=discord.Color.blue())
@@ -641,13 +717,26 @@ class ArtifactManageView(discord.ui.View):
                 stat_txt.append(f"{k_name}: {v}")
         embed.add_field(name="📊 현재 스탯", value="\n".join(stat_txt) or "없음", inline=False)
         
-        if level < 5:
-            cost_data = UPGRADE_COSTS[rank][level]
-            req_money = cost_data["money"]
-            req_pt = cost_data["pt"]
-            req_items = cost_data["items"]
-            
-            cost_txt = f"💰 {req_money:,}원\n⚡ {req_pt:,}pt\n📦 강화키트 1개"
+        desc = art.get("description", "")
+        if desc:
+            embed.add_field(name="📜 효과 및 설명", value=desc, inline=False)
+
+        max_level = 3 if is_engraved else 5
+        
+        if level < max_level:
+            if is_engraved:
+                cost_data = ENGRAVED_UPGRADE_COSTS.get(level, {})
+                req_money = cost_data.get("money", 0)
+                req_pt = cost_data.get("pt", 0)
+                req_items = cost_data.get("items", {})
+                cost_txt = f"💰 {req_money:,}원\n⚡ {req_pt:,}pt"
+            else:
+                cost_data = UPGRADE_COSTS[rank][level]
+                req_money = cost_data["money"]
+                req_pt = cost_data["pt"]
+                req_items = cost_data["items"]
+                cost_txt = f"💰 {req_money:,}원\n⚡ {req_pt:,}pt\n📦 강화키트 1개"
+
             if req_items:
                 inv = self.user_data.get("inventory", {})
                 item_lines = []

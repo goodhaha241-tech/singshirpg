@@ -93,6 +93,13 @@ async def check_schema(pool):
             if "fertilizer" not in g_cols:
                 await cur.execute("ALTER TABLE garden_slots ADD COLUMN fertilizer VARCHAR(100)")
 
+            # 4. characters 테이블 (equipped_engraved_artifact 추가)
+            await cur.execute("DESCRIBE characters")
+            c_cols = [r[0] for r in await cur.fetchall()]
+            if "equipped_engraved_artifact" not in c_cols:
+                logger.warning("⚠️ 'characters' 테이블에 'equipped_engraved_artifact' 컬럼 추가 중...")
+                await cur.execute("ALTER TABLE characters ADD COLUMN equipped_engraved_artifact JSON")
+
             # users 테이블의 total_subjugations 컬럼을 BIGINT로 확장
             try:
                 await cur.execute("ALTER TABLE users MODIFY COLUMN total_subjugations BIGINT DEFAULT 0")
@@ -190,6 +197,7 @@ async def _get_characters_and_artifacts(cur, user_id):
             "defense_rate": row['defense_rate'],
             "card_slots": row['card_slots'],
             "equipped_cards": json.loads(row['equipped_cards']) if row['equipped_cards'] else [],
+            "equipped_engraved_artifact": json.loads(row['equipped_engraved_artifact']) if row.get('equipped_engraved_artifact') else None,
             "status_effects": {}, 
             "is_recruited": True,
             "is_down": False
@@ -401,11 +409,12 @@ async def save_user_data(user_id, data):
                             c.get("max_mental", 50), c.get("current_mental", 50),
                             c.get("attack", 5), c.get("defense", 0), c.get("defense_rate", 0),
                             c.get("card_slots", 4), json.dumps(c.get("equipped_cards", []))
+                            , json.dumps(c.get("equipped_engraved_artifact")) if c.get("equipped_engraved_artifact") else None
                         ))
                     await cur.executemany("""
                         INSERT INTO characters (user_id, name, hp, current_hp, max_mental, current_mental, 
-                        attack, defense, defense_rate, card_slots, equipped_cards)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        attack, defense, defense_rate, card_slots, equipped_cards, equipped_engraved_artifact)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, char_rows)
 
                 # ---------------------------------------------------------

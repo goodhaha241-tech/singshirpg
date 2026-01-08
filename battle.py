@@ -196,6 +196,11 @@ class BattleView(discord.ui.View):
             log = rec_log + f"### 😱 패닉 상태!\n**{self.player.name}** 행동 불가! (피해 2배)\n"
         else:
             if self.selected_card:
+                # [황금] 각인 효과 로그
+                eng = getattr(self.player, "equipped_engraved_artifact", None)
+                if eng and isinstance(eng, dict) and eng.get("special") == "youngsan_gold" and self.selected_card.name in ["전부매입", "금융치료"]:
+                    rec_log += f"💰 **[{self.player.name}:황금]** 비용 50% 절감!\n"
+
                 p_res = self.selected_card.use_card(
                     self.player.attack, self.player.defense, self.player.current_mental,
                     user_data=self.user_data,

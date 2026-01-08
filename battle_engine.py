@@ -77,11 +77,46 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         # [잠금]
         if d1.get("effect") == "lock_others":
-            for j in range(i+1, len(res2)): res2[j] = {"type": "none", "value": 0}
-            log += f"🔒 **{char1.name}**의 잠금! 적의 후속 행동 봉인!\n"
+            destroyed = 0
+            for j in range(i+1, len(res2)):
+                if res2[j]["type"] != "none":
+                    res2[j] = {"type": "none", "value": 0}
+                    destroyed += 1
+            
+            if destroyed > 0:
+                log += f"🔒 **{char1.name}**의 잠금! 적의 후속 주사위 {destroyed}개 파괴!\n"
+                if "luude_imprint" in effs1:
+                    for _ in range(destroyed):
+                        if random.random() < 0.5:
+                            heal_val = int(char1.max_mental * 0.1)
+                            char1.current_mental = min(char1.max_mental, char1.current_mental + heal_val)
+                            log += f" 👁️**[{char1.name}:악몽]** 정신회복(+{heal_val})"
+                        else:
+                            dmg_val = int(char2.max_hp * 0.1)
+                            char2.current_hp = max(0, char2.current_hp - dmg_val)
+                            log += f" 👁️**[{char1.name}:악몽]** 악몽피해(-{dmg_val})"
+                    log += "\n"
+
         if d2.get("effect") == "lock_others":
-            for j in range(i+1, len(res1)): res1[j] = {"type": "none", "value": 0}
-            log += f"🔒 **{char2.name}**의 잠금! 적의 후속 행동 봉인!\n"
+            destroyed = 0
+            for j in range(i+1, len(res1)):
+                if res1[j]["type"] != "none":
+                    res1[j] = {"type": "none", "value": 0}
+                    destroyed += 1
+            
+            if destroyed > 0:
+                log += f"🔒 **{char2.name}**의 잠금! 적의 후속 주사위 {destroyed}개 파괴!\n"
+                if "luude_imprint" in effs2:
+                    for _ in range(destroyed):
+                        if random.random() < 0.5:
+                            heal_val = int(char2.max_mental * 0.1)
+                            char2.current_mental = min(char2.max_mental, char2.current_mental + heal_val)
+                            log += f" 👁️**[{char2.name}:악몽]** 정신회복(+{heal_val})"
+                        else:
+                            dmg_val = int(char1.max_hp * 0.1)
+                            char1.current_hp = max(0, char1.current_hp - dmg_val)
+                            log += f" 👁️**[{char2.name}:악몽]** 악몽피해(-{dmg_val})"
+                    log += "\n"
 
         # [출혈 시너지]
         if d1.get("effect") == "bleed_synergy": d1["value"] += char2.status_effects.get("bleed", 0)
@@ -301,9 +336,34 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         # 파괴
         if dmg2 > 0 and d1.get("effect") == "destroy_next_on_hit" and i + 1 < len(res2):
-            res2[i+1] = {"type": "none", "value": 0}; clash_log += " 💥파괴!"
+            res2[i+1] = {"type": "none", "value": 0}
+            clash_log += " 💥파괴!"
+            
+            # [루우데 각인 효과] 파괴 시 정신력 회복 or 적 피해
+            if "luude_imprint" in effs1:
+                if random.random() < 0.5:
+                    heal_val = int(char1.max_mental * 0.1)
+                    char1.current_mental = min(char1.max_mental, char1.current_mental + heal_val)
+                    clash_log += f" 👁️**[{char1.name}:악몽]** 정신회복(+{heal_val})"
+                else:
+                    dmg_val = int(char2.max_hp * 0.1)
+                    char2.current_hp = max(0, char2.current_hp - dmg_val)
+                    clash_log += f" 👁️**[{char1.name}:악몽]** 악몽피해(-{dmg_val})"
+
         if dmg1 > 0 and d2.get("effect") == "destroy_next_on_hit" and i + 1 < len(res1):
-            res1[i+1] = {"type": "none", "value": 0}; clash_log += " 💥파괴!"
+            res1[i+1] = {"type": "none", "value": 0}
+            clash_log += " 💥파괴!"
+
+            # [루우데 각인 효과] (상대방이 루우데일 경우)
+            if "luude_imprint" in effs2:
+                if random.random() < 0.5:
+                    heal_val = int(char2.max_mental * 0.1)
+                    char2.current_mental = min(char2.max_mental, char2.current_mental + heal_val)
+                    clash_log += f" 👁️**[{char2.name}:악몽]** 정신회복(+{heal_val})"
+                else:
+                    dmg_val = int(char1.max_hp * 0.1)
+                    char1.current_hp = max(0, char1.current_hp - dmg_val)
+                    clash_log += f" 👁️**[{char2.name}:악몽]** 악몽피해(-{dmg_val})"
 
         # 최종 적용
         char1.current_hp = max(0, char1.current_hp - dmg1)

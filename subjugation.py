@@ -313,6 +313,8 @@ class DungeonMainView(discord.ui.View):
         self.accumulated_loot = {"items": {}, "money": 0, "pt": 0}
 
         self.player = Character.from_dict(user_data["characters"][char_index])
+        if "equipped_engraved_artifact" in user_data["characters"][char_index]:
+            self.player.equipped_engraved_artifact = user_data["characters"][char_index]["equipped_engraved_artifact"]
         
         self.choices = []
         self.dungeon_item = None # 현재 소지한 던전 전용 아이템
