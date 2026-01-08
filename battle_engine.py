@@ -33,6 +33,12 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
     damage_taken1 = 0
     damage_taken2 = 0
 
+    # [어즈렉 각인용 변수]
+    total_def1 = 0
+    total_def2 = 0
+    first_type1 = None
+    first_type2 = None
+
     # [수정] 이펙트 리스트가 비어있을 경우 캐릭터 객체에서 직접 추출 시도 (BattleView 누락 대비)
     if not effs1 and char1:
         effs1 = []
@@ -51,14 +57,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         eng = getattr(char2, "equipped_engraved_artifact", None)
         if isinstance(eng, dict) and eng.get("special"): 
             effs2.append(eng.get("special"))
-
-    # [어즈렉: 믿음어린] 효과 변수 초기화
-    earthreg_heal_val = 0
-    if "earthreg_faith" in effs1 and not is_stunned1:
-        # 첫 번째 주사위가 방어인지 확인
-        if len(res1) > 0 and res1[0]["type"] == "defense":
-            # 이번 턴의 모든 방어 주사위 값 합산
-            earthreg_heal_val = sum(d["value"] for d in res1 if d["type"] == "defense") // 4
     
     max_len = max(len(res1), len(res2))
     
@@ -133,6 +131,14 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         t1, v1 = d1["type"], d1["value"]
         t2, v2 = d2["type"], d2["value"]
         
+        # [어즈렉 각인] 첫 합 타입 및 방어값 누적
+        if i == 0:
+            first_type1 = t1
+            first_type2 = t2
+        
+        if t1 == "defense": total_def1 += v1
+        if t2 == "defense": total_def2 += v2
+
         clash_log = f"\n**[{i+1}합]** "
         
         # [아티팩트 효과]
@@ -405,10 +411,19 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if char1.current_hp <= 0:
             break
 
-    # [어즈렉: 믿음어린] 턴 종료(마지막 합) 후 회복 적용
-    if earthreg_heal_val > 0 and char1.current_hp > 0:
-        char1.current_hp = min(char1.max_hp, char1.current_hp + earthreg_heal_val)
-        char1.current_mental = min(char1.max_mental, char1.current_mental + earthreg_heal_val)
-        log += f"\n🙏 **[{char1.name}:믿음]** 신실한 기도로 회복합니다. (HP/MG +{earthreg_heal_val})"
+    # [어즈렉 각인: 믿음어린] 효과 적용
+    if "earthreg_faith" in effs1 and first_type1 == "defense":
+        heal_val = int(total_def1 * 0.25)
+        if heal_val > 0:
+            char1.current_hp = min(char1.max_hp, char1.current_hp + heal_val)
+            char1.current_mental = min(char1.max_mental, char1.current_mental + heal_val)
+            log += f"\n🛡️ **[{char1.name}:믿음]** 믿는 자에게 빛이 있나니(+{heal_val})"
+
+    if "earthreg_faith" in effs2 and first_type2 == "defense":
+        heal_val = int(total_def2 * 0.25)
+        if heal_val > 0:
+            char2.current_hp = min(char2.max_hp, char2.current_hp + heal_val)
+            char2.current_mental = min(char2.max_mental, char2.current_mental + heal_val)
+            log += f"\n🛡️ **[{char2.name}:믿음]** 믿는 자에게 빛이 있나니(+{heal_val})"
 
     return log, damage_taken1, damage_taken2

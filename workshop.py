@@ -507,8 +507,25 @@ class ImprintView(discord.ui.View):
                 "special": "luude_imprint",
                 "description": "[각인] 주사위 파괴 시, 파괴한 개수당 10% 정신력 회복 또는 적에게 피해"
             }
+        elif "어즈렉" in char_data["name"]:
+            imprint_art = {
+                "name": "믿음어린 아티팩트",
+                "rank": 3,
+                "stats": {"attack": 3, "defense": 7},
+                "special": "earthreg_faith",
+                "description": "[각인] 첫 합에서 방어 사용 시, 마지막 합에서 그 턴 전체 방어값의 25% 체력/정신력 회복"
+            }
+
+        elif "센쇼" in char_data["name"]:
+            imprint_art = {
+                "name": "별똥별의 아티팩트",
+                "rank": 3,
+                "stats": {"attack": 7, "max_mental": 30},
+                "special": "sensho_star",
+                "description": "[각인] '별의 은총' 사용 시 1/8 확률로 방어 효과 대신 체력 전체 회복"
+            }
         else:
-            return await i.response.send_message("❌ 해당 캐릭터의 전용 각인 로직이 없습니다. (현재 '영산', '루우데'만 가능)", ephemeral=True)
+            return await i.response.send_message("❌ 해당 캐릭터의 전용 각인 로직이 없습니다. (현재 '영산', '루우데', '어즈렉', '센쇼'만 가능)", ephemeral=True)
 
         # 제물 아티팩트 제거
         # 장착 해제 처리
