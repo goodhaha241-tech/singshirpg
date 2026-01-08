@@ -180,7 +180,7 @@ class KaianCard(SkillCard):
             base_desc += "\n⌛ [특수] 합 승리 시 다음 턴 모든값 +6"
         return base_desc
 
-class SenshoCard(SkillCard):
+class SenshowCard(SkillCard):
     def __init__(self, name):
         self.name = name
         if name == "파멸의 소원":
@@ -388,7 +388,7 @@ def get_card(name):
     elif name.startswith("시간술식"):
         return KaianCard(name)
     elif name == "파멸의 소원": 
-        return SenshoCard(name)
+        return SenshowCard(name)
     elif name == "모닝 글로리":
         return MorningGloryCard(name)
     
