@@ -247,7 +247,7 @@ class DungeonItemUseView(discord.ui.View):
 class DungeonRecoveryView(discord.ui.View):
     """던전 내 회복방 뷰"""
     def __init__(self, author, user_data, save_func, dungeon_view):
-        super().__init__(timeout=180)
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -280,7 +280,7 @@ class DungeonRecoveryView(discord.ui.View):
 class BossEncounterView(discord.ui.View):
     """보스 조우 시 정보를 보여주는 뷰"""
     def __init__(self, author, dungeon_view, boss, extra_msg=""):
-        super().__init__(timeout=180)
+        super().__init__(timeout=None)
         self.author = author
         self.dungeon_view = dungeon_view
         self.boss = boss
@@ -302,7 +302,7 @@ class BossEncounterView(discord.ui.View):
 class DungeonMainView(discord.ui.View):
     """던전 탐사 메인 뷰"""
     def __init__(self, author, user_data, save_func, char_index, region_name):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
