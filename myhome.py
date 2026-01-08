@@ -189,7 +189,7 @@ class MyHomeView(discord.ui.View):
     async def recruit_callback(self, interaction: discord.Interaction):
         async def back_cb(i):
             view = MyHomeView(self.author, self.user_data, self.save_func)
-            await i.edit_original_response(content=None, embed=view.get_embed(), view=view)
+            await i.response.edit_message(content=None, embed=view.get_embed(), view=view)
         view = RecruitSelectView(self.author, self.user_data, self.save_func, back_cb)
         embed = discord.Embed(title="🕵️ 영입소", description="함께할 동료를 찾아보세요.", color=discord.Color.blue())
         await interaction.edit_original_response(content=None, embed=embed, view=view)

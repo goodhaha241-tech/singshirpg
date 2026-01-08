@@ -521,7 +521,7 @@ class ImprintView(discord.ui.View):
                 "name": "별똥별의 아티팩트",
                 "rank": 3,
                 "stats": {"attack": 7, "max_mental": 30},
-                "special": "sensho_star",
+                "special": "Sensho_star",
                 "description": "[각인] '별의 은총' 사용 시 1/8 확률로 방어 효과 대신 체력 전체 회복"
             }
         else:
