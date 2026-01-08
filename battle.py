@@ -188,7 +188,11 @@ class BattleView(discord.ui.View):
         is_stunned = False 
         p_res = []
 
+<<<<<<< HEAD
         Sensho_triggered = False
+=======
+        senshow_triggered = False
+>>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
         # 플레이어 행동
         if self.player.current_mental <= 0:
             self.is_panic = True
@@ -203,12 +207,20 @@ class BattleView(discord.ui.View):
                     rec_log += f"💰 **[{self.player.name}:황금]** 비용 50% 절감!\n"
                 
                 # [센쇼: 별똥별의] 효과 로직
+<<<<<<< HEAD
                 if eng and isinstance(eng, dict) and eng.get("special") == "Sensho_star" and self.selected_card.name == "별의 은총":
+=======
+                if eng and isinstance(eng, dict) and eng.get("special") == "senshow_star" and self.selected_card.name == "별의 은총":
+>>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
                     # 1/8 확률 (약 12.5%)
                     if random.randint(1, 8) == 1:
                         self.player.current_hp = self.player.max_hp
                         rec_log += f"🌠 **[{self.player.name}:별똥별]** 별의 가호가 쏟아집니다! (HP 완전 회복, 방어 무효화)\n"
+<<<<<<< HEAD
                         Sensho_triggered = True
+=======
+                        senshow_triggered = True
+>>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
 
                 p_res = self.selected_card.use_card(
                     self.player.attack, self.player.defense, self.player.current_mental,
@@ -223,7 +235,11 @@ class BattleView(discord.ui.View):
                         if d["type"] != "none": d["value"] += applied_bonus
                 
                 # [센쇼: 별똥별의] 발동 시 방어 주사위 무효화
+<<<<<<< HEAD
                 if Sensho_triggered:
+=======
+                if senshow_triggered:
+>>>>>>> 3c9447088ff0b78f3f0d009b3f179822aea6e5e4
                     for d in p_res:
                         if d["type"] == "defense":
                             d["type"] = "none"
