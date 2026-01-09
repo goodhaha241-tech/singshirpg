@@ -74,7 +74,8 @@ async def check_schema(pool):
                 ("fishing_max_slots", "INT DEFAULT 3"),
                 ("max_subjugation_depth", "INT DEFAULT 0"),
                 ("daily_quests", "JSON"),
-                ("last_quest_date", "DATE")
+                ("last_quest_date", "DATE"),
+                ("construction_step", "INT DEFAULT 0")
             ]
             for col, col_type in updates:
                 if col not in u_cols:
@@ -268,7 +269,7 @@ async def _get_myhome_data(cur, user_id, user_row):
         "fishing": {"dismantle_slots": f_slots, "rod": user_row['fishing_rod'] or 0, "spot_level": user_row['fishing_spot_level'] or 0, "max_dismantle_slots": user_row['fishing_max_slots'] or 3},
         "total_subjugations": user_row['total_subjugations'] or 0,
         "max_subjugation_depth": user_row.get('max_subjugation_depth') or 0,
-        "construction_step": 5 if (user_row['garden_level'] or 0) > 0 else 0
+        "construction_step": user_row.get('construction_step', 0)
     }
 
 async def get_user_data(user_id, user_name=None):
@@ -361,9 +362,8 @@ async def save_user_data(user_id, data):
                     INSERT INTO users 
                     (user_id, pt, money, last_checkin, investigator_index, 
                      main_quest_id, main_quest_current, main_quest_index,
-                     garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations,
-                     cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth, daily_quests, last_quest_date)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
+                     garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations, cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth, daily_quests, last_quest_date, construction_step)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
                     ON DUPLICATE KEY UPDATE
                     pt=new.pt, money=new.money, last_checkin=new.last_checkin,
                     investigator_index=new.investigator_index,
@@ -383,7 +383,8 @@ async def save_user_data(user_id, data):
                     fishing_max_slots=new.fishing_max_slots,
                     max_subjugation_depth=new.max_subjugation_depth,
                     daily_quests=new.daily_quests,
-                    last_quest_date=new.last_quest_date
+                    last_quest_date=new.last_quest_date,
+                    construction_step=new.construction_step
                 """
                 await cur.execute(sql_users, (
                     str(user_id), data.get("pt", 0), data.get("money", 0), data.get("last_checkin"),
@@ -393,7 +394,8 @@ async def save_user_data(user_id, data):
                     cards_json, buffs_json, mq_prog_json, t_invest,
                     myhome.get("fishing", {}).get("max_dismantle_slots", 3),
                     m_depth,
-                    daily_quests_json, data.get("last_quest_date")
+                    daily_quests_json, data.get("last_quest_date"),
+                    myhome.get("construction_step", 0)
                 ))
 
                 # ---------------------------------------------------------
