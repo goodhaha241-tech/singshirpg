@@ -28,35 +28,39 @@ async def check_global_tables():
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 # 거래 테이블
-                await cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS global_trades (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        seller_id BIGINT NOT NULL,
-                        seller_name VARCHAR(100),
-                        item_name VARCHAR(100),
-                        quantity INT,
-                        price INT,
-                        currency VARCHAR(10),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+                await cursor.execute("SHOW TABLES LIKE 'global_trades'")
+                if not await cursor.fetchone():
+                    await cursor.execute("""
+                        CREATE TABLE global_trades (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            seller_id BIGINT NOT NULL,
+                            seller_name VARCHAR(100),
+                            item_name VARCHAR(100),
+                            quantity INT,
+                            price INT,
+                            currency VARCHAR(10),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
                 # [신규] 글로벌 퀘스트 테이블
-                await cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS global_quests (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        q_type VARCHAR(50),
-                        q_rank INT,
-                        target VARCHAR(100),
-                        count INT,
-                        current INT DEFAULT 0,
-                        description VARCHAR(255),
-                        accepted_by BIGINT,
-                        accepted_name VARCHAR(100),
-                        completed BOOLEAN DEFAULT FALSE,
-                        claimed BOOLEAN DEFAULT FALSE,
-                        created_date DATE
-                    )
-                """)
+                await cursor.execute("SHOW TABLES LIKE 'global_quests'")
+                if not await cursor.fetchone():
+                    await cursor.execute("""
+                        CREATE TABLE global_quests (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            q_type VARCHAR(50),
+                            q_rank INT,
+                            target VARCHAR(100),
+                            count INT,
+                            current INT DEFAULT 0,
+                            description VARCHAR(255),
+                            accepted_by BIGINT,
+                            accepted_name VARCHAR(100),
+                            completed BOOLEAN DEFAULT FALSE,
+                            claimed BOOLEAN DEFAULT FALSE,
+                            created_date DATE
+                        )
+                    """)
     except Exception as e:
         print(f"⚠️ 테이블 확인 중 오류: {e}")
 
@@ -222,7 +226,7 @@ class RewardChoiceView(discord.ui.View):
 
 class CafeQuestView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
-        super().__init__(timeout=60)
+        super().__init__(timeout=300)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -296,21 +300,29 @@ class CafeQuestView(discord.ui.View):
             select.callback = self.quest_action
             self.add_item(select)
             
-        self.add_item(Button(label="새로고침", style=ButtonStyle.secondary, custom_id="refresh"))
-        self.add_item(discord.ui.Button(label="닫기", style=discord.ButtonStyle.gray, custom_id="close"))
+        refresh_btn = Button(label="새로고침", style=ButtonStyle.secondary)
+        refresh_btn.callback = self.refresh_callback
+        self.add_item(refresh_btn)
+
+        close_btn = discord.ui.Button(label="닫기", style=discord.ButtonStyle.gray)
+        close_btn.callback = self.close_callback
+        self.add_item(close_btn)
 
     async def interaction_check(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return False
-        if interaction.data.get("custom_id") == "close":
-            await interaction.message.delete()
-            return False
-        if interaction.data.get("custom_id") == "refresh":
-            await interaction.response.defer()
-            await self.fetch_quests()
-            self.update_buttons()
-            await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        if interaction.user != self.author:
+            await interaction.response.send_message("❌ 본인의 메뉴만 조작할 수 있습니다.", ephemeral=True)
             return False
         return True
+
+    async def refresh_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await self.fetch_quests()
+        self.update_buttons()
+        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+
+    async def close_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await interaction.edit_original_response(content="카페를 나갔습니다.👋", embed=None, view=None)
 
     async def quest_action(self, interaction: discord.Interaction):
         val = interaction.data['values'][0]
