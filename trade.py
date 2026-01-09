@@ -619,13 +619,18 @@ class TradeBoardView(View):
         self.page += 1
         await self.update_message(interaction)
 
-    async def send_money_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        await interaction.response.send_modal(SendMoneyModal(self.user_data, self.get_user_data_func, self.save_func))
+    
+class SendMoneyView(discord.ui.View):
+    def __init__(self, user_data, get_user_data_func, save_func):
+        super().__init__(timeout=60)
+        self.user_data = user_data
+        self.get_user_data_func = get_user_data_func
+        self.save_func = save_func
 
-    async def register_trade_callback(self, interaction: discord.Interaction):
-        if interaction.user != self.author: return
-        await interaction.response.send_modal(RegisterTradeModal(self.user_data, self.save_func, self))
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="💸 송금할 상대를 선택하세요")
+    async def select_user(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        target_user = select.values[0]
+
 
     @auto_defer()
     async def buy_callback(self, interaction: discord.Interaction):
@@ -754,35 +759,54 @@ class RegisterTradeModal(Modal):
             print(f"Register Error: {e}")
             await interaction.response.send_message("❌ 등록 중 오류가 발생했습니다.", ephemeral=True)
 
-class SendMoneyModal(Modal):
+
+class SendMoneyView(discord.ui.View):
     def __init__(self, user_data, get_user_data_func, save_func):
-        super().__init__(title="💸 송금하기")
+        super().__init__(timeout=60)
         self.user_data = user_data
         self.get_user_data_func = get_user_data_func
         self.save_func = save_func
 
-        self.target_id = TextInput(label="받을 사람 ID (우클릭 -> ID 복사)", placeholder="예: 123456789012345678", required=True)
-        self.amount = TextInput(label="보낼 금액", placeholder="숫자만 입력", required=True)
-        self.currency = TextInput(label="화폐 종류 (돈/pt)", placeholder="돈 또는 pt 입력", required=True)
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="💸 송금할 상대를 선택하세요")
+    async def select_user(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        target_user = select.values[0]
+        
+        if target_user.id == interaction.user.id:
+            return await interaction.response.send_message("❌ 자신에게는 송금할 수 없습니다.", ephemeral=True)
+        if target_user.bot:
+            return await interaction.response.send_message("❌ 봇에게는 송금할 수 없습니다.", ephemeral=True)
+            
+        await interaction.response.send_modal(SendMoneyAmountModal(self.user_data, self.get_user_data_func, self.save_func, target_user))
 
-        self.add_item(self.target_id)
+
+class SendMoneyAmountModal(Modal):
+    def __init__(self, user_data, get_user_data_func, save_func, target_user):
+        super().__init__(title=f"💸 {target_user.display_name}님에게 송금")
+        self.user_data = user_data
+        self.get_user_data_func = get_user_data_func
+        self.save_func = save_func
+        self.target_user = target_user
+
+        self.amount = TextInput(label="보낼 금액", placeholder="숫자만 입력 (예: 5000)", required=True)
+        self.currency = TextInput(label="화폐 종류 (돈/pt)", placeholder="'돈' 또는 'pt' 입력", required=True)
+
         self.add_item(self.amount)
         self.add_item(self.currency)
 
     async def on_submit(self, interaction: discord.Interaction):
-        target_id = self.target_id.value.strip()
         amount_str = self.amount.value.strip()
         currency_str = self.currency.value.strip()
+        target_id = self.target_user.id
 
         # [수정] get_user_data_func는 비동기이므로 await 필수
         try:
-            target_data = await self.get_user_data_func(int(target_id), "Unknown")
+            target_data = await self.get_user_data_func(target_id, self.target_user.display_name)
         except:
             await interaction.response.send_message("❌ 유효하지 않은 유저 ID입니다.", ephemeral=True)
             return
 
-        if not amount_str.isdigit() or int(amount_str) <= 0:
-            await interaction.response.send_message("❌ 올바른 금액을 입력해주세요.", ephemeral=True)
+        if not amount_str.isdigit():
+            await interaction.response.send_message("❌ 보낼 금액은 숫자여야 합니다.", ephemeral=True)
             return
         
         amount = int(amount_str)
@@ -810,6 +834,7 @@ class SendMoneyModal(Modal):
         await self.save_func(int(target_id), target_data)
 
         await interaction.response.send_message(f"✅ **송금 완료!**\n<@{target_id}>님에게 {amount}{unit}을 보냈습니다.", ephemeral=True)
+        await interaction.response.send_message(f"✅ **송금 완료!**\n{self.target_user.mention}님에게 {amount}{unit}을 보냈습니다.", ephemeral=True)
 
 # ---------------------------------------------------------
 # 2. 카페 주문 (버프 음식)

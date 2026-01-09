@@ -345,6 +345,17 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
                         t.status_effects["paralysis"] = t.status_effects.get("paralysis", 0) + val
                         return f" ⚡마비({val})"
                 except: pass
+
+            # 3. 확률적 기절(Stun)
+            if "stun_" in eff and "prob_" in eff:
+                try:
+                    parts = eff.split("_")
+                    val = int(parts[1])
+                    prob = int(parts[3])
+                    if random.randint(1, 100) <= prob:
+                        t.status_effects["stun"] = t.status_effects.get("stun", 0) + val
+                        return f" 💫기절({val})"
+                except: pass
             return ""
 
         log_add1 = apply_effect(d1, char2, win1)
@@ -563,6 +574,10 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if t2 in ["defense", "heal", "mental_heal"] and char2.status_effects.get("paralysis", 0) > 0:
             char2.status_effects["paralysis"] -= 1
             
+        # 기절 스택 감소 (행동 종료 후)
+        if char1.status_effects.get("stun", 0) > 0: char1.status_effects["stun"] = max(0, char1.status_effects["stun"] - 1)
+        if char2.status_effects.get("stun", 0) > 0: char2.status_effects["stun"] = max(0, char2.status_effects["stun"] - 1)
+
         if char2.current_hp <= 0:
             log += f"\n💀 **{char2.name}** 처치!"
             break

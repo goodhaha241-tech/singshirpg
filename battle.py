@@ -46,14 +46,14 @@ class BattleView(discord.ui.View):
         
         # 상태이상 초기화
         if not hasattr(self.player, "status_effects"):
-            self.player.status_effects = {"bleed": 0, "paralysis": 0}
+            self.player.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
         
         # [Fix] 전투 시작 시 런타임 쿨타임 초기화 (던전 연속 전투 시 이전 전투 기록 삭제)
         self.player.runtime_cooldowns = {}
         
         for m in self.monsters:
             if not hasattr(m, "status_effects"):
-                m.status_effects = {"bleed": 0, "paralysis": 0}
+                m.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
 
         # 던전 런 체크: 외부에서 버프를 적용했으므로 중복 적용 방지
         if not self.is_dungeon_run and hasattr(self.player, "apply_battle_start_buffs"):
@@ -199,6 +199,7 @@ class BattleView(discord.ui.View):
             rec_log += f"### 🧠 정신력 회복!\n**{self.player.name}**이(가) 정신을 차렸습니다! (+{restore})\n"
 
         is_stunned = False 
+        is_player_stunned = self.player.status_effects.get("stun", 0) > 0
         p_res = []
 
         # 플레이어 행동
@@ -207,6 +208,10 @@ class BattleView(discord.ui.View):
             is_stunned = True
             p_res = [{"type": "none", "value": 0}]
             log = rec_log + f"### 😱 패닉 상태!\n**{self.player.name}** 행동 불가! (피해 2배)\n"
+        elif is_player_stunned:
+            is_stunned = True
+            p_res = [{"type": "none", "value": 0}]
+            log = rec_log + f"### 💫 기절 상태!\n**{self.player.name}** 행동 불가!\n"
         else:
             if self.selected_card:
                 # [황금] 각인 효과 로그
@@ -232,8 +237,13 @@ class BattleView(discord.ui.View):
             log = rec_log + f"### ⚔️ 제 {self.turn_count}턴\n👤 **{self.player.name}** : `{c_name}`\n"
 
         # 몬스터 행동
-        m_card = target.decide_action()
-        m_res = m_card.use_card(target.attack, target.defense)
+        is_monster_stunned = target.status_effects.get("stun", 0) > 0
+        if is_monster_stunned:
+            m_card = None
+            m_res = [{"type": "none", "value": 0}]
+        else:
+            m_card = target.decide_action()
+            m_res = m_card.use_card(target.attack, target.defense)
         m_res = battle_engine.apply_stat_scaling(m_res, target)
         
         # [수정] 배틀 엔진을 통해 아티팩트 효과 처리 (샤일라, 카이안 등)
@@ -244,7 +254,10 @@ class BattleView(discord.ui.View):
         rec_log += art_log
         self.shayla_light_trigger = next_trigger
 
-        log += f"👾 **{target.name}** : `{m_card.name}`\n"
+        if is_monster_stunned:
+            log += f"👾 **{target.name}** : 💫 기절함\n"
+        else:
+            log += f"👾 **{target.name}** : `{m_card.name}`\n"
         
         # [고조된] 효과
         if "escalation" in effects and not is_stunned and len(p_res) > 0:
@@ -258,7 +271,7 @@ class BattleView(discord.ui.View):
         # 합 및 데미지 계산
         clash_log, dmg_p, dmg_m = battle_engine.process_clash_loop(
             self.player, target, p_res, m_res, effects, [], self.turn_count, is_stunned1=is_stunned
-        )
+        ) # is_stunned2는 battle_engine 내부에서 m_res가 none일 때 자동 처리됨 (혹은 추가 인자로 넘길 수도 있음)
         
         # [시간가속] 적립된 보너스 적용
         accel_bonus = self.player.runtime_cooldowns.get("time_accel_bonus", 0)
@@ -350,6 +363,7 @@ class BattleView(discord.ui.View):
             s = []
             if char.status_effects.get("bleed", 0) > 0: s.append(f"🩸{char.status_effects['bleed']}")
             if char.status_effects.get("paralysis", 0) > 0: s.append(f"⚡{char.status_effects['paralysis']}")
+            if char.status_effects.get("stun", 0) > 0: s.append(f"💫{char.status_effects['stun']}")
             return " ".join(s)
 
         p = self.player

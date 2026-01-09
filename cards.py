@@ -319,6 +319,19 @@ SKILL_CARDS = {
         Dice("heal", 30, 50, effect="paralysis_2_self"), 
         Dice("heal", 10, 12, effect="self_dmg_by_para_30")
     ]),
+    
+    # [루트렌 뉴마 전용]
+    "변수제거": SkillCard("변수제거", [Dice("attack", 5, 8), Dice("defense", 3, 4)]),
+    "관측과 분석": SkillCard("관측과 분석", [Dice("heal", 20, 30), Dice("defense", 5, 7), Dice("mental_heal", 7, 9)]),
+
+    # [미카엘 전용]
+    "이스카리옷 유다의 입맞춤": SkillCard("이스카리옷 유다의 입맞춤", [Dice("heal", 10, 25), Dice("mental_heal", 1, 5)]),
+    "성 미카엘, 용을 죽이다.": SkillCard("성 미카엘, 용을 죽이다.", [
+        # 5분의 1 확률(20%)로 1턴간 무력화(stun)
+        Dice("attack", 4, 7, effect="stun_1_prob_20"), 
+        Dice("defense", 1, 2)
+    ]),
+
 
 # --- 로버드 전용 카드 ---
     "얼어붙는시선": SkillCard("얼어붙는시선", [

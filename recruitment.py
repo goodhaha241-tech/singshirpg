@@ -325,6 +325,75 @@ RECRUIT_REGISTRY = {
             "equipped_cards": ["데이브레이크", "퀀티제이션"],
             "is_recruited": True
         }
+    },
+    # [신규] 루트렌 뉴마
+    "Lutren": {
+        "name": "루트렌 뉴마",
+        "description": "전장의 흉성",
+        "emoji": "☄️",
+        "quests": [
+            {
+                "title": "☄️ 첫 번째 발자취",
+                "story": "\"그 눈동자 속 비춰지는 얼굴은 언제나.\"",
+                "type": "item",
+                "req_items": {"신화의 발자취": 1, "하급 마력석": 20},
+                "req_money": 0
+            },
+            {
+                "title": "☄️ 두 번째 발자취",
+                "story": "\"정의도, 선악도 없다면, 그 끝에 남는 것은.\"",
+                "type": "item",
+                "req_items": {"신화의 발자취": 1, "추억사진첩": 2, "장식용 열쇠": 1},
+                "req_money": 0
+            },
+            {
+                "title": "☄️ 세 번째 발자취",
+                "story": "\"마침내, 오랜 숨이 트이다.\"",
+                "type": "item",
+                "req_items": {"신화의 발자취": 1, "시간의 모래": 5, "빛구슬": 20, "맑은 생각": 5},
+                "req_money": 0
+            }
+        ],
+        "char_data": {
+            "name": "루트렌 뉴마",
+            "hp": 132, "max_hp": 132, "current_hp": 132,
+            "mental": 380, "max_mental": 380, "current_mental": 380,
+            "attack": 40, "defense": 17,
+            "card_slots": 5,
+            "equipped_cards": ["변수제거", "관측과 분석"],
+            "is_recruited": True
+        }
+    },
+    # [신규] 미카엘
+    "Michael": {
+        "name": "미카엘",
+        "description": "QUIS UT DEUS?",
+        "emoji": "✝️",
+        "quests": [
+            {
+                "title": "✝️ 첫 번째 발자취",
+                "story": "\"보라, 주님의 모상을 닮은 이가 이 거룩한 곳에 이르렀나니,\"",
+                "type": "item",
+                "req_items": {"신화의 발자취": 1, "깃털나무 잎사귀": 9, "추억사진첩": 2, "장식용 열쇠": 9},
+                "req_money": 0
+            },
+            {
+                "title": "✝️ 두 번째 발자취",
+                "story": "\"별빛이신 주님, 저희의 기도를 들어주소서.\"",
+                "type": "item",
+                "req_items": {"신화의 발자취": 1, "구름 한 줌": 2, "기억 종이": 3},
+                "req_money": 0
+            }
+        ],
+        "char_data": {
+            "name": "미카엘",
+            "hp": 150, "max_hp": 150, "current_hp": 150,
+            "mental": 100, "max_mental": 100, "current_mental": 100,
+            "attack": 40, "defense": 30,
+            "card_slots": 5,
+            "equipped_cards": ["이스카리옷 유다의 입맞춤", "성 미카엘, 용을 죽이다."],
+            "is_recruited": True
+        }
     }
 }
 
@@ -489,16 +558,22 @@ class RecruitSelectView(discord.ui.View):
         self.user_data = user_data
         self.save_func = save_func
         self.back_callback = back_callback
-        self.init_buttons()
+        self.page = 0
+        self.PER_PAGE = 4
+        self.update_buttons()
 
-    
-
-    def init_buttons(self):
+    def update_buttons(self):
+        self.clear_items()
         owned_names = [c["name"] for c in self.user_data.get("characters", [])]
         recruit_progress = self.user_data.get("recruit_progress", {})
 
-        for key, info in RECRUIT_REGISTRY.items():
-            progress = recruit_progress.get(key, 0)
+        all_keys = list(RECRUIT_REGISTRY.keys())
+        total_pages = (len(all_keys) - 1) // self.PER_PAGE + 1
+        
+        start = self.page * self.PER_PAGE
+        for key in all_keys[start:start+self.PER_PAGE]:
+            info = RECRUIT_REGISTRY[key]
+            progress = recruit_progress.get(key, 0) 
             total_steps = len(info["quests"])
             is_owned = info["name"] in owned_names
 
@@ -515,9 +590,28 @@ class RecruitSelectView(discord.ui.View):
             btn.callback = self.make_callback(key)
             self.add_item(btn)
 
-        back_btn = discord.ui.Button(label="정비 메뉴로", style=discord.ButtonStyle.gray, row=4)
+        if total_pages > 1:
+            prev_btn = discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, row=3, disabled=(self.page == 0))
+            prev_btn.callback = self.prev_page
+            self.add_item(prev_btn)
+            
+            next_btn = discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, row=3, disabled=(self.page >= total_pages - 1))
+            next_btn.callback = self.next_page
+            self.add_item(next_btn)
+
+        back_btn = discord.ui.Button(label="정비 메뉴로", style=discord.ButtonStyle.gray, row=3)
         back_btn.callback = self.go_back
         self.add_item(back_btn)
+
+    async def prev_page(self, interaction: discord.Interaction):
+        self.page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(view=self)
+
+    async def next_page(self, interaction: discord.Interaction):
+        self.page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(view=self)
 
     def make_callback(self, char_key):
         async def callback(interaction: discord.Interaction):
