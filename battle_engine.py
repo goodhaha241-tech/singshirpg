@@ -60,7 +60,7 @@ def process_turn_start_artifacts(char, target, my_res, opp_res, turn_count, shay
                 for d in opp_res:
                     d["type"] = "none"
                     d["value"] = 0
-                log += f"✨ **[{char.name}:빛나는]** 빛이 폭발하여 적의 모든 행동을 무력화했습니다! (누적 10회 달성)\n"
+                log += f"✨ **[{char.name}:빛나는]** 섬광마법 3장:강한 빛 또한 강한 어둠과 같으니, 아무 행동도 할 수 없게 되는 것이다.\n"
             else:
                 log += f"(✨파괴 스택: {stack}/10)\n"
             char.runtime_cooldowns["shayla_stack"] = stack
@@ -476,7 +476,7 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
                         progress = 0
                         dmg_val = char1.attack * 1.7
                         char2.current_hp = max(0, char2.current_hp - dmg_val)
-                        clash_log += f"\n⌛ **[시간붕괴]** 과부하! 적에게 {dmg_val}의 고정 피해를 입혔습니다!"
+                        clash_log += f"\n⌛ **[시간붕괴]** 시간술식 3장: 시간은 비명을 지를 수 없으니, {dmg_val} 만큼의 비명을 시간을 대신해 지르라."
                         
                     char1.runtime_cooldowns.update({"kaian_stack": stack, "kaian_progress": progress})
         
