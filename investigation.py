@@ -232,8 +232,8 @@ class InvestigationView(discord.ui.View):
                 req_pt = region_info.get("pt_cost", 0)
                 req_money = region_info["unlock_cost"]
 
-                if self.user_data.get("money", 0) < req_money: return await interaction.response.send_message(f"❌ 돈 부족! ({req_money}원 필요)", ephemeral=True)
-                if self.user_data.get("pt", 0) < req_pt: return await interaction.response.send_message(f"❌ 포인트 부족! ({req_pt}pt 필요)", ephemeral=True)
+                if self.user_data.get("money", 0) < req_money: return await interaction.followup.send(f"❌ 돈 부족! ({req_money}원 필요)", ephemeral=True)
+                if self.user_data.get("pt", 0) < req_pt: return await interaction.followup.send(f"❌ 포인트 부족! ({req_pt}pt 필요)", ephemeral=True)
 
                 self.user_data["money"] -= req_money
                 self.user_data["pt"] -= req_pt

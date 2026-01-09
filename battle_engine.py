@@ -533,8 +533,21 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         # 회복
         if t1 == "heal": char1.current_hp = min(char1.max_hp, char1.current_hp + v1); clash_log += f" 💚+{v1}"
         if t1 == "mental_heal": char1.current_mental = min(char1.max_mental, char1.current_mental + v1); clash_log += f" 🔮+{v1}"
+        # [신규] 방어 시 정신력 회복 (값의 50%)
+        if t1 == "defense":
+            m_heal = v1 // 2
+            if m_heal > 0:
+                char1.current_mental = min(char1.max_mental, char1.current_mental + m_heal)
+                clash_log += f" 🛡️🔮+{m_heal}"
+
         if t2 == "heal": char2.current_hp = min(char2.max_hp, char2.current_hp + v2); clash_log += f" 💚+{v2}"
         if t2 == "mental_heal": char2.current_mental = min(char2.max_mental, char2.current_mental + v2); clash_log += f" 🔮+{v2}"
+        # [신규] 방어 시 정신력 회복 (값의 50%)
+        if t2 == "defense":
+            m_heal = v2 // 2
+            if m_heal > 0:
+                char2.current_mental = min(char2.max_mental, char2.current_mental + m_heal)
+                clash_log += f" 🛡️🔮+{m_heal}"
 
         if dmg2 > 0: clash_log += f" 💥{char2.name} HP-{dmg2}"
         if dmg1 > 0: 

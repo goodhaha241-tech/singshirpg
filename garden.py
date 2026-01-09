@@ -14,8 +14,13 @@ class GardenView(discord.ui.View):
         self.save_func = save_func
         self.page = 0
         
-        # 텃밭 데이터 초기화
-        self.garden = self.user_data["myhome"].setdefault("garden", {})
+        self._ensure_garden_data()
+        self.update_components()
+
+    def _ensure_garden_data(self):
+        """텃밭 데이터 구조를 보장하고 기본 슬롯을 생성합니다."""
+        myhome = self.user_data.setdefault("myhome", {})
+        self.garden = myhome.setdefault("garden", {})
         self.garden.setdefault("slots", [])
         self.garden.setdefault("water_can", 0)
         self.garden.setdefault("level", 1)
@@ -24,8 +29,6 @@ class GardenView(discord.ui.View):
         if len(self.garden["slots"]) < 3:
             for _ in range(3 - len(self.garden["slots"])):
                 self.garden["slots"].append({"planted": False, "stage": 0, "last_invest_count": 0})
-
-        self.update_components()
 
     def get_embed(self):
         embed = discord.Embed(title="🌱 마이홈 텃밭", color=discord.Color.green())
@@ -120,7 +123,7 @@ class GardenView(discord.ui.View):
         await i.response.defer()
         # [DB 수정] DB에서 최신 데이터 로드
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
-        self.garden = self.user_data["myhome"].setdefault("garden", {})
+        self._ensure_garden_data()
 
         cid = i.data.get("custom_id")
         
@@ -342,7 +345,7 @@ class SeedConvertView(discord.ui.View):
         cid = i.data.get("custom_id")
         if cid == "back":
             self.parent.user_data = self.user_data
-            self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
+            self.parent._ensure_garden_data()
             self.parent.update_components()
             await i.response.edit_message(embed=self.parent.get_embed(), view=self.parent)
         elif cid in ["c1", "c3", "c5"]:
@@ -415,7 +418,7 @@ class WaterRefillView(discord.ui.View):
         cid = i.data.get("custom_id")
         if cid == "back":
             self.parent.user_data = self.user_data
-            self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
+            self.parent._ensure_garden_data()
             self.parent.update_components()
             await i.response.edit_message(embed=self.parent.get_embed(), view=self.parent)
         elif cid in ["r1", "r3", "r5"]:
@@ -498,7 +501,7 @@ class FertilizerCraftView(discord.ui.View):
         if i.data.get("custom_id") == "back":
             # [FIX] 부모 뷰(GardenView) 데이터 동기화
             self.parent.user_data = self.user_data
-            self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
+            self.parent._ensure_garden_data()
             self.parent.update_components()
             
             await i.response.edit_message(embed=self.parent.get_embed(), view=self.parent)
@@ -566,7 +569,7 @@ class FertilizerApplyView(discord.ui.View):
         if i.data.get("custom_id") == "back":
             # [FIX] 부모 뷰 데이터 동기화
             self.parent.user_data = self.user_data
-            self.parent.garden = self.user_data["myhome"].setdefault("garden", {})
+            self.parent._ensure_garden_data()
             self.parent.update_components()
             
             await i.response.edit_message(embed=self.parent.get_embed(), view=self.parent)

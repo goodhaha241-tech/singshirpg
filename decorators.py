@@ -22,6 +22,8 @@ def auto_defer(arg=None, *, reload_data: bool = False):
                     await interaction.response.send_message("❌ 본인의 메뉴만 조작할 수 있습니다.", ephemeral=True)
                 except discord.errors.InteractionResponded:
                     pass
+                except discord.errors.NotFound:
+                    pass
                 return
 
             # 2. Defer 처리 (이미 응답되지 않은 경우에만)
@@ -30,15 +32,23 @@ def auto_defer(arg=None, *, reload_data: bool = False):
                     await interaction.response.defer()
                 except discord.errors.InteractionResponded:
                     pass
+                except discord.errors.NotFound:
+                    return
                 except Exception as e:
                     print(f"Defer Error: {e}")
+                    return
 
             # 3. 데이터 리로드
             should_reload = reload_data or (isinstance(arg, bool) and arg)
             if should_reload:
                 self.user_data = await get_user_data(self.author.id, self.author.display_name)
 
-            await func(self, interaction, *args, **kwargs)
+            try:
+                await func(self, interaction, *args, **kwargs)
+            except discord.errors.NotFound:
+                pass
+            except Exception as e:
+                raise e
         return wrapper
 
     if func:
