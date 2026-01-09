@@ -97,11 +97,11 @@ class WorkshopView(discord.ui.View):
         elif cid == "prev_page":
             self.page -= 1
             self.update_components()
-            await i.edit_original_response(view=self)
+            await i.response.edit_message(view=self)
         elif cid == "next_page":
             self.page += 1
             self.update_components()
-            await i.edit_original_response(view=self)
+            await i.response.edit_message(view=self)
         return True
 
     async def start_craft(self, i):
@@ -191,6 +191,9 @@ class WorkshopRerollView(discord.ui.View):
         
         # 2. 아티팩트 선택 메뉴 (Row 1)
         self.add_select()
+
+        # 3. 각인 아티팩트 선택 메뉴 (Row 2)
+        self.add_engraved_select()
         
         # 페이지네이션 계산을 위한 필터링된 리스트 재구성
         targets = self.get_reroll_targets()
@@ -206,17 +209,17 @@ class WorkshopRerollView(discord.ui.View):
         total_pages = (len(filtered_keys) - 1) // self.PER_PAGE + 1 if filtered_keys else 1
 
         if total_pages > 1:
-            self.add_item(discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, row=2, disabled=(self.page == 0), custom_id="prev_page"))
-            self.add_item(discord.ui.Button(label=f"{self.page + 1}/{total_pages}", style=discord.ButtonStyle.secondary, row=2, disabled=True))
-            self.add_item(discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, row=2, disabled=(self.page >= total_pages - 1), custom_id="next_page"))
+            self.add_item(discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, row=3, disabled=(self.page == 0), custom_id="prev_page"))
+            self.add_item(discord.ui.Button(label=f"{self.page + 1}/{total_pages}", style=discord.ButtonStyle.secondary, row=3, disabled=True))
+            self.add_item(discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, row=3, disabled=(self.page >= total_pages - 1), custom_id="next_page"))
 
         if self.last_rerolled_key is not None:
-             self.add_item(discord.ui.Button(label="🎲 다시 리롤", style=discord.ButtonStyle.primary, row=3, custom_id="reroll_again"))
+             self.add_item(discord.ui.Button(label="🎲 다시 리롤", style=discord.ButtonStyle.primary, row=4, custom_id="reroll_again"))
 
-        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=3, custom_id="back"))
+        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=4, custom_id="back"))
 
     def get_reroll_targets(self):
-        """리롤 가능한 모든 아티팩트(일반 3성 + 각인)를 반환"""
+        """리롤 가능한 일반 3성 아티팩트 반환"""
         targets = []
         # 1. 일반 아티팩트 (3성만)
         for idx, art in enumerate(self.user_data.get("artifacts", [])):
@@ -224,12 +227,15 @@ class WorkshopRerollView(discord.ui.View):
             if rank == 3:
                 targets.append((f"art_{idx}", art))
         
-        # 2. 각인 아티팩트 (캐릭터 장착)
+        return targets
+
+    def get_engraved_targets(self):
+        """리롤 가능한 각인 아티팩트 반환"""
+        targets = []
         for idx, char in enumerate(self.user_data.get("characters", [])):
             eng = char.get("equipped_engraved_artifact")
             if eng and isinstance(eng, dict):
                 targets.append((f"eng_{idx}", eng))
-        
         return targets
 
     def add_filter_select(self):
@@ -287,6 +293,30 @@ class WorkshopRerollView(discord.ui.View):
         else:
             self.add_item(discord.ui.Select(placeholder=f"아티팩트 선택 ({self.page+1})", options=opts, row=1, custom_id="art_sel"))
 
+    def add_engraved_select(self):
+        targets = self.get_engraved_targets()
+        
+        opts = []
+        for key, art in targets:
+            name = art["name"]
+            if art.get("level", 0) > 0:
+                name += f" (+{art['level']})"
+            
+            # 각인 아티팩트인 경우 캐릭터 이름 표시
+            if key.startswith("eng_"):
+                char_idx = int(key.split("_")[1])
+                try:
+                    char_name = self.user_data["characters"][char_idx]["name"]
+                    name = f"[각인] {name} ({char_name})"
+                except: pass
+                
+            opts.append(discord.SelectOption(label=name, value=key))
+            
+        if not opts:
+            self.add_item(discord.ui.Select(placeholder="각인 아티팩트 없음", options=[discord.SelectOption(label="없음", value="none")], disabled=True, row=2, custom_id="eng_sel"))
+        else:
+            self.add_item(discord.ui.Select(placeholder="각인 아티팩트 선택", options=opts[:25], row=2, custom_id="eng_sel"))
+
     async def interaction_check(self, i):
         if i.user != self.author: return False
         if i.data.get("custom_id") == "back":
@@ -316,6 +346,12 @@ class WorkshopRerollView(discord.ui.View):
             return True
             
         if i.data.get("custom_id") == "art_sel" and "values" in i.data:
+            val = i.data["values"][0]
+            if val == "none": return True
+            await self.process_reroll(i, val)
+            return True
+        
+        if i.data.get("custom_id") == "eng_sel" and "values" in i.data:
             val = i.data["values"][0]
             if val == "none": return True
             await self.process_reroll(i, val)

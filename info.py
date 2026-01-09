@@ -107,10 +107,17 @@ class InfoMainView(discord.ui.View):
             item_str = f"**{item_name}** x{count}" if target == "special" else f"{item_name} x{count}"
             categories[target]["items"].append(item_str)
 
+        ITEMS_PER_PAGE = 8
         pages_data = []
         for key in ["consumable", "crafted", "box", "special", "material"]:
-            if categories[key]["items"]:
-                pages_data.append(categories[key])
+            items = categories[key]["items"]
+            if items:
+                for i in range(0, len(items), ITEMS_PER_PAGE):
+                    chunk = items[i:i + ITEMS_PER_PAGE]
+                    title = categories[key]["title"]
+                    if len(items) > ITEMS_PER_PAGE:
+                        title += f" ({(i // ITEMS_PER_PAGE) + 1}/{(len(items) - 1) // ITEMS_PER_PAGE + 1})"
+                    pages_data.append({"title": title, "items": chunk})
 
         if not pages_data:
             await interaction.followup.send("🎒 가방이 비어있습니다.", ephemeral=True)
@@ -236,10 +243,18 @@ class InfoView(discord.ui.View):
             item_str = f"**{item_name}** x{count}" if target == "special" else f"{item_name} x{count}"
             categories[target]["items"].append(item_str)
 
+        ITEMS_PER_PAGE = 8
         pages_data = []
         for key in ["consumable", "crafted", "box", "special", "material"]:
-            if categories[key]["items"]:
-                pages_data.append(categories[key])
+            items = categories[key]["items"]
+            if items:
+                # 10개씩 나누어 페이지 생성
+                for i in range(0, len(items), ITEMS_PER_PAGE):
+                    chunk = items[i:i + ITEMS_PER_PAGE]
+                    title = categories[key]["title"]
+                    if len(items) > ITEMS_PER_PAGE:
+                        title += f" ({(i // ITEMS_PER_PAGE) + 1}/{(len(items) - 1) // ITEMS_PER_PAGE + 1})"
+                    pages_data.append({"title": title, "items": chunk})
 
         if not pages_data:
             await interaction.followup.send("🎒 가방이 비어있습니다.", ephemeral=True)

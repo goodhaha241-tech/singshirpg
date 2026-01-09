@@ -251,9 +251,19 @@ class ArtifactManageView(discord.ui.View):
 
     def add_artifact_select(self):
         all_artifacts = self.user_data.get("artifacts", [])
+        
+        # [신규] 정렬 로직: (인덱스, 아티팩트) 튜플 리스트 생성 후 정렬
+        # 우선순위: 1. 등급(Rank) 내림차순, 2. 레벨(Level) 내림차순, 3. 이름 오름차순
+        indexed_artifacts = [(i, art) for i, art in enumerate(all_artifacts)]
+        indexed_artifacts.sort(key=lambda x: (
+            -self.get_artifact_rank(x[1]), 
+            -x[1].get("level", 0), 
+            x[1].get("name", "")
+        ))
+
         filtered_artifacts = []
         
-        for idx, art in enumerate(all_artifacts):
+        for idx, art in indexed_artifacts:
             rank = self.get_artifact_rank(art)
             prefix = self.get_prefix(art.get("name", ""))
             
