@@ -24,7 +24,9 @@ PREFIXES = {
         "황금의",   # (히든/각인) 영산 전용
         "악몽의",   # (히든/각인) 루우데 전용
         "믿음어린", # (히든/각인) 어즈렉 각인 전용
-        "별똥별의"  # (히든/각인) 센쇼 각인 전용
+        "별똥별의", # (히든/각인) 센쇼 각인 전용
+        "시간의",   # (히든/각인) 카이안 전용
+        "빛나는"    # (히든/각인) 샤일라 전용
     ]
 }
 
@@ -39,8 +41,9 @@ SPECIAL_EFFECTS = {
     "황금의": "youngsan_gold", # 영산 각인 전용
     "악몽의": "luude_imprint",  # 루우데 각인 전용
     "믿음어린": "earthreg_faith", # 어즈렉 각인 전용
-    "별똥별의": "sensho_star" # 센쇼 각인 전용
-
+    "별똥별의": "Sensho_star", # 센쇼 각인 전용
+    "시간의": "kaian_time",     # 카이안 각인 전용
+    "빛나는": "shayla_light"    # 샤일라 각인 전용
 }
 
 # ==================================================================================
@@ -116,8 +119,11 @@ def _make_description(stats, special=None):
         "reflection": "💢 **[앙심]** 받는 피해의 3/4을 상대에게 반사 (정신력 소모 없음)",
         "escalation": "⚡ **[고조]** 합 승리 시 일정 확률로 다음 주사위 위력 폭주 (+1~30)",
         "immortality": "👼 **[불멸]** 전투 불능 시 1회 부활 (HP 100% 회복)",
-        "youngsan_gold": "💰 **[황금]** '돈을 사용하는' 기술 카드의 소모 비용 50% 감소",
-        "luude_imprint": "👁️ **[악몽]** 주사위 파괴 시, 파괴한 개수당 10% 정신력 회복 또는 적에게 피해"
+        "youngsan_gold": "💰 **[황금]** 돈 사용 기술 강화(한도 7000, 비용 50%), 누적 7만원 사용 시 고정 피해",
+        "luude_imprint": "👁️ **[악몽]** 주사위 파괴 시 효과 발동 (5회 누적 시 강화 효과)",
+        "kaian_time": "⌛ **[시간]** 시간술식으로 인한 시간가속 강화",
+        "shayla_light": "✨ **[빛나는]** '밀키워킹' 사용 시 적 주사위 1~3개 파괴 (누적 10회 파괴 시 적 완전 무력화)",
+        "sensho_star": "🌠 **[별똥별]** '별의 은총' 강화 (1/7 확률로 완전회복+피해, 실패 시 방어 2배)"
     }
     
     if special in effect_desc:
@@ -158,7 +164,7 @@ def generate_artifact(rank=None):
     base_name = random.choice(pool)
     prefix = random.choice(PREFIXES[rank])
     # 3성은 황금의(히든) 제외하고 생성
-    if rank == 3 and prefix == "황금의": prefix = "고조된" 
+    if rank == 3 and prefix in ["황금의", "악몽의", "믿음어린", "별똥별의", "시간의", "빛나는"]: prefix = "고조된" 
     
     full_name = f"{'⭐'*rank} {prefix} {base_name}"
 

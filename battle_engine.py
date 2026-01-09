@@ -24,6 +24,120 @@ def apply_stat_scaling(dice_results, char):
         dice["value"] = val + bonus
     return dice_results
 
+def process_turn_start_artifacts(char, target, my_res, opp_res, turn_count, shayla_trigger, selected_card_name):
+    """
+    전투 시작 전(합 진행 전) 아티팩트 효과 처리
+    - 카이안(시간): 턴 수만큼 위력 증가
+    - 샤일라(빛나는): 이전 턴 밀키워킹 사용 시 적 주사위 파괴
+    - 영산(황금): 누적 사용 금액 달성 시 고정 피해
+    """
+    log = ""
+    
+    # 효과 목록 추출
+    effects = []
+    art = getattr(char, "equipped_artifact", None)
+    engrave = getattr(char, "equipped_engraved_artifact", None)
+    if art and isinstance(art, dict): effects.append(art.get("special"))
+    if engrave and isinstance(engrave, dict): effects.append(engrave.get("special"))
+
+    # 1. [샤일라: 빛나는] 효과 발동 (트리거 확인)
+    if shayla_trigger:
+        destroy_count = random.randint(1, 3)
+        destroyed = 0
+        valid_indices = [i for i, d in enumerate(opp_res) if d["type"] != "none"]
+        if valid_indices:
+            targets = random.sample(valid_indices, min(len(valid_indices), destroy_count))
+            for idx in targets:
+                opp_res[idx] = {"type": "none", "value": 0}
+                destroyed += 1
+            log += f"✨ **[{char.name}:빛나는]** 샤일라의 섬광마법으로 주사위 {destroyed}개 파괴!\n"
+
+        # [신규] 누적 파괴 스택 확인 (10스택 시 완전 무력화)
+        if destroyed > 0:
+            stack = char.runtime_cooldowns.get("shayla_stack", 0) + destroyed
+            if stack >= 10:
+                stack = 0
+                for d in opp_res:
+                    d["type"] = "none"
+                    d["value"] = 0
+                log += f"✨ **[{char.name}:빛나는]** 빛이 폭발하여 적의 모든 행동을 무력화했습니다! (누적 10회 달성)\n"
+            else:
+                log += f"(✨파괴 스택: {stack}/10)\n"
+            char.runtime_cooldowns["shayla_stack"] = stack
+
+    # 2. [카이안: 시간의] 효과 발동
+    if "kaian_time" in effects:
+        stack = char.runtime_cooldowns.get("kaian_stack", 0)
+
+        time_bonus = stack * 6
+        if time_bonus > 0:
+            for d in my_res:
+                if d["type"] != "none": d["value"] += time_bonus
+            log += f"⌛ **[{char.name}:시간]** 가속! (+{time_bonus})\n"
+
+    # 3. [영산: 황금] 효과 발동 (누적 금액 달성 시)
+    if "youngsan_gold" in effects:
+        if char.runtime_cooldowns.get("youngsan_nuke"):
+            dmg = int(char.attack * 1.7)
+            target.current_hp = max(0, target.current_hp - dmg)
+            char.runtime_cooldowns["youngsan_nuke"] = False
+            log += f"💰 **[{char.name}:황금]** 자본의 일격! {dmg}의 고정 피해를 입혔습니다!\n"
+
+    # 4. [센쇼: 별똥별] 효과 발동
+    if "sensho_star" in effects and selected_card_name == "별의 은총":
+        if random.randint(1, 7) == 1:
+            char.current_hp = char.max_hp
+            # [강화] 대성공 시 현재 정신력만큼 적에게 고정 피해
+            dmg = char.current_mental
+            target.current_hp = max(0, target.current_hp - dmg)
+            log += f"🌠 **[{char.name}:별똥별]** 기적! HP 완전 회복 & 적에게 {dmg} 피해! (방어 무효화)\n"
+            
+            # 방어 주사위 무효화
+            for d in my_res:
+                if d["type"] == "defense":
+                    d["type"] = "none"
+                    d["value"] = 0
+        else:
+            # [강화] 실패 시 방어 주사위 2배
+            for d in my_res:
+                if d["type"] == "defense":
+                    d["value"] *= 2
+            log += f"🌠 **[{char.name}:별똥별]** 가호! 방어 주사위 위력이 2배가 됩니다.\n"
+
+    # 5. 다음 턴 트리거 설정
+    next_shayla_trigger = False
+    if "shayla_light" in effects and selected_card_name == "밀키워킹":
+        next_shayla_trigger = True
+        
+    return log, next_shayla_trigger
+
+def apply_luude_logic(actor, target, current_log):
+    """루우데 아티팩트(악몽) 효과 처리"""
+    if random.random() < 0.5:
+        heal_val = int(actor.max_mental * 0.1)
+        actor.current_mental = min(actor.max_mental, actor.current_mental + heal_val)
+        current_log += f" 👁️**[{actor.name}:악몽]** 이 잔은 나에게.(+{heal_val})"
+        
+        h_cnt = actor.runtime_cooldowns.get("luude_heal_cnt", 0) + 1
+        if h_cnt >= 5:
+            h_cnt = 0
+            actor.current_hp = min(actor.max_hp, actor.current_hp + heal_val)
+            current_log += f" (❤️체력회복 +{heal_val})"
+        actor.runtime_cooldowns["luude_heal_cnt"] = h_cnt
+    else:
+        dmg_val = int(target.max_hp * 0.1)
+        target.current_hp = max(0, target.current_hp - dmg_val)
+        current_log += f" 👁️**[{actor.name}:악몽]** 이 잔은 그대에게.(-{dmg_val})"
+        
+        a_cnt = actor.runtime_cooldowns.get("luude_atk_cnt", 0) + 1
+        if a_cnt >= 5:
+            a_cnt = 0
+            extra_dmg = int(target.max_hp * 0.15)
+            target.current_hp = max(0, target.current_hp - extra_dmg)
+            current_log += f" (💥추가피해 -{extra_dmg})"
+        actor.runtime_cooldowns["luude_atk_cnt"] = a_cnt
+    return current_log
+
 def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_stunned1=False, is_stunned2=False):
     """
     두 캐릭터(char1, char2)의 주사위 결과(res1, res2)를 비교하여 합을 진행합니다.
@@ -93,14 +207,7 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
                 log += f"🔒 **{char1.name}**의 잠금! 적의 후속 주사위 {destroyed}개 파괴!\n"
                 if "luude_imprint" in effs1:
                     for _ in range(destroyed):
-                        if random.random() < 0.5:
-                            heal_val = int(char1.max_mental * 0.1)
-                            char1.current_mental = min(char1.max_mental, char1.current_mental + heal_val)
-                            log += f" 👁️**[{char1.name}:악몽]** 정신회복(+{heal_val})"
-                        else:
-                            dmg_val = int(char2.max_hp * 0.1)
-                            char2.current_hp = max(0, char2.current_hp - dmg_val)
-                            log += f" 👁️**[{char1.name}:악몽]** 악몽피해(-{dmg_val})"
+                        log = apply_luude_logic(char1, char2, log)
                     log += "\n"
 
         if d2.get("effect") == "lock_others":
@@ -114,14 +221,7 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
                 log += f"🔒 **{char2.name}**의 잠금! 적의 후속 주사위 {destroyed}개 파괴!\n"
                 if "luude_imprint" in effs2:
                     for _ in range(destroyed):
-                        if random.random() < 0.5:
-                            heal_val = int(char2.max_mental * 0.1)
-                            char2.current_mental = min(char2.max_mental, char2.current_mental + heal_val)
-                            log += f" 👁️**[{char2.name}:악몽]** 정신회복(+{heal_val})"
-                        else:
-                            dmg_val = int(char1.max_hp * 0.1)
-                            char1.current_hp = max(0, char1.current_hp - dmg_val)
-                            log += f" 👁️**[{char2.name}:악몽]** 악몽피해(-{dmg_val})"
+                        log = apply_luude_logic(char2, char1, log)
                     log += "\n"
 
         # [출혈 시너지]
@@ -313,6 +413,10 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if dmg2 > 0 and getattr(char2, "defense_rate", 0) > 0:
             dmg2 = int(dmg2 * (1 - char2.defense_rate / 100))
 
+        # [신규] 방어력 비례 피해 경감 (1/3)
+        if dmg1 > 0: dmg1 = max(0, dmg1 - int(char1.defense / 3))
+        if dmg2 > 0: dmg2 = max(0, dmg2 - int(char2.defense / 3))
+
         # 패닉 시 피해 2배
         if is_stunned1 and dmg1 > 0: dmg1 *= 2; mental_dmg1 *= 2; clash_log += " (⚠️패닉 2배)"
         if is_stunned2 and dmg2 > 0: dmg2 *= 2; mental_dmg2 *= 2; clash_log += " (⚠️패닉 2배)"
@@ -348,6 +452,61 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if dmg1 > 0 and d2.get("effect") == "absorb_hp":
             char2.current_hp = min(char2.max_hp, char2.current_hp + dmg1); clash_log += " 🧛흡혈"
 
+        # [시간가속] 합 승리 시 다음 턴 보너스 예약
+        if d1.get("effect") == "time_accel" and win1:
+            last = char1.runtime_cooldowns.get("time_accel_last_turn", -1)
+            if last < turn_count:
+                char1.runtime_cooldowns["time_accel_bonus"] = char1.runtime_cooldowns.get("time_accel_bonus", 0) + 6
+                clash_log += " ⌛가속(+6)"
+                char1.runtime_cooldowns["time_accel_last_turn"] = turn_count
+                
+                if "kaian_time" in effs1:
+                    stack = char1.runtime_cooldowns.get("kaian_stack", 0)
+                    progress = char1.runtime_cooldowns.get("kaian_progress", 0)
+                    required = 1 + (stack // 3)
+                    progress += 1
+                    if progress >= required:
+                        stack += 1
+                        progress = 0
+                        clash_log += f"(🔺{stack})"
+                    
+                    # [신규] 10스택 도달 시 시간붕괴 발동
+                    if stack >= 10:
+                        stack = 0
+                        progress = 0
+                        dmg_val = char1.attack * 1.7
+                        char2.current_hp = max(0, char2.current_hp - dmg_val)
+                        clash_log += f"\n⌛ **[시간붕괴]** 과부하! 적에게 {dmg_val}의 고정 피해를 입혔습니다!"
+                        
+                    char1.runtime_cooldowns.update({"kaian_stack": stack, "kaian_progress": progress})
+        
+        if d2.get("effect") == "time_accel" and win2:
+            last = char2.runtime_cooldowns.get("time_accel_last_turn", -1)
+            if last < turn_count:
+                char2.runtime_cooldowns["time_accel_bonus"] = char2.runtime_cooldowns.get("time_accel_bonus", 0) + 6
+                clash_log += " ⌛가속(+6)"
+                char2.runtime_cooldowns["time_accel_last_turn"] = turn_count
+
+                if "kaian_time" in effs2:
+                    stack = char2.runtime_cooldowns.get("kaian_stack", 0)
+                    progress = char2.runtime_cooldowns.get("kaian_progress", 0)
+                    required = 1 + (stack // 3)
+                    progress += 1
+                    if progress >= required:
+                        stack += 1
+                        progress = 0
+                        clash_log += f"(🔺{stack})"
+                    
+                    # [신규] 10스택 도달 시 시간붕괴 발동
+                    if stack >= 10:
+                        stack = 0
+                        progress = 0
+                        dmg_val = char2.attack * 2
+                        char1.current_hp = max(0, char1.current_hp - dmg_val)
+                        clash_log += f"\n⌛ **[시간붕괴]** 과부하! 적에게 {dmg_val}의 고정 피해를 입혔습니다!"
+                        
+                    char2.runtime_cooldowns.update({"kaian_stack": stack, "kaian_progress": progress})
+
         # 파괴
         if dmg2 > 0 and d1.get("effect") == "destroy_next_on_hit" and i + 1 < len(res2):
             res2[i+1] = {"type": "none", "value": 0}
@@ -355,14 +514,7 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
             
             # [루우데 각인 효과] 파괴 시 정신력 회복 or 적 피해
             if "luude_imprint" in effs1:
-                if random.random() < 0.5:
-                    heal_val = int(char1.max_mental * 0.1)
-                    char1.current_mental = min(char1.max_mental, char1.current_mental + heal_val)
-                    clash_log += f" 👁️**[{char1.name}:악몽]** 정신회복(+{heal_val})"
-                else:
-                    dmg_val = int(char2.max_hp * 0.1)
-                    char2.current_hp = max(0, char2.current_hp - dmg_val)
-                    clash_log += f" 👁️**[{char1.name}:악몽]** 악몽피해(-{dmg_val})"
+                clash_log = apply_luude_logic(char1, char2, clash_log)
 
         if dmg1 > 0 and d2.get("effect") == "destroy_next_on_hit" and i + 1 < len(res1):
             res1[i+1] = {"type": "none", "value": 0}
@@ -370,14 +522,7 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
             # [루우데 각인 효과] (상대방이 루우데일 경우)
             if "luude_imprint" in effs2:
-                if random.random() < 0.5:
-                    heal_val = int(char2.max_mental * 0.1)
-                    char2.current_mental = min(char2.max_mental, char2.current_mental + heal_val)
-                    clash_log += f" 👁️**[{char2.name}:악몽]** 정신회복(+{heal_val})"
-                else:
-                    dmg_val = int(char1.max_hp * 0.1)
-                    char1.current_hp = max(0, char1.current_hp - dmg_val)
-                    clash_log += f" 👁️**[{char2.name}:악몽]** 악몽피해(-{dmg_val})"
+                clash_log = apply_luude_logic(char2, char1, clash_log)
 
         # 최종 적용
         char1.current_hp = max(0, char1.current_hp - dmg1)

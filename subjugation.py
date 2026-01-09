@@ -467,11 +467,9 @@ class DungeonMainView(discord.ui.View):
     async def start_boss_battle(self, interaction: discord.Interaction, boss):
         monsters = [boss]
         
-        # [추가] 아티팩트 정보 동기화 (안전장치)
-        if not self.player.equipped_artifact:
-            self.player.equipped_artifact = self.user_data["characters"][self.char_index].get("equipped_artifact")
-        if not self.player.equipped_engraved_artifact:
-            self.player.equipped_engraved_artifact = self.user_data["characters"][self.char_index].get("equipped_engraved_artifact")
+        # [수정] 아티팩트 정보 강제 동기화 (특수 효과 미적용 방지)
+        self.player.equipped_artifact = self.user_data["characters"][self.char_index].get("equipped_artifact")
+        self.player.equipped_engraved_artifact = self.user_data["characters"][self.char_index].get("equipped_engraved_artifact")
             
         # [수정] 전투 시작 시에만 아티팩트 수치 적용
         self.player.apply_battle_start_buffs()
@@ -509,11 +507,9 @@ class DungeonMainView(discord.ui.View):
         for i, m in enumerate(monsters):
             if len(monsters) > 1: m.name = f"{m.name} {chr(65+i)}"
 
-        # [추가] 아티팩트 정보 동기화 (안전장치)
-        if not self.player.equipped_artifact:
-            self.player.equipped_artifact = self.user_data["characters"][self.char_index].get("equipped_artifact")
-        if not self.player.equipped_engraved_artifact:
-            self.player.equipped_engraved_artifact = self.user_data["characters"][self.char_index].get("equipped_engraved_artifact")
+        # [수정] 아티팩트 정보 강제 동기화 (특수 효과 미적용 방지)
+        self.player.equipped_artifact = self.user_data["characters"][self.char_index].get("equipped_artifact")
+        self.player.equipped_engraved_artifact = self.user_data["characters"][self.char_index].get("equipped_engraved_artifact")
 
         # [수정] 전투 시작 시에만 아티팩트 수치 적용
         self.player.apply_battle_start_buffs()

@@ -28,6 +28,9 @@ class CardManageView(discord.ui.View):
     def update_select_menu(self):
         self.clear_items()
         
+        # [수정] 데이터 갱신 시 카드 목록도 동기화
+        self.my_cards = self.user_data.get("cards", ["기본공격", "기본방어", "기본반격"])
+        
         valid_cards = [c for c in self.my_cards if get_card(c)]
         total_pages = (len(valid_cards) - 1) // self.PER_PAGE + 1
         if total_pages < 1: total_pages = 1
@@ -86,20 +89,26 @@ class CardManageView(discord.ui.View):
             
         return True # 다른 콜백 실행 허용
 
-    @auto_defer()
+    @auto_defer(reload_data=True)
     async def prev_page(self, interaction: discord.Interaction):
         self.page -= 1
         self.update_select_menu()
         await interaction.edit_original_response(view=self)
 
-    @auto_defer()
+    @auto_defer(reload_data=True)
     async def next_page(self, interaction: discord.Interaction):
         self.page += 1
         self.update_select_menu()
         await interaction.edit_original_response(view=self)
 
-    @auto_defer()
+    @auto_defer(reload_data=True)
     async def select_callback(self, interaction: discord.Interaction):
+        # [수정] 최신 데이터로 캐릭터 및 카드 정보 갱신
+        char_list = self.user_data.get("characters", [])
+        if char_list and len(char_list) > self.char_index:
+            self.char = Character.from_dict(char_list[self.char_index])
+        self.my_cards = self.user_data.get("cards", [])
+
         card_name = interaction.data['values'][0]
         if card_name == "none": return
 

@@ -36,7 +36,7 @@ class StatusMenuView(discord.ui.View):
         self.save_func = save_func
 
     @discord.ui.button(label="정보", style=discord.ButtonStyle.primary, emoji="📜")
-    @auto_defer()
+    @auto_defer(reload_data=True)
     async def info_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         
         # 정보 임베드 생성
@@ -55,21 +55,21 @@ class StatusMenuView(discord.ui.View):
         await interaction.edit_original_response(embed=embed, view=self)
 
     @discord.ui.button(label="사용", style=discord.ButtonStyle.secondary, emoji="🎒")
-    @auto_defer()
+    @auto_defer(reload_data=True)
     async def use_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = ItemUseView(self.author, self.user_data, self.save_func)
         embed = discord.Embed(title="🎒 아이템 사용", description="사용할 아이템을 선택하세요.", color=discord.Color.blue())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="카드", style=discord.ButtonStyle.secondary, emoji="🃏")
-    @auto_defer()
+    @auto_defer(reload_data=True)
     async def card_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         # 카드 관리는 캐릭터 인덱스 0번(대표) 기준으로 엽니다.
         view = CardManageView(self.author, self.user_data, self.save_func, char_index=0)
         await interaction.edit_original_response(content=None, embed=view.create_embed(), view=view)
 
     @discord.ui.button(label="정비(마이홈)", style=discord.ButtonStyle.success, emoji="🏡")
-    @auto_defer()
+    @auto_defer(reload_data=True)
     async def myhome_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = MyHomeView(self.author, self.user_data, self.save_func)
         await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)

@@ -268,10 +268,6 @@ class ItemUseView(discord.ui.View):
             if item_name in self.user_data.get("buffs", {}):
                 return await interaction.followup.send(f"❌ 이미 **{item_name}** 효과가 적용 중입니다.", ephemeral=True)
 
-            # [제한] 능력치 강화 아이템은 첫 번째 캐릭터(인덱스 0)만 사용 가능 (단, 방어율 아이템은 제외)
-            if self.char_index != 0 and info.get("stat") != "defense_rate":
-                return await interaction.followup.send("⚠️ 이 능력치 강화 아이템은 첫 번째 캐릭터(유저 캐릭터)에게만 사용할 수 있습니다.", ephemeral=True)
-
             # [수정] 기간제 버프 아이템과 영구 스탯 상승 아이템 로직 분리
             if "duration" in info:
                 buffs = self.user_data.setdefault("buffs", {})
@@ -293,6 +289,10 @@ class ItemUseView(discord.ui.View):
                 embed_fields.append(("효과 적용", f"**{stat} +{info['value']}**\n({info['duration']}회 행동 지속)"))
                 used = True
             elif "max_stat" in info:
+                # [수정] 영구 능력치 강화 아이템은 첫 번째 캐릭터(인덱스 0)만 사용 가능 (단, 방어율 아이템은 제외)
+                if self.char_index != 0 and info.get("stat") != "defense_rate":
+                    return await interaction.followup.send("⚠️ 이 영구 능력치 강화 아이템은 첫 번째 캐릭터(유저 캐릭터)에게만 사용할 수 있습니다.", ephemeral=True)
+
                 stat = info["stat"]
                 val = info["value"]
                 limit = info.get("max_stat", 999)

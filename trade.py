@@ -80,7 +80,7 @@ async def update_cafe_quest_progress(user_id, user_data, save_func, q_type, valu
         async with conn.cursor() as cur:
             # 내가 수락한 진행중인 퀘스트 검색
             await cur.execute("""
-                SELECT id, q_type, target, count, current 
+                SELECT id, q_type, target, `count`, current 
                 FROM global_quests 
                 WHERE accepted_by = %s AND completed = 0 AND created_date = CURDATE()
             """, (user_id,))
@@ -175,7 +175,7 @@ async def refresh_global_quests(user_data):
                 quests_to_insert.append((q_type, rank, target, count_val, desc, today))
             
             await cur.executemany("""
-                INSERT INTO global_quests (q_type, q_rank, target, count, description, created_date)
+                INSERT INTO global_quests (q_type, q_rank, target, `count`, description, created_date)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, quests_to_insert)
             await conn.commit()

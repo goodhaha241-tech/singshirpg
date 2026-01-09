@@ -87,11 +87,8 @@ class ShopView(discord.ui.View):
 
     # --- Helper Methods ---
     async def open_buy_dropdown(self, interaction, category, text, use_pt=False):
-        # 신규 지역 제작 아이템 식별 (구매 불가 리스트)
-        excluded_crafts = set()
-        for r_data in CRAFT_RECIPES.values():
-            if r_data.get("region") in ["생명의 숲", "아르카워드 제도", "공간의 신전"]:
-                excluded_crafts.add(r_data["result"])
+        # 모든 제작 아이템 식별 (구매 불가 리스트)
+        excluded_crafts = {r_data["result"] for r_data in CRAFT_RECIPES.values()}
 
         unlocked_regions = self.user_data.get("unlocked_regions", [])
         options = []
@@ -198,8 +195,13 @@ class PointShopView(discord.ui.View):
         await interaction.edit_original_response(content="🛒 상점 메인", embed=main_v.create_shop_embed(), view=main_v)
 
     def make_pt_callback(self, label, price):
-        @auto_defer(reload_data=True)
         async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.author.id:
+                return await interaction.response.send_message("❌ 본인의 메뉴만 조작할 수 있습니다.", ephemeral=True)
+            
+            await interaction.response.defer()
+            self.user_data = await get_user_data(self.author.id, self.author.display_name)
+            
             if self.user_data.get("money", 0) < price:
                 return await interaction.followup.send("❌ 머니 부족!", ephemeral=True)
             

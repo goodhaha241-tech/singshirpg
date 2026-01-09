@@ -70,6 +70,10 @@ class PVPBattleView(discord.ui.View):
         self.p1_damage_last = 0
         self.p2_damage_last = 0
         
+        # [신규] 샤일라 아티팩트 트리거
+        self.p1_shayla_trigger = False
+        self.p2_shayla_trigger = False
+        
         self.message = None      
         self.log_message = None  
         self.update_setup_buttons()
@@ -242,6 +246,23 @@ class PVPBattleView(discord.ui.View):
         effs1 = get_effects(self.p1_char)
         effs2 = get_effects(self.p2_char)
 
+        # [수정] 배틀 엔진을 통해 아티팩트 효과 처리 (샤일라, 카이안 등)
+        # P1 Artifacts
+        p1_card_name = self.p1_card.name if self.p1_card else ""
+        log1, next_trig1 = battle_engine.process_turn_start_artifacts(
+            self.p1_char, self.p2_char, p1_res, p2_res, self.turn_count, self.p1_shayla_trigger, p1_card_name
+        )
+        log += log1
+        self.p1_shayla_trigger = next_trig1
+
+        # P2 Artifacts
+        p2_card_name = self.p2_card.name if self.p2_card else ""
+        log2, next_trig2 = battle_engine.process_turn_start_artifacts(
+            self.p2_char, self.p1_char, p2_res, p1_res, self.turn_count, self.p2_shayla_trigger, p2_card_name
+        )
+        log += log2
+        self.p2_shayla_trigger = next_trig2
+
         if "escalation" in effs1 and p1_res:
             last = self.p1_char.runtime_cooldowns.get("escalation", -10)
             if self.turn_count - last >= 2:
@@ -258,6 +279,17 @@ class PVPBattleView(discord.ui.View):
             self.p1_char, self.p2_char, p1_res, p2_res, effs1, effs2, self.turn_count,
             is_stunned1=(self.p1_card is None), is_stunned2=(self.p2_card is None)
         )
+        
+        # [시간가속] 적립된 보너스 적용
+        b1 = self.p1_char.runtime_cooldowns.get("time_accel_bonus", 0)
+        if b1 > 0:
+            self.p1_next_bonus += b1
+            self.p1_char.runtime_cooldowns["time_accel_bonus"] = 0
+            
+        b2 = self.p2_char.runtime_cooldowns.get("time_accel_bonus", 0)
+        if b2 > 0:
+            self.p2_next_bonus += b2
+            self.p2_char.runtime_cooldowns["time_accel_bonus"] = 0
         
         log += clash_log
         self.p1_damage_last = dmg1

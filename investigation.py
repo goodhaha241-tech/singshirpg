@@ -9,10 +9,10 @@ from monsters import spawn_monster
 from battle import BattleView
 from character import Character
 from story import update_quest_progress
+from trade import update_cafe_quest_progress
 # fishing.py에서 낚시 뷰와 물고기 등급 데이터를 가져옵니다.
 from fishing import FishingGameView, FISH_TIERS 
 from decorators import auto_defer
-from trade import update_cafe_quest_progress
 
 DATA_FILE = "user_data.json"
 
@@ -395,9 +395,9 @@ class TurnInvestigationView(discord.ui.View):
             chars = self.user_data.get("characters", [])
             char_name = chars[char_idx]["name"] if chars and char_idx < len(chars) else None
             await update_quest_progress(interaction.user.id, self.user_data, self.save_func, "investigate", 1, self.region_name, extra_info=char_name)
-
-            # [신규] 카페 의뢰 퀘스트 업데이트 (조사 1회 성공)
-            await update_cafe_quest_progress(interaction.user.id, self.user_data, self.save_func, "investigate", 1, self.region_name)
+            
+            # [신규] 카페 의뢰 퀘스트 업데이트 (조사 횟수)
+            await update_cafe_quest_progress(interaction.user.id, self.user_data, self.save_func, "investigation", 1, self.region_name)
 
             if is_great:
                 self.last_log = f"✨ **대성공!** 희귀한 재료들을 발견했습니다!\n획득: {loot_summary}"

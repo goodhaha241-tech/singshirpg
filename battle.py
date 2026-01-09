@@ -37,6 +37,9 @@ class BattleView(discord.ui.View):
         self.revived = False # 일반 부활(불멸의 아티팩트 등)
         self.item_revived = False # 던전 아이템 부활 체크
         
+        # [신규] 샤일라 '빛나는' 효과 트리거
+        self.shayla_light_trigger = False
+        
         self.damage_taken_last_turn = 0
         self.next_turn_bonus = 0 
         self.card_page = 0
@@ -44,6 +47,9 @@ class BattleView(discord.ui.View):
         # 상태이상 초기화
         if not hasattr(self.player, "status_effects"):
             self.player.status_effects = {"bleed": 0, "paralysis": 0}
+        
+        # [Fix] 전투 시작 시 런타임 쿨타임 초기화 (던전 연속 전투 시 이전 전투 기록 삭제)
+        self.player.runtime_cooldowns = {}
         
         for m in self.monsters:
             if not hasattr(m, "status_effects"):
@@ -172,6 +178,13 @@ class BattleView(discord.ui.View):
         log = ""
         rec_log = ""
         
+        # 아티팩트 효과 수집 (전투 시작 전 확인)
+        effects = []
+        art = getattr(self.player, "equipped_artifact", None)
+        engrave = getattr(self.player, "equipped_engraved_artifact", None)
+        if art and isinstance(art, dict): effects.append(art.get("special"))
+        if engrave and isinstance(engrave, dict): effects.append(engrave.get("special"))
+
         # 턴 보너스
         applied_bonus = self.next_turn_bonus
         if applied_bonus > 0:
@@ -188,7 +201,6 @@ class BattleView(discord.ui.View):
         is_stunned = False 
         p_res = []
 
-        sensho_triggered = False
         # 플레이어 행동
         if self.player.current_mental <= 0:
             self.is_panic = True
@@ -201,14 +213,6 @@ class BattleView(discord.ui.View):
                 eng = getattr(self.player, "equipped_engraved_artifact", None)
                 if eng and isinstance(eng, dict) and eng.get("special") == "youngsan_gold" and self.selected_card.name in ["전부매입", "금융치료"]:
                     rec_log += f"💰 **[{self.player.name}:황금]** 비용 50% 절감!\n"
-                
-                # [센쇼: 별똥별의] 효과 로직
-                if eng and isinstance(eng, dict) and eng.get("special") == "sensho_star" and self.selected_card.name == "별의 은총":
-                    # 1/8 확률 (약 12.5%)
-                    if random.randint(1, 8) == 1:
-                        self.player.current_hp = self.player.max_hp
-                        rec_log += f"🌠 **[{self.player.name}:별똥별]** 별의 가호가 쏟아집니다! (HP 완전 회복, 방어 무효화)\n"
-                        sensho_triggered = True
 
                 p_res = self.selected_card.use_card(
                     self.player.attack, self.player.defense, self.player.current_mental,
@@ -221,13 +225,6 @@ class BattleView(discord.ui.View):
                 if applied_bonus > 0:
                     for d in p_res: 
                         if d["type"] != "none": d["value"] += applied_bonus
-                
-                # [센쇼: 별똥별의] 발동 시 방어 주사위 무효화
-                if sensho_triggered:
-                    for d in p_res:
-                        if d["type"] == "defense":
-                            d["type"] = "none"
-                            d["value"] = 0
             else:
                 p_res = [{"type": "none", "value": 0}]
             
@@ -238,14 +235,16 @@ class BattleView(discord.ui.View):
         m_card = target.decide_action()
         m_res = m_card.use_card(target.attack, target.defense)
         m_res = battle_engine.apply_stat_scaling(m_res, target)
-        log += f"👾 **{target.name}** : `{m_card.name}`\n"
+        
+        # [수정] 배틀 엔진을 통해 아티팩트 효과 처리 (샤일라, 카이안 등)
+        art_log, next_trigger = battle_engine.process_turn_start_artifacts(
+            self.player, target, p_res, m_res, self.turn_count, self.shayla_light_trigger, 
+            self.selected_card.name if self.selected_card else ""
+        )
+        rec_log += art_log
+        self.shayla_light_trigger = next_trigger
 
-        # 아티팩트 효과 수집
-        effects = []
-        art = getattr(self.player, "equipped_artifact", None)
-        engrave = getattr(self.player, "equipped_engraved_artifact", None)
-        if art and isinstance(art, dict): effects.append(art.get("special"))
-        if engrave and isinstance(engrave, dict): effects.append(engrave.get("special"))
+        log += f"👾 **{target.name}** : `{m_card.name}`\n"
         
         # [고조된] 효과
         if "escalation" in effects and not is_stunned and len(p_res) > 0:
@@ -260,6 +259,12 @@ class BattleView(discord.ui.View):
         clash_log, dmg_p, dmg_m = battle_engine.process_clash_loop(
             self.player, target, p_res, m_res, effects, [], self.turn_count, is_stunned1=is_stunned
         )
+        
+        # [시간가속] 적립된 보너스 적용
+        accel_bonus = self.player.runtime_cooldowns.get("time_accel_bonus", 0)
+        if accel_bonus > 0:
+            self.next_turn_bonus += accel_bonus
+            self.player.runtime_cooldowns["time_accel_bonus"] = 0
         
         # [던전 아이템] 피해 무시 (소모성)
         if self.dungeon_item and self.dungeon_item["type"] == "consumable" and self.dungeon_item.get("effect") == "ignore_dmg":

@@ -45,6 +45,7 @@ class SkillCard:
                 elif "destroy" in d.effect: eff_text = "💥"
                 elif "lock" in d.effect: eff_text = "🔒"
                 elif "absorb" in d.effect: eff_text = "🧛"
+                elif "time_accel" in d.effect: eff_text = "⌛"
             desc_parts.append(f"{emoji}({d.d_min}~{d.d_max}){eff_text}")
         return " ➔ ".join(desc_parts)
 
@@ -69,23 +70,41 @@ class GoldMechanicCard(SkillCard):
         user_data = kwargs.get("user_data")
         character = kwargs.get("character")
         bonus = 0
+        
         if user_data:
             current_money = user_data.get("money", 0)
-            spend = min(current_money, 700)
-            spend = (spend // 100) * 100 
             
-            # [황금] 각인 효과: 비용 50% 감소
+            # [황금] 각인 효과: 비용 50% 감소 & 한도 7000으로 증가
+            limit = 700
             cost_factor = 1.0
+            is_youngsan = False
+            
             if character:
                 eng = getattr(character, "equipped_engraved_artifact", None)
                 if eng and isinstance(eng, dict) and eng.get("special") == "youngsan_gold":
                     cost_factor = 0.5
+                    limit = 7000
+                    is_youngsan = True
+            
+            # 소지 금액으로 지불 가능한 최대 spend 계산
+            affordable_spend = int(current_money / cost_factor)
+            spend = min(affordable_spend, limit)
+            spend = (spend // 100) * 100 
             
             real_cost = int(spend * cost_factor)
             
             if spend > 0:
                 user_data["money"] -= real_cost
                 bonus = spend // 100 
+                
+                # [황금] 누적 사용 금액 체크 (7만원마다 효과 발동)
+                if is_youngsan:
+                    acc = character.runtime_cooldowns.get("youngsan_accumulated", 0)
+                    acc += real_cost
+                    if acc >= 70000:
+                        acc -= 70000
+                        character.runtime_cooldowns["youngsan_nuke"] = True
+                    character.runtime_cooldowns["youngsan_accumulated"] = acc
         
         results = []
         for (dtype, dmin, dmax) in self.dice_configs:
@@ -155,19 +174,19 @@ class KaianCard(SkillCard):
         if name == "시간술식:기본형":
             self.dice_list = [
                 Dice("defense", 10, 17),
-                Dice("counter", 10, 13),
+                Dice("counter", 10, 13, effect="time_accel"),
                 Dice("defense", 7, 13)
             ]
         elif name == "시간술식:1장":
             self.dice_list = [
                 Dice("heal", 20, 30),
                 Dice("heal", 20, 30),
-                Dice("counter", 7, 10)
+                Dice("counter", 7, 10, effect="time_accel")
             ]
         elif name == "시간술식:1장 응용":
             self.dice_list = [
-                Dice("counter", 7, 10),
-                Dice("counter", 7, 10),
+                Dice("counter", 7, 10, effect="time_accel"),
+                Dice("counter", 7, 10, effect="time_accel"),
                 Dice("heal", 20, 30)
             ]
         else:
@@ -176,7 +195,7 @@ class KaianCard(SkillCard):
     @property
     def description(self):
         base_desc = super().description
-        if self.name == "시간술식:기본형":
+        if "시간술식" in self.name:
             base_desc += "\n⌛ [특수] 합 승리 시 다음 턴 모든값 +6"
         return base_desc
 

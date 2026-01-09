@@ -493,19 +493,19 @@ class ImprintView(discord.ui.View):
         imprint_art = None
         if "영산" in char_data["name"]:
             imprint_art = {
-                "name": "황금의 아티팩트",
+                "name": "황금빛 지갑",
                 "rank": 3,
                 "stats": {"attack": 5, "defense": 5}, 
                 "special": "youngsan_gold",
-                "description": "[각인] 기술카드 연장 비용 반절 감소"
+                "description": "[각인] 돈 사용 기술 강화(한도 7000, 비용 50%), 누적 7만원 사용 시 고정 피해"
             }
         elif "루우데" in char_data["name"]:
             imprint_art = {
-                "name": "악몽의 아티팩트",
+                "name": "루우데의 돌멩이",
                 "rank": 3,
                 "stats": {"attack": 7, "max_mental": 30},
                 "special": "luude_imprint",
-                "description": "[각인] 주사위 파괴 시, 파괴한 개수당 10% 정신력 회복 또는 적에게 피해"
+                "description": "[각인] 주사위 파괴 시 효과 발동 (5회 누적 시 강화 효과)"
             }
         elif "어즈렉" in char_data["name"]:
             imprint_art = {
@@ -522,7 +522,23 @@ class ImprintView(discord.ui.View):
                 "rank": 3,
                 "stats": {"attack": 7, "max_mental": 30},
                 "special": "sensho_star",
-                "description": "[각인] '별의 은총' 사용 시 1/8 확률로 방어 효과 대신 체력 전체 회복"
+                "description": "[각인] '별의 은총' 강화 (1/7 확률로 완전회복+피해, 실패 시 방어 2배)"
+            }
+        elif "카이안" in char_data["name"]:
+            imprint_art = {
+                "name": "작은 파편",
+                "rank": 3,
+                "stats": {"attack": 5, "defense": 5},
+                "special": "kaian_time",
+                "description": "[각인] 시간술식으로 인한 시간가속 강화"
+            }
+        elif "샤일라" in char_data["name"]:
+            imprint_art = {
+                "name": "반짝이는 룬",
+                "rank": 3,
+                "stats": {"attack": 5, "max_mental": 20},
+                "special": "shayla_light",
+                "description": "[각인] '밀키워킹' 사용 시, 다음 턴 상대방 주사위를 랜덤하게 1~3개 파괴 (누적 10회 파괴 시 적 완전 무력화)"
             }
         else:
             return await i.response.send_message("❌ 해당 캐릭터의 전용 각인 로직이 없습니다. (현재 '영산', '루우데', '어즈렉', '센쇼'만 가능)", ephemeral=True)
