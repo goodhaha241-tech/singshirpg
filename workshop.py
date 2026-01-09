@@ -541,7 +541,7 @@ class ImprintView(discord.ui.View):
                 "rank": 3,
                 "stats": {"attack": 7, "max_mental": 30},
                 "special": "luude_imprint",
-                "description": "[각인] 주사위 파괴 시 효과 발동 (5회 누적 시 강화 효과)"
+                "description": "[각인] 주사위 파괴 시 효과 발동 (3회 누적 시 강화 효과)"
             }
         elif "어즈렉" in char_data["name"]:
             imprint_art = {

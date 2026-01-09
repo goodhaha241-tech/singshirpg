@@ -134,8 +134,8 @@ class InfoMainView(discord.ui.View):
 
 class InfoView(discord.ui.View):
     """캐릭터 상세 정보 및 상태창 복귀를 위한 뷰"""
-    def __init__(self, author, user_data, save_func, char_index=0):
-        super().__init__(timeout=60)
+    def __init__(self, author=None, user_data=None, save_func=None, char_index=0):
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -148,28 +148,28 @@ class InfoView(discord.ui.View):
         # 캐릭터 페이지네이션 버튼
         char_list = self.user_data.get("characters", [])
         if len(char_list) > 1:
-            prev_char_btn = discord.ui.Button(label="◀️ 이전", style=discord.ButtonStyle.secondary, row=0, disabled=(self.char_index == 0))
+            prev_char_btn = discord.ui.Button(label="◀️ 이전", style=discord.ButtonStyle.secondary, row=0, disabled=(self.char_index == 0), custom_id="info:char_prev")
             prev_char_btn.callback = self.prev_char
             self.add_item(prev_char_btn)
 
-            next_char_btn = discord.ui.Button(label="다음 ▶️", style=discord.ButtonStyle.secondary, row=0, disabled=(self.char_index >= len(char_list) - 1))
+            next_char_btn = discord.ui.Button(label="다음 ▶️", style=discord.ButtonStyle.secondary, row=0, disabled=(self.char_index >= len(char_list) - 1), custom_id="info:char_next")
             next_char_btn.callback = self.next_char
             self.add_item(next_char_btn)
 
         # 기능 버튼들 (StatusMenuView 기능 통합)
-        btn_inv = discord.ui.Button(label="🎒 가방", style=discord.ButtonStyle.secondary, row=1)
+        btn_inv = discord.ui.Button(label="🎒 가방", style=discord.ButtonStyle.secondary, row=1, custom_id="info:inventory")
         btn_inv.callback = self.open_inventory
         self.add_item(btn_inv)
 
-        btn_use = discord.ui.Button(label="🧪 사용", style=discord.ButtonStyle.secondary, row=1)
+        btn_use = discord.ui.Button(label="🧪 사용", style=discord.ButtonStyle.secondary, row=1, custom_id="info:use")
         btn_use.callback = self.use_item_callback
         self.add_item(btn_use)
 
-        btn_card = discord.ui.Button(label="🃏 카드", style=discord.ButtonStyle.secondary, row=1)
+        btn_card = discord.ui.Button(label="🃏 카드", style=discord.ButtonStyle.secondary, row=1, custom_id="info:card")
         btn_card.callback = self.card_manage_callback
         self.add_item(btn_card)
 
-        btn_home = discord.ui.Button(label="🏡 정비", style=discord.ButtonStyle.success, row=1)
+        btn_home = discord.ui.Button(label="🏡 정비", style=discord.ButtonStyle.success, row=1, custom_id="info:home")
         btn_home.callback = self.myhome_callback
         self.add_item(btn_home)
 

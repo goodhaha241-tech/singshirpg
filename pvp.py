@@ -8,7 +8,7 @@ import battle_engine
 
 class PVPInviteView(discord.ui.View):
     def __init__(self, author, load_func, save_func):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.author = author
         self.load_func = load_func
         self.save_func = save_func
@@ -366,10 +366,11 @@ class PVPBattleView(discord.ui.View):
 # --- [공용] 선택 뷰들 ---
 class PVPCharSelectView(discord.ui.View):
     def __init__(self, battle_view, user, user_data, player_num):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.battle_view, self.user, self.user_data, self.player_num = battle_view, user, user_data, player_num
         self.add_select()
     def add_select(self):
+
         char_list = self.user_data.get("characters", [])
         options = [discord.SelectOption(label=c.get("name"), description=f"HP:{c.get('hp')}", value=str(i)) for i, c in enumerate(char_list)]
         if not options: options.append(discord.SelectOption(label="없음", value="none"))
@@ -379,11 +380,13 @@ class PVPCharSelectView(discord.ui.View):
         if self.select.values[0] == "none": return await i.response.send_message("X", ephemeral=True)
         await self.battle_view.set_character(i, self.player_num, int(self.select.values[0]))
 
+
 class PVPSelectView(discord.ui.View):
     def __init__(self, player_obj, battle_view, player_num, char_idx_in_team=0):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.player_obj, self.battle_view, self.player_num, self.char_idx_in_team = player_obj, battle_view, player_num, char_idx_in_team
         self.page = 0; self.update_buttons()
+
     def update_buttons(self):
         self.clear_items()
         if self.player_obj.current_mental <= 0:

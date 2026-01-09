@@ -87,7 +87,7 @@ def generate_dungeon_item(depth):
 class DungeonItemSwapView(discord.ui.View):
     """던전 아이템 교체 선택 뷰"""
     def __init__(self, author, dungeon_view, new_item):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.author = author
         self.dungeon_view = dungeon_view
         self.new_item = new_item
@@ -120,7 +120,7 @@ class DungeonItemSwapView(discord.ui.View):
 class DungeonItemUseView(discord.ui.View):
     """던전 내에서 아이템을 사용하기 위한 전용 뷰"""
     def __init__(self, author, user_data, save_func, char_index, dungeon_view, recovery_view):
-        super().__init__(timeout=120)
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -248,7 +248,7 @@ class DungeonItemUseView(discord.ui.View):
 class DungeonRecoveryView(discord.ui.View):
     """던전 내 회복방 뷰"""
     def __init__(self, author, user_data, save_func, dungeon_view):
-        super().__init__(timeout=180)
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -281,7 +281,7 @@ class DungeonRecoveryView(discord.ui.View):
 class BossEncounterView(discord.ui.View):
     """보스 조우 시 정보를 보여주는 뷰"""
     def __init__(self, author, dungeon_view, boss, extra_msg=""):
-        super().__init__(timeout=180)
+        super().__init__(timeout=None)
         self.author = author
         self.dungeon_view = dungeon_view
         self.boss = boss
@@ -303,7 +303,7 @@ class BossEncounterView(discord.ui.View):
 class DungeonMainView(discord.ui.View):
     """던전 탐사 메인 뷰"""
     def __init__(self, author, user_data, save_func, char_index, region_name):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -400,6 +400,13 @@ class DungeonMainView(discord.ui.View):
         async def callback(interaction: discord.Interaction):
             if interaction.user.id != self.author.id: return
             self.depth += 1
+            
+            # [신규] 실시간 랭킹 반영: 최고 기록 경신 시 즉시 저장
+            myhome = self.user_data.setdefault("myhome", {})
+            if self.depth > myhome.get("max_subjugation_depth", 0):
+                myhome["max_subjugation_depth"] = self.depth
+                # 비정상 종료 시에도 랭킹이 유지되도록 실시간으로 DB에 기록합니다.
+                await self.save_func(self.author.id, self.user_data)
             
             # 스탯 아이템 지속시간 차감
             if self.dungeon_item and self.dungeon_item["type"] == "stat":
@@ -669,7 +676,7 @@ class DungeonMainView(discord.ui.View):
 # ==================================================================================
 class SubjugationRegionView(discord.ui.View):
     def __init__(self, author, p_data, save_func):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.author = author
         self.p_data = p_data        
         self.save_func = save_func

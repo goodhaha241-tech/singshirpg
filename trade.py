@@ -619,18 +619,14 @@ class TradeBoardView(View):
         self.page += 1
         await self.update_message(interaction)
 
-    
-class SendMoneyView(discord.ui.View):
-    def __init__(self, user_data, get_user_data_func, save_func):
-        super().__init__(timeout=60)
-        self.user_data = user_data
-        self.get_user_data_func = get_user_data_func
-        self.save_func = save_func
+    async def send_money_callback(self, interaction: discord.Interaction):
+        if interaction.user != self.author: return
+        view = SendMoneyView(self.user_data, self.get_user_data_func, self.save_func)
+        await interaction.response.send_message("💸 송금할 상대를 선택해주세요.", view=view, ephemeral=True)
 
-    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="💸 송금할 상대를 선택하세요")
-    async def select_user(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
-        target_user = select.values[0]
-
+    async def register_trade_callback(self, interaction: discord.Interaction):
+        if interaction.user != self.author: return
+        await interaction.response.send_modal(RegisterTradeModal(self.user_data, self.save_func, self))
 
     @auto_defer()
     async def buy_callback(self, interaction: discord.Interaction):
@@ -833,7 +829,6 @@ class SendMoneyAmountModal(Modal):
         await self.save_func(interaction.user.id, self.user_data)
         await self.save_func(int(target_id), target_data)
 
-        await interaction.response.send_message(f"✅ **송금 완료!**\n<@{target_id}>님에게 {amount}{unit}을 보냈습니다.", ephemeral=True)
         await interaction.response.send_message(f"✅ **송금 완료!**\n{self.target_user.mention}님에게 {amount}{unit}을 보냈습니다.", ephemeral=True)
 
 # ---------------------------------------------------------

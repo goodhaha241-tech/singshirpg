@@ -78,19 +78,19 @@ class StatusMenuView(discord.ui.View):
 # 2. 외출 메뉴 View (조사, 대련, 던전, 카페)
 # ==============================================================================
 class OutingMenuView(discord.ui.View):
-    def __init__(self, author, user_data, save_func):
-        super().__init__(timeout=60)
+    def __init__(self, author=None, user_data=None, save_func=None):
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
 
-    @discord.ui.button(label="조사", style=discord.ButtonStyle.danger, emoji="🔍")
+    @discord.ui.button(label="조사", style=discord.ButtonStyle.danger, emoji="🔍", custom_id="menu:outing:invest")
     @auto_defer()
     async def invest_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = InvestigationView(self.author, self.user_data, self.save_func)
         await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
-    @discord.ui.button(label="대련", style=discord.ButtonStyle.primary, emoji="⚔️")
+    @discord.ui.button(label="대련", style=discord.ButtonStyle.primary, emoji="⚔️", custom_id="menu:outing:pvp")
     @auto_defer()
     async def pvp_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         # PVP는 상대방 데이터를 로드해야 하므로 load_func(get_user_data)를 넘겨줍니다.
@@ -98,14 +98,14 @@ class OutingMenuView(discord.ui.View):
         embed = discord.Embed(title="⚔️ 대련", description="대련 상대를 선택해주세요.", color=discord.Color.red())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
-    @discord.ui.button(label="던전", style=discord.ButtonStyle.danger, emoji="🏰")
+    @discord.ui.button(label="던전", style=discord.ButtonStyle.danger, emoji="🏰", custom_id="menu:outing:dungeon")
     @auto_defer()
     async def subjugation_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = SubjugationRegionView(self.author, self.user_data, self.save_func)
         embed = discord.Embed(title="🏰 던전", description="향할 던전이 있는 지역을 선택하세요.", color=discord.Color.dark_red())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
-    @discord.ui.button(label="카페", style=discord.ButtonStyle.success, emoji="☕")
+    @discord.ui.button(label="카페", style=discord.ButtonStyle.success, emoji="☕", custom_id="menu:outing:cafe")
     @auto_defer()
     async def cafe_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = CafeView(self.author, self.user_data, get_user_data, self.save_func)
@@ -116,32 +116,32 @@ class OutingMenuView(discord.ui.View):
 # 3. 관리 메뉴 View (상점, 제작, 스토리, 영입)
 # ==============================================================================
 class ManagementMenuView(discord.ui.View):
-    def __init__(self, author, user_data, save_func):
-        super().__init__(timeout=60)
+    def __init__(self, author=None, user_data=None, save_func=None):
+        super().__init__(timeout=None)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
 
-    @discord.ui.button(label="상점", style=discord.ButtonStyle.primary, emoji="🛒")
+    @discord.ui.button(label="상점", style=discord.ButtonStyle.primary, emoji="🛒", custom_id="menu:manage:shop")
     @auto_defer()
     async def shop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = ShopView(self.author, self.user_data, self.save_func)
         await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
-    @discord.ui.button(label="제작", style=discord.ButtonStyle.secondary, emoji="⚒️")
+    @discord.ui.button(label="제작", style=discord.ButtonStyle.secondary, emoji="⚒️", custom_id="menu:manage:craft")
     @auto_defer()
     async def craft_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = CraftView(self.author, self.user_data, self.save_func)
         embed = discord.Embed(title="⚒️ 제작", description="제작할 아이템의 지역을 선택하세요.", color=discord.Color.orange())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
-    @discord.ui.button(label="스토리", style=discord.ButtonStyle.secondary, emoji="📖")
+    @discord.ui.button(label="스토리", style=discord.ButtonStyle.secondary, emoji="📖", custom_id="menu:manage:story")
     @auto_defer()
     async def story_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = MainStoryView(self.author, self.user_data, self.save_func)
         await interaction.edit_original_response(content=None, embed=view.create_story_embed(), view=view)
 
-    @discord.ui.button(label="영입", style=discord.ButtonStyle.success, emoji="🤝")
+    @discord.ui.button(label="영입", style=discord.ButtonStyle.success, emoji="🤝", custom_id="menu:manage:recruit")
     @auto_defer()
     async def recruit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         

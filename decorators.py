@@ -17,6 +17,10 @@ def auto_defer(arg=None, *, reload_data: bool = False):
         @wraps(func)
         async def wrapper(self, interaction: discord.Interaction, *args, **kwargs):
             # 1. 권한 확인
+            # [수정] 지속성 뷰를 위해 self.author가 없는 경우 현재 유저로 설정
+            if not hasattr(self, "author") or self.author is None:
+                self.author = interaction.user
+
             if interaction.user.id != self.author.id:
                 try:
                     await interaction.response.send_message("❌ 본인의 메뉴만 조작할 수 있습니다.", ephemeral=True)

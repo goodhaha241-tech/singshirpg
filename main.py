@@ -52,6 +52,15 @@ class MyBot(commands.Bot):
             if "rpg_commands" not in self.extensions:
                 await self.load_extension("rpg_commands")
             logger.info("✅ rpg_commands 확장 로드 완료")
+
+            # [신규] 지속성 뷰 등록
+            from info import InfoView
+            from rpg_commands import OutingMenuView, ManagementMenuView
+            from data_manager import save_user_data
+            self.add_view(InfoView(save_func=save_user_data))
+            self.add_view(OutingMenuView(save_func=save_user_data))
+            self.add_view(ManagementMenuView(save_func=save_user_data))
+            logger.info("✅ 지속성 메뉴 뷰 등록 완료")
         except Exception as e:
             logger.error(f"❌ 확장 로드 실패: {e}")
         
