@@ -39,7 +39,7 @@ SPECIAL_EFFECTS = {
     "황금의": "youngsan_gold", # 영산 각인 전용
     "악몽의": "luude_imprint",  # 루우데 각인 전용
     "믿음어린": "earthreg_faith", # 어즈렉 각인 전용
-    "별똥별의": "Sensho_star" # 센쇼 각인 전용
+    "별똥별의": "sensho_star" # 센쇼 각인 전용
 
 }
 

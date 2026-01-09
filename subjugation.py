@@ -6,6 +6,7 @@ from monsters import spawn_monster, get_dungeon_boss
 from battle import BattleView
 from character import Character
 from data_manager import get_user_data, get_subjugation_ranking
+from trade import update_cafe_quest_progress
 
 SUBJUGATION_COST = 2000
 
@@ -247,7 +248,7 @@ class DungeonItemUseView(discord.ui.View):
 class DungeonRecoveryView(discord.ui.View):
     """던전 내 회복방 뷰"""
     def __init__(self, author, user_data, save_func, dungeon_view):
-        super().__init__(timeout=None)
+        super().__init__(timeout=180)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -280,7 +281,7 @@ class DungeonRecoveryView(discord.ui.View):
 class BossEncounterView(discord.ui.View):
     """보스 조우 시 정보를 보여주는 뷰"""
     def __init__(self, author, dungeon_view, boss, extra_msg=""):
-        super().__init__(timeout=None)
+        super().__init__(timeout=180)
         self.author = author
         self.dungeon_view = dungeon_view
         self.boss = boss
@@ -302,7 +303,7 @@ class BossEncounterView(discord.ui.View):
 class DungeonMainView(discord.ui.View):
     """던전 탐사 메인 뷰"""
     def __init__(self, author, user_data, save_func, char_index, region_name):
-        super().__init__(timeout=None)
+        super().__init__(timeout=300)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
@@ -635,6 +636,9 @@ class DungeonMainView(discord.ui.View):
         if self.depth > myhome.get("max_subjugation_depth", 0):
             myhome["max_subjugation_depth"] = self.depth
             
+        # [신규] 카페 의뢰 퀘스트 업데이트 (던전 층수)
+        await update_cafe_quest_progress(interaction.user.id, self.user_data, self.save_func, "dungeon", self.depth)
+
         await self.save_func(self.author.id, self.user_data)
 
         color = discord.Color.red() if is_fail else discord.Color.green()

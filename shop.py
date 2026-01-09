@@ -198,13 +198,8 @@ class PointShopView(discord.ui.View):
         await interaction.edit_original_response(content="🛒 상점 메인", embed=main_v.create_shop_embed(), view=main_v)
 
     def make_pt_callback(self, label, price):
+        @auto_defer(reload_data=True)
         async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.author.id:
-                return await interaction.response.send_message("❌ 본인의 메뉴만 조작할 수 있습니다.", ephemeral=True)
-            
-            await interaction.response.defer()
-            self.user_data = await get_user_data(self.author.id, self.author.display_name)
-            
             if self.user_data.get("money", 0) < price:
                 return await interaction.followup.send("❌ 머니 부족!", ephemeral=True)
             

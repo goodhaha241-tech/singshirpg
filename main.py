@@ -1,10 +1,10 @@
-import discord
-from discord.ext import commands
 import sys
 import io
 import os
 import logging
 import asyncio
+import discord
+from discord.ext import commands
 
 # -------------------------------------------------------------------------
 # 1. 환경 설정 및 모듈 경로 잡기

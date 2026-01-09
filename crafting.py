@@ -216,12 +216,12 @@ class RegionCraftView(discord.ui.View):
     async def prev_page(self, i): 
         if i.user != self.author: return
         await self.reload_data()
-        self.page-=1; self.update_components(); await i.response.edit_message(view=self)
+        self.page-=1; self.update_components(); await i.edit_original_response(view=self)
         
     async def next_page(self, i): 
         if i.user != self.author: return
         await self.reload_data()
-        self.page+=1; self.update_components(); await i.response.edit_message(view=self)
+        self.page+=1; self.update_components(); await i.edit_original_response(view=self)
     
     async def go_back(self, interaction):
         if interaction.user != self.author: return

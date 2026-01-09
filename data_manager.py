@@ -72,7 +72,9 @@ async def check_schema(pool):
                 ("fishing_rod", "INT DEFAULT 0"),
                 ("fishing_spot_level", "INT DEFAULT 0"),
                 ("fishing_max_slots", "INT DEFAULT 3"),
-                ("max_subjugation_depth", "INT DEFAULT 0")
+                ("max_subjugation_depth", "INT DEFAULT 0"),
+                ("daily_quests", "JSON"),
+                ("last_quest_date", "DATE")
             ]
             for col, col_type in updates:
                 if col not in u_cols:
@@ -171,6 +173,8 @@ async def _get_new_user_data(user_name=None):
             "construction_step": 0,
             "max_subjugation_depth": 0
         },
+        "daily_quests": [],
+        "last_quest_date": None,
         "fertilizers": []
     }
 
@@ -305,7 +309,9 @@ async def get_user_data(user_id, user_name=None):
                 "unlocked_regions": unlocked_regions,
                 "recruit_progress": recruit_progress,
                 "myhome": myhome_data,
-                "fertilizers": fertilizers
+                "fertilizers": fertilizers,
+                "daily_quests": json.loads(user_row['daily_quests']) if user_row.get('daily_quests') else [],
+                "last_quest_date": str(user_row['last_quest_date']) if user_row.get('last_quest_date') else None
             }
 
 async def save_user_data(user_id, data):
@@ -337,6 +343,7 @@ async def save_user_data(user_id, data):
                 cards_json = json.dumps(data.get("cards", []))
                 buffs_json = json.dumps(data.get("buffs", {}))
                 mq_prog_json = json.dumps(data.get("main_quest_progress", {}))
+                daily_quests_json = json.dumps(data.get("daily_quests", []))
                 
                 # 마이홈 레벨 추출 (없으면 기본값 1)
                 g_lvl = myhome.get("garden", {}).get("level") or 1
@@ -355,8 +362,8 @@ async def save_user_data(user_id, data):
                     (user_id, pt, money, last_checkin, investigator_index, 
                      main_quest_id, main_quest_current, main_quest_index,
                      garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations,
-                     cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
+                     cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth, daily_quests, last_quest_date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
                     ON DUPLICATE KEY UPDATE
                     pt=new.pt, money=new.money, last_checkin=new.last_checkin,
                     investigator_index=new.investigator_index,
@@ -374,7 +381,9 @@ async def save_user_data(user_id, data):
                     main_quest_progress=new.main_quest_progress, 
                     total_investigations=new.total_investigations,
                     fishing_max_slots=new.fishing_max_slots,
-                    max_subjugation_depth=new.max_subjugation_depth
+                    max_subjugation_depth=new.max_subjugation_depth,
+                    daily_quests=new.daily_quests,
+                    last_quest_date=new.last_quest_date
                 """
                 await cur.execute(sql_users, (
                     str(user_id), data.get("pt", 0), data.get("money", 0), data.get("last_checkin"),
@@ -383,7 +392,8 @@ async def save_user_data(user_id, data):
                     g_lvl, w_can, w_lvl, f_lvl, f_rod, f_spot, t_subj, 
                     cards_json, buffs_json, mq_prog_json, t_invest,
                     myhome.get("fishing", {}).get("max_dismantle_slots", 3),
-                    m_depth
+                    m_depth,
+                    daily_quests_json, data.get("last_quest_date")
                 ))
 
                 # ---------------------------------------------------------
