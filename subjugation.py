@@ -99,11 +99,7 @@ class DungeonItemSwapView(discord.ui.View):
     async def keep_current(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.author.id: return
         await interaction.response.defer()
-        self.dungeon_view.apply_stat_item_effect()
         await self.dungeon_view.show_main_screen(interaction, "기존 아이템을 유지하고 이동합니다.")
-        self.dungeon_view.apply_stat_item_effect()
-            
-        await self.dungeon_view.show_main_screen(interaction, f"[{self.new_item['name']}]을(를) 장착했습니다!")
 
     async def on_timeout(self):
         if self.dungeon_view:

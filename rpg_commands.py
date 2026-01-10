@@ -18,6 +18,7 @@ from shop import ShopView
 from trade import CafeView              # 카페
 from crafting import CraftView          # 제작
 from subjugation import SubjugationRegionView # 던전
+from guild import GuildMainView         # [신규] 길드
 from recruitment import RecruitSelectView # 영입
 from use_item import ItemUseView        # 사용 (아이템 사용)
 from card_manager import CardManageView # 카드
@@ -110,6 +111,13 @@ class OutingMenuView(discord.ui.View):
     async def cafe_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = CafeView(self.author, self.user_data, get_user_data, self.save_func)
         embed = discord.Embed(title="☕ 카페", description="카페에 오신 것을 환영합니다.", color=discord.Color.gold())
+        await interaction.edit_original_response(content=None, embed=embed, view=view)
+
+    @discord.ui.button(label="길드", style=discord.ButtonStyle.primary, emoji="🛡️", custom_id="menu:outing:guild")
+    @auto_defer(reload_data=True)
+    async def guild_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = GuildMainView(self.author, self.user_data, self.save_func)
+        embed = discord.Embed(title="🛡️ 여행자 길드", description="길드 업무를 보거나 의뢰를 수행합니다.", color=discord.Color.blue())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
 # ==============================================================================
@@ -299,6 +307,128 @@ class RPGCommands(commands.Cog):
         
         embed = discord.Embed(title="✅ 전체 즉시 완료 처리", description="모든 유저의 작물과 물고기 해체가 즉시 완료 상태로 변경되었습니다.", color=discord.Color.gold())
         await interaction.followup.send(embed=embed)
+
+    # ---------------------------------------------------------------------
+    # 5. 단축 커맨드 (편의성)
+    # ---------------------------------------------------------------------
+    async def _open_feature(self, interaction, view_class, title=None, desc=None, color=None):
+        """단축 커맨드용 뷰 열기 헬퍼"""
+        try:
+            await interaction.response.defer(ephemeral=False)
+        except: pass
+        
+        user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
+        async def bound_save(uid_or_all, data=None):
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
+            else: await self.save_wrapper(uid_or_all, data)
+            
+        view = view_class(interaction.user, user_data, bound_save)
+        
+        embed = None
+        if hasattr(view, 'get_embed'):
+            embed = view.get_embed()
+        elif hasattr(view, 'create_shop_embed'):
+            embed = view.create_shop_embed()
+            
+        if not embed and title:
+            embed = discord.Embed(title=title, description=desc, color=color)
+            
+        await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name="조사", description="[단축] 조사 지역 선택 화면으로 이동합니다.")
+    async def shortcut_invest(self, interaction: discord.Interaction):
+        await self._open_feature(interaction, InvestigationView)
+
+    @app_commands.command(name="던전", description="[단축] 던전 지역 선택 화면으로 이동합니다.")
+    async def shortcut_dungeon(self, interaction: discord.Interaction):
+        await self._open_feature(interaction, SubjugationRegionView, "🏰 던전", "향할 던전이 있는 지역을 선택하세요.", discord.Color.dark_red())
+
+    @app_commands.command(name="상점", description="[단축] 상점으로 이동합니다.")
+    async def shortcut_shop(self, interaction: discord.Interaction):
+        await self._open_feature(interaction, ShopView)
+
+    @app_commands.command(name="제작", description="[단축] 제작소로 이동합니다.")
+    async def shortcut_craft(self, interaction: discord.Interaction):
+        await self._open_feature(interaction, CraftView, "⚒️ 제작", "제작할 아이템의 지역을 선택하세요.", discord.Color.orange())
+
+    @app_commands.command(name="길드", description="[단축] 길드 화면으로 이동합니다.")
+    async def shortcut_guild(self, interaction: discord.Interaction):
+        await self._open_feature(interaction, GuildMainView, "🛡️ 여행자 길드", "길드 업무를 보거나 의뢰를 수행합니다.", discord.Color.blue())
+
+    @app_commands.command(name="대련", description="[단축] 대련 상대를 선택합니다.")
+    async def shortcut_pvp(self, interaction: discord.Interaction):
+        try: await interaction.response.defer(ephemeral=False)
+        except: pass
+        view = PVPInviteView(interaction.user, get_user_data, save_user_data)
+        embed = discord.Embed(title="⚔️ 대련", description="대련 상대를 선택해주세요.", color=discord.Color.red())
+        await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name="카페", description="[단축] 카페로 이동합니다.")
+    async def shortcut_cafe(self, interaction: discord.Interaction):
+        try: await interaction.response.defer(ephemeral=False)
+        except: pass
+        user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
+        async def bound_save(uid_or_all, data=None):
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
+            else: await self.save_wrapper(uid_or_all, data)
+        
+        view = CafeView(interaction.user, user_data, get_user_data, bound_save)
+        embed = discord.Embed(title="☕ 카페", description="카페에 오신 것을 환영합니다.", color=discord.Color.gold())
+        await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name="영입", description="[단축] 영입소로 이동합니다.")
+    async def shortcut_recruit(self, interaction: discord.Interaction):
+        try: await interaction.response.defer(ephemeral=False)
+        except: pass
+        user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
+        async def bound_save(uid_or_all, data=None):
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
+            else: await self.save_wrapper(uid_or_all, data)
+            
+        async def back_callback(i):
+            await i.response.edit_message(content="영입소를 나갔습니다.", embed=None, view=None)
+
+        view = RecruitSelectView(interaction.user, user_data, bound_save, back_callback)
+        embed = discord.Embed(title="🕵️ 영입소", description="함께할 동료를 찾아보세요.", color=discord.Color.blue())
+        await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name="관리자_길드설정", description="[관리자] 길드 등급을 설정하고 가입 처리합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(rank=[
+        app_commands.Choice(name="Bronze", value="Bronze"),
+        app_commands.Choice(name="Silver", value="Silver"),
+        app_commands.Choice(name="Gold", value="Gold"),
+        app_commands.Choice(name="Platinum", value="Platinum"),
+        app_commands.Choice(name="Diamond", value="Diamond"),
+        app_commands.Choice(name="미가입 (초기화)", value="None")
+    ])
+    async def admin_set_guild_rank(self, interaction: discord.Interaction, rank: str):
+        await interaction.response.defer(ephemeral=True)
+        user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
+        
+        if rank == "None":
+            user_data["guild_rank"] = None
+            user_data["guild_data"] = {}
+            msg = "✅ 길드 정보를 초기화했습니다. (미가입 상태)"
+        else:
+            user_data["guild_rank"] = rank
+            # 길드 데이터가 없거나 비어있으면 초기화
+            if "guild_data" not in user_data or not isinstance(user_data["guild_data"], dict) or not user_data["guild_data"]:
+                user_data["guild_data"] = {
+                    "tokens": {"wood": 100, "iron": 100, "magic": 100, "sorcery": 100},
+                    "activities": {"process": 0, "refine": 0, "delivery": 0, "host_coop": 0, "join_coop": 0, "shop_soldout": 0},
+                    "daily_delivery": {"date": "", "done": False, "items": {}},
+                    "daily_shop": {"date": "", "stock": {}}
+                }
+            else:
+                # 기존 데이터가 있다면 토큰만 보충 (테스트 용이성)
+                tokens = user_data["guild_data"].setdefault("tokens", {})
+                for t in ["wood", "iron", "magic", "sorcery"]:
+                    tokens[t] = max(tokens.get(t, 0), 100)
+            msg = f"✅ 길드 등급을 **{rank}**로 설정했습니다. (테스트용 토큰 100개씩 지급됨)"
+            
+        await save_user_data(interaction.user.id, user_data)
+        await interaction.followup.send(msg)
 
 async def setup(bot):
     await bot.add_cog(RPGCommands(bot))

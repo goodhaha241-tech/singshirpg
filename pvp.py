@@ -74,6 +74,8 @@ class PVPBattleView(discord.ui.View):
         self.p1_shayla_trigger = False
         self.p2_shayla_trigger = False
         
+        self.processing_turn = False
+        self.last_turn_summary = None
         self.message = None      
         self.log_message = None  
         self.update_setup_buttons()
@@ -174,12 +176,20 @@ class PVPBattleView(discord.ui.View):
         await interaction.response.send_message("기술 선택", view=view, ephemeral=True)
     
     async def receive_action(self, interaction, player_num, card):
+        if self.processing_turn:
+            return await interaction.response.send_message("⚠️ 현재 턴을 처리 중입니다. 잠시만 기다려주세요.", ephemeral=True)
+
         if player_num == 1: self.p1_card = card
         else: self.p2_card = card
-        await interaction.response.edit_message(content="✅ 선택 완료!", view=None)
+        c_name = card.name if card else "패닉"
+        await interaction.response.edit_message(content=f"✅ **{c_name}** 선택 완료!", view=None)
         
         if self.p1_card != "waiting" and self.p2_card != "waiting":
-            await self.resolve_turn(interaction)
+            self.processing_turn = True
+            try:
+                await self.resolve_turn(interaction)
+            finally:
+                self.processing_turn = False
         else:
             self.update_main_buttons()
             embed = self.make_embed("상대방 기다리는 중...")
@@ -233,7 +243,10 @@ class PVPBattleView(discord.ui.View):
                 for d in p2_res:
                     if d["type"] != "none": d["value"] += bonus2
 
-        log += f"🔵 **{self.p1_char.name}** vs 🔴 **{self.p2_char.name}**\n"
+        c1_name = self.p1_card.name if self.p1_card else "행동 불가"
+        c2_name = self.p2_card.name if self.p2_card else "행동 불가"
+        self.last_turn_summary = f"이전 턴: 🔵{c1_name} vs 🔴{c2_name}"
+        log += f"🔵 **{self.p1_char.name}** (`{c1_name}`) vs 🔴 **{self.p2_char.name}** (`{c2_name}`)\n"
         
         def get_effects(char):
             effs = []
@@ -361,6 +374,9 @@ class PVPBattleView(discord.ui.View):
         embed.add_field(name=f"🔵 {self.p1_char.name} {st_str(self.p1_char)}", value=f"HP {bar(self.p1_char.current_hp, self.p1_char.max_hp, '🟦', '⬜')}\nMG {bar(self.p1_char.current_mental, self.p1_char.max_mental, '🔮', '▫️')}", inline=True)
         embed.add_field(name="VS", value="⚡", inline=True)
         embed.add_field(name=f"🔴 {self.p2_char.name} {st_str(self.p2_char)}", value=f"HP {bar(self.p2_char.current_hp, self.p2_char.max_hp, '🟥', '⬜')}\nMG {bar(self.p2_char.current_mental, self.p2_char.max_mental, '🔮', '▫️')}", inline=True)
+        
+        if self.last_turn_summary and "다음 행동" in log:
+            embed.set_footer(text=self.last_turn_summary)
         return embed
 
 # --- [공용] 선택 뷰들 ---

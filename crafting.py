@@ -3,7 +3,7 @@ import discord
 import json
 import os
 import random
-from items import CRAFT_RECIPES, ITEM_CATEGORIES, ITEM_PRICES, COMMON_ITEMS, RARE_ITEMS, REGIONS
+from items import CRAFT_RECIPES, ITEM_CATEGORIES, ITEM_PRICES, COMMON_ITEMS, RARE_ITEMS, REGIONS, GUILD_ITEMS
 from fishing import FISH_TIERS
 from story import update_quest_progress
 from data_manager import get_user_data
@@ -416,7 +416,7 @@ class BoxAmountView(discord.ui.View):
         for tier_list in FISH_TIERS.values():
             all_fish.update(tier_list)
         
-        valid_rare_items = [item for item in RARE_ITEMS if item not in all_fish]
+        valid_rare_items = [item for item in RARE_ITEMS if item not in all_fish and item not in GUILD_ITEMS]
         if not valid_rare_items: valid_rare_items = ["사랑나무 가지"] # Fallback
 
         if "깔끔한" in self.box:

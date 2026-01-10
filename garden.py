@@ -1,7 +1,7 @@
 # garden.py
 import discord
 import random
-from items import RARE_ITEMS
+from items import RARE_ITEMS, GUILD_ITEMS
 from fishing import FISH_TIERS
 from data_manager import get_user_data
 
@@ -201,7 +201,7 @@ class GardenView(discord.ui.View):
         for tier_list in FISH_TIERS.values():
             all_fish.update(tier_list)
         
-        harvestable_rares = [item for item in RARE_ITEMS if item not in all_fish]
+        harvestable_rares = [item for item in RARE_ITEMS if item not in all_fish and item not in GUILD_ITEMS]
         if not harvestable_rares:
             harvestable_rares = ["사랑나무 가지", "무지개 열매", "설국 열매"]
         

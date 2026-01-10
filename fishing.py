@@ -2,7 +2,7 @@
 import discord
 import random
 import asyncio
-from items import COMMON_ITEMS, RARE_ITEMS
+from items import COMMON_ITEMS, RARE_ITEMS, GUILD_ITEMS
 from decorators import auto_defer
 
 # --- 물고기 등급 데이터 ---
@@ -198,10 +198,10 @@ class FishingView(discord.ui.View):
         for tier_list in FISH_TIERS.values():
             all_fish.update(tier_list)
         
-        valid_rare_rewards = [item for item in RARE_ITEMS if item not in all_fish]
+        valid_rare_rewards = [item for item in RARE_ITEMS if item not in all_fish and item not in GUILD_ITEMS]
         if not valid_rare_rewards: valid_rare_rewards = ["사랑나무 가지"]
 
-        valid_common_rewards = [item for item in COMMON_ITEMS if item not in all_fish]
+        valid_common_rewards = [item for item in COMMON_ITEMS if item not in all_fish and item not in GUILD_ITEMS]
         if not valid_common_rewards: valid_common_rewards = ["녹슨 철"]
 
         for idx in sorted(completed_idx, reverse=True):

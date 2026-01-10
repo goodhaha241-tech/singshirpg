@@ -30,9 +30,10 @@ class Dice:
         return self.action_type, random.randint(f_min, f_max)
 
 class SkillCard:
-    def __init__(self, name, dice_list):
+    def __init__(self, name, dice_list, is_aoe=False):
         self.name = name
         self.dice_list = dice_list
+        self.is_aoe = is_aoe
 
     @property
     def description(self):
@@ -47,7 +48,9 @@ class SkillCard:
                 elif "absorb" in d.effect: eff_text = "🧛"
                 elif "time_accel" in d.effect: eff_text = "⌛"
             desc_parts.append(f"{emoji}({d.d_min}~{d.d_max}){eff_text}")
-        return " ➔ ".join(desc_parts)
+        desc = " ➔ ".join(desc_parts)
+        if self.is_aoe: desc = "📢 [광역] " + desc
+        return desc
 
     def use_card(self, attack_stat=0, defense_stat=0, current_mental=0, **kwargs):
         results = []
@@ -405,7 +408,12 @@ BOSS_CARDS = {
     "공간절단": SkillCard("공간절단", [Dice("attack", 50, 80)]),
     "절대방어": SkillCard("절대방어", [Dice("defense", 50, 100), Dice("heal", 20, 50)]),
     "영혼수확": SkillCard("영혼수확", [Dice("attack", 30, 50, effect="absorb_hp")]), 
-    "신성한심판": SkillCard("신성한심판", [Dice("attack", 40, 60), Dice("attack", 40, 60)])
+    "신성한심판": SkillCard("신성한심판", [Dice("attack", 40, 60), Dice("attack", 40, 60)]),
+
+    # [레이드 보스 전용 - 광역]
+    "대지진(광역)": SkillCard("대지진(광역)", [Dice("attack", 15, 25, effect="stun_1_prob_50")], is_aoe=True),
+    "포효(광역)": SkillCard("포효(광역)", [Dice("mental_heal", 1, 1), Dice("attack", 10, 15)], is_aoe=True), # mental_heal 1은 더미(합 패배 유도용)
+    "화염숨결(광역)": SkillCard("화염숨결(광역)", [Dice("attack", 20, 30, effect="bleed_5")], is_aoe=True),
 }
 
 def get_card(name):

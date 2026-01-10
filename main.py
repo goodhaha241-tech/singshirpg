@@ -35,10 +35,20 @@ try:
     from data_manager import get_db_pool
 except ImportError as e:
     print(f"❌ 필수 모듈 로드 실패: {e}")
+    print("config.py 파일이 존재하는지, 또는 필요한 라이브러리가 설치되었는지 확인해주세요.")
+    input("엔터 키를 누르면 종료합니다...")
     sys.exit(1)
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout), 
+        logging.FileHandler("bot.log", encoding="utf-8")
+    ],
+    force=True
+)
 logger = logging.getLogger("Main")
 
 # -------------------------------------------------------------------------
@@ -54,13 +64,8 @@ class MyBot(commands.Bot):
             logger.info("✅ rpg_commands 확장 로드 완료")
 
             # [신규] 지속성 뷰 등록
-            from info import InfoView
-            from rpg_commands import OutingMenuView, ManagementMenuView
             from subjugation import SubjugationRegionView, DungeonMainView
             from data_manager import save_user_data
-            self.add_view(InfoView(save_func=save_user_data, timeout=None))
-            self.add_view(OutingMenuView(save_func=save_user_data, timeout=None))
-            self.add_view(ManagementMenuView(save_func=save_user_data, timeout=None))
             self.add_view(SubjugationRegionView(None, None, save_user_data, timeout=None))
             self.add_view(DungeonMainView(None, None, save_user_data, timeout=None))
         except Exception as e:
@@ -95,11 +100,36 @@ async def sync_commands(ctx):
     except Exception as e:
         await ctx.send(f"❌ 동기화 실패: {e}")
 
+@bot.command(name="hard_reset")
+@commands.is_owner()
+async def hard_reset_commands(ctx):
+    """커맨드를 완전히 초기화(삭제)한 후 다시 등록합니다."""
+    msg = await ctx.send("🔄 커맨드 초기화 및 재등록 중... (시간이 걸릴 수 있습니다)")
+    try:
+        # 1. 로컬 트리 비우기 및 디스코드 동기화 (커맨드 삭제)
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
+        
+        # 2. 확장 모듈 다시 로드 (커맨드 다시 채우기)
+        await bot.reload_extension("rpg_commands")
+        
+        # 3. 최종 동기화 (커맨드 등록)
+        synced = await bot.tree.sync()
+        await msg.edit(content=f"✅ **완전 초기화 완료!**\n총 {len(synced)}개의 커맨드가 다시 등록되었습니다.")
+    except Exception as e:
+        await msg.edit(content=f"❌ 초기화 실패: {e}")
+
 # -------------------------------------------------------------------------
 # 4. 실행
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
     if not TOKEN:
         logger.error("config.py에 TOKEN이 설정되지 않았습니다.")
+        input("엔터 키를 누르면 종료합니다...")
     else:
-        bot.run(TOKEN)
+        try:
+            bot.run(TOKEN)
+        except Exception as e:
+            logger.error(f"봇 실행 중 오류가 발생했습니다: {e}")
+            logger.error("토큰이 올바른지, 인터넷 연결이 되어있는지 확인해주세요.")
+            input("엔터 키를 누르면 종료합니다...")

@@ -4,7 +4,8 @@ import os
 import logging
 from config import DB_CONFIG
 
-logging.basicConfig(level=logging.INFO)
+# 로깅 설정은 main.py에서 통합 관리하므로 여기서는 제거하거나 주석 처리합니다.
+# logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _pool = None
@@ -78,7 +79,9 @@ async def check_schema(pool):
                 ("construction_step", "INT DEFAULT 0"),
                 ("current_dungeon", "JSON"),
                 ("max_subjugation_char", "VARCHAR(100)"),
-                ("max_subjugation_region", "VARCHAR(100)")
+                ("max_subjugation_region", "VARCHAR(100)"),
+                ("guild_rank", "VARCHAR(20)"),
+                ("guild_data", "JSON")
             ]
             for col, col_type in updates:
                 if col not in u_cols:
@@ -148,6 +151,41 @@ async def check_schema(pool):
                     """)
                 except Exception as e:
                     logger.error(f"테이블 생성 실패: {e}")
+            
+            # coop_sessions 테이블 확인 (없으면 생성)
+            try:
+                await cur.execute("SELECT 1 FROM coop_sessions LIMIT 1")
+            except (aiomysql.Error, Exception):
+                logger.warning("⚠️ 'coop_sessions' 테이블이 없어 생성합니다.")
+                await cur.execute("""
+                    CREATE TABLE IF NOT EXISTS coop_sessions (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        host_id BIGINT,
+                        host_name VARCHAR(100),
+                        item_name VARCHAR(100),
+                        target_count INT,
+                        current_count INT DEFAULT 0,
+                        status VARCHAR(20) DEFAULT 'OPEN',
+                        participants JSON,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            
+            # guild_warehouse 테이블 확인 (없으면 생성)
+            try:
+                await cur.execute("SELECT 1 FROM guild_warehouse LIMIT 1")
+            except (aiomysql.Error, Exception):
+                logger.warning("⚠️ 'guild_warehouse' 테이블이 없어 생성합니다.")
+                await cur.execute("""
+                    CREATE TABLE IF NOT EXISTS guild_warehouse (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        depositor_id BIGINT,
+                        depositor_name VARCHAR(100),
+                        item_name VARCHAR(100),
+                        quantity INT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
 
 async def _get_new_user_data(user_name=None):
     """Returns the default data structure for a new user."""
@@ -182,7 +220,9 @@ async def _get_new_user_data(user_name=None):
         },
         "daily_quests": [],
         "last_quest_date": None,
-        "fertilizers": []
+        "fertilizers": [],
+        "guild_rank": None,
+        "guild_data": {}
     }
 
 async def _get_inventory(cur, user_id):
@@ -321,7 +361,9 @@ async def get_user_data(user_id, user_name=None):
                 "fertilizers": fertilizers,
                 "daily_quests": json.loads(user_row['daily_quests']) if user_row.get('daily_quests') else [],
                 "last_quest_date": str(user_row['last_quest_date']) if user_row.get('last_quest_date') else None,
-                "current_dungeon": json.loads(user_row['current_dungeon']) if user_row.get('current_dungeon') else {}
+                "current_dungeon": json.loads(user_row['current_dungeon']) if user_row.get('current_dungeon') else {},
+                "guild_rank": user_row.get('guild_rank'),
+                "guild_data": json.loads(user_row['guild_data']) if user_row.get('guild_data') else {}
             }
 
 async def save_user_data(user_id, data):
@@ -355,6 +397,7 @@ async def save_user_data(user_id, data):
                 mq_prog_json = json.dumps(data.get("main_quest_progress", {}))
                 daily_quests_json = json.dumps(data.get("daily_quests", []))
                 curr_dungeon_json = json.dumps(data.get("current_dungeon", {}))
+                guild_data_json = json.dumps(data.get("guild_data", {}))
                 
                 # 마이홈 레벨 추출 (없으면 기본값 1)
                 g_lvl = myhome.get("garden", {}).get("level") or 1
@@ -374,8 +417,8 @@ async def save_user_data(user_id, data):
                     INSERT INTO users 
                     (user_id, pt, money, last_checkin, investigator_index, 
                      main_quest_id, main_quest_current, main_quest_index,
-                     garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations, cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth, daily_quests, last_quest_date, construction_step, current_dungeon, max_subjugation_char, max_subjugation_region)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
+                     garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations, cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth, daily_quests, last_quest_date, construction_step, current_dungeon, max_subjugation_char, max_subjugation_region, guild_rank, guild_data)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
                     ON DUPLICATE KEY UPDATE
                     pt=new.pt, money=new.money, last_checkin=new.last_checkin,
                     investigator_index=new.investigator_index,
@@ -399,7 +442,9 @@ async def save_user_data(user_id, data):
                     construction_step=new.construction_step,
                     current_dungeon=new.current_dungeon,
                     max_subjugation_char=new.max_subjugation_char,
-                    max_subjugation_region=new.max_subjugation_region
+                    max_subjugation_region=new.max_subjugation_region,
+                    guild_rank=new.guild_rank,
+                    guild_data=new.guild_data
                 """
                 await cur.execute(sql_users, (
                     str(user_id), data.get("pt", 0), data.get("money", 0), data.get("last_checkin"),
@@ -411,7 +456,8 @@ async def save_user_data(user_id, data):
                     m_depth,
                     daily_quests_json, data.get("last_quest_date"),
                     myhome.get("construction_step", 0), curr_dungeon_json,
-                    m_char, m_region
+                    m_char, m_region,
+                    data.get("guild_rank"), guild_data_json
                 ))
 
                 # ---------------------------------------------------------

@@ -5,7 +5,7 @@ import re
 import json
 import os
 from character import Character
-from items import RARE_ITEMS
+from items import RARE_ITEMS, GUILD_ITEMS
 from artifacts import _make_description, apply_upgrade_bonus
 from fishing import FISH_TIERS
 from data_manager import get_user_data
@@ -478,7 +478,7 @@ class ArtifactManageView(discord.ui.View):
             all_fish = set()
             for tier_list in FISH_TIERS.values():
                 all_fish.update(tier_list)
-            valid_rewards = [i for i in RARE_ITEMS if i not in all_fish]
+            valid_rewards = [i for i in RARE_ITEMS if i not in all_fish and i not in GUILD_ITEMS]
             if not valid_rewards: valid_rewards = ["사랑나무 가지"]
 
             for _ in range(rank):
@@ -646,7 +646,7 @@ class ArtifactManageView(discord.ui.View):
         all_fish = set()
         for tier_list in FISH_TIERS.values():
             all_fish.update(tier_list)
-        valid_rewards = [i for i in RARE_ITEMS if i not in all_fish]
+        valid_rewards = [i for i in RARE_ITEMS if i not in all_fish and i not in GUILD_ITEMS]
         if not valid_rewards: valid_rewards = ["사랑나무 가지"]
 
         for art in artifacts:

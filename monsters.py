@@ -305,3 +305,32 @@ def get_dungeon_boss(region_name, depth):
             boss.name = f"👑 {boss_data['name']} (Lv.{multiplier+1})"
 
     return boss
+
+# ==================================================================================
+# [신규] 길드 레이드 보스 데이터
+# ==================================================================================
+RAID_BOSS_DATA = {
+    "Gold": {
+        "name": "대지의 형상", "hp": 5000, "atk": 30, "def": 30,
+        "desc": "약하기에 비춰지지 않는 것이다.",
+        "deck": ["대지진(광역)", "단단한껍질", "강철타격", "기본공격"],
+        "reward_tokens": {"wood": 50, "iron": 30, "magic": 10}
+    },
+    "Platinum": {
+        "name": "겁화의 형상", "hp": 15000, "atk": 50, "def": 40,
+        "desc": "낙원은 이미 불타버렸다.",
+        "deck": ["화염숨결(광역)", "포효(광역)", "광란", "영혼수확"],
+        "reward_tokens": {"iron": 50, "magic": 30, "sorcery": 10}
+    },
+    "Diamond": {
+        "name": "끝의 형상", "hp": 50000, "atk": 80, "def": 60,
+        "desc": "네가 떠올렸다 한들, 내 상처가 낫는 건 아닌지라.",
+        "deck": ["멸망의노래", "공간절단", "대지진(광역)", "화염숨결(광역)", "신성한심판"],
+        "reward_tokens": {"magic": 50, "sorcery": 30, "wood": 100}
+    }
+}
+
+def get_raid_boss(rank):
+    data = RAID_BOSS_DATA.get(rank, RAID_BOSS_DATA["Gold"])
+    # 레이드 보스는 Monster 클래스 재사용 (패턴 타입은 aggressive 고정)
+    return Monster(name=f"👹 {data['name']}", hp=data['hp'], attack=data['atk'], defense=data['def'], description=data['desc'], pattern_type="aggressive", card_deck=data['deck'])
