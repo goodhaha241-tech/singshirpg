@@ -18,13 +18,14 @@ from shop import ShopView
 from trade import CafeView              # 카페
 from crafting import CraftView          # 제작
 from subjugation import SubjugationRegionView # 던전
-from guild import GuildMainView         # [신규] 길드
+from guild import GuildMainView, RaidBattleView         # [신규] 길드
 from recruitment import RecruitSelectView # 영입
 from use_item import ItemUseView        # 사용 (아이템 사용)
 from card_manager import CardManageView # 카드
 from pvp import PVPInviteView           # 대련
 from info import InfoView               # [수정] InfoView 임포트 추가
 from story import MainStoryView         # [수정] MainStoryView 임포트 추가
+from monsters import get_raid_boss
 
 # ==============================================================================
 # 1. 상태 메뉴 View (정보, 사용, 카드, 정비)
@@ -169,6 +170,8 @@ class ManagementMenuView(discord.ui.View):
 # 메인 Cog 클래스
 # ==============================================================================
 class RPGCommands(commands.Cog):
+    admin = app_commands.Group(name="관리자", description="관리자 전용 명령어입니다.", guild_only=True)
+
     def __init__(self, bot):
         self.bot = bot
 
@@ -278,36 +281,6 @@ class RPGCommands(commands.Cog):
         embed.add_field(name="⚡ 포인트", value=f"+{reward_pt:,}pt", inline=True)
         await interaction.followup.send(embed=embed)
 
-    # (관리자용 커맨드는 유지)
-    @app_commands.command(name="관리자_지급", description="[관리자] 특정 유저에게 재화를 지급합니다.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def admin_give_money(self, interaction: discord.Interaction, target: discord.User, amount: int):
-        await interaction.response.defer(ephemeral=False)
-        target_data = await get_user_data(target.id, target.display_name)
-        target_data["money"] += amount
-        await save_user_data(target.id, target_data)
-        embed = discord.Embed(title="✅ 관리자 지급 완료", description=f"**{target.display_name}**님에게 재화를 지급했습니다.", color=discord.Color.gold())
-        embed.add_field(name="지급액", value=f"{amount:,}원", inline=False)
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="관리자_전체즉시완료", description="[관리자] 모든 유저의 작물 성장 및 물고기 해체를 즉시 완료시킵니다.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def admin_complete_all(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                # 1. 모든 심어진 작물을 수확 가능 단계(3)로 변경
-                await cur.execute("UPDATE garden_slots SET stage = 3 WHERE planted = TRUE")
-                
-                # 2. 모든 물고기 해체 시작 카운트를 과거로 돌려 즉시 완료 처리
-                await cur.execute("UPDATE fishing_slots SET start_count = start_count - 1000")
-                
-                await conn.commit()
-        
-        embed = discord.Embed(title="✅ 전체 즉시 완료 처리", description="모든 유저의 작물과 물고기 해체가 즉시 완료 상태로 변경되었습니다.", color=discord.Color.gold())
-        await interaction.followup.send(embed=embed)
-
     # ---------------------------------------------------------------------
     # 5. 단축 커맨드 (편의성)
     # ---------------------------------------------------------------------
@@ -392,7 +365,47 @@ class RPGCommands(commands.Cog):
         embed = discord.Embed(title="🕵️ 영입소", description="함께할 동료를 찾아보세요.", color=discord.Color.blue())
         await interaction.followup.send(embed=embed, view=view)
 
-    @app_commands.command(name="관리자_길드설정", description="[관리자] 길드 등급을 설정하고 가입 처리합니다.")
+    # ---------------------------------------------------------------------
+    # 6. 관리자 커맨드 그룹
+    # ---------------------------------------------------------------------
+    @admin.command(name="지급", description="[관리자] 특정 유저에게 재화를 지급합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(currency=[
+        app_commands.Choice(name="돈", value="money"),
+        app_commands.Choice(name="포인트", value="pt"),
+    ])
+    async def admin_give_currency(self, interaction: discord.Interaction, target: discord.User, currency: str, amount: int):
+        await interaction.response.defer(ephemeral=False)
+        target_data = await get_user_data(target.id, target.display_name)
+        
+        target_data[currency] = target_data.get(currency, 0) + amount
+        await save_user_data(target.id, target_data)
+        
+        unit = "원" if currency == "money" else "pt"
+        embed = discord.Embed(title="✅ 관리자 지급 완료", description=f"**{target.display_name}**님에게 재화를 지급했습니다.", color=discord.Color.gold())
+        embed.add_field(name="지급액", value=f"{amount:,}{unit}", inline=False)
+        await interaction.followup.send(embed=embed)
+
+    @admin.command(name="전체즉시완료", description="[관리자] 모든 유저의 작물 성장 및 물고기 해체를 즉시 완료시킵니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def admin_complete_all(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                # 1. 모든 심어진 작물을 수확 가능 단계(3)로 변경
+                await cur.execute("UPDATE garden_slots SET stage = 3 WHERE planted = TRUE")
+                
+                # 2. 모든 물고기 해체 시작 카운트를 과거로 돌려 즉시 완료 처리
+                await cur.execute("UPDATE fishing_slots SET start_count = start_count - 1000")
+                
+                await conn.commit()
+        
+        embed = discord.Embed(title="✅ 전체 즉시 완료 처리", description="모든 유저의 작물과 물고기 해체가 즉시 완료 상태로 변경되었습니다.", color=discord.Color.gold())
+        await interaction.followup.send(embed=embed)
+
+
+    @admin.command(name="길드설정", description="[관리자] 길드 등급을 설정하고 가입 처리합니다.")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.choices(rank=[
         app_commands.Choice(name="Bronze", value="Bronze"),
@@ -429,6 +442,27 @@ class RPGCommands(commands.Cog):
             
         await save_user_data(interaction.user.id, user_data)
         await interaction.followup.send(msg)
+
+    @admin.command(name="모의레이드", description="[관리자] 선택한 등급의 레이드를 즉시 시작합니다 (1인 모의전).")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(rank=[
+        app_commands.Choice(name="Gold", value="Gold"),
+        app_commands.Choice(name="Platinum", value="Platinum"),
+        app_commands.Choice(name="Diamond", value="Diamond"),
+    ])
+    async def admin_mock_raid(self, interaction: discord.Interaction, rank: str):
+        await interaction.response.defer(ephemeral=False)
+        
+        user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
+        members = {
+            interaction.user.id: {
+                "user": interaction.user, "data": user_data, "ready": True
+            }
+        }
+        boss = get_raid_boss(rank)
+        battle_view = RaidBattleView(members, boss, self.save_wrapper, rank)
+        msg = await interaction.followup.send(content="⚔️ **모의 레이드 전투 시작!**", embed=battle_view.get_embed(), view=battle_view)
+        battle_view.message = msg
 
 async def setup(bot):
     await bot.add_cog(RPGCommands(bot))

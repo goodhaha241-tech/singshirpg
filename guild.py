@@ -1204,6 +1204,7 @@ class RaidPartyView(View):
         self.host = host
         self.save_func = save_func
         self.members = {host.id: {"user": host, "data": host_data, "ready": True}} # {id: {user, data, ready}}
+        self.message = None
         self.rank = host_data.get("guild_rank", "Gold")
         self.boss = get_raid_boss(self.rank)
         self.message = None
@@ -1247,6 +1248,7 @@ class RaidPartyView(View):
         # 전투 뷰로 전환
         battle_view = RaidBattleView(self.members, self.boss, self.save_func, self.rank)
         await interaction.response.edit_message(content="⚔️ **레이드 전투 시작!**", embed=battle_view.get_embed(), view=battle_view)
+        battle_view.message = await interaction.original_response()
 
     @discord.ui.button(label="나가기", style=discord.ButtonStyle.secondary)
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1267,6 +1269,11 @@ class RaidBattleView(View):
         self.rank = rank
         self.turn = 1
         self.logs = []
+        # [Fix] 보스 객체에 상태이상 속성 초기화
+        if not hasattr(self.boss, "status_effects"):
+            self.boss.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
+
+        self.message = None
         
         # 플레이어 객체 초기화
         self.players = {} # {uid: CharacterObj}
@@ -1322,28 +1329,22 @@ class RaidBattleView(View):
             return await interaction.response.send_message("이미 카드를 선택했습니다.", ephemeral=True)
 
         # 개인용 선택 뷰
-        from pvp import PVPSelectView # 재사용
-        # PVPSelectView는 battle_view.receive_action을 호출함. 호환성을 위해 래퍼 필요하거나 수정 필요.
-        # 여기서는 간단히 직접 구현
         view = RaidCardSelector(self, uid, char)
         await interaction.response.send_message("사용할 카드를 선택하세요.", view=view, ephemeral=True)
 
-    async def receive_selection(self, uid, card):
+    async def receive_selection(self, uid, card, interaction):
         self.selections[uid] = card
         
         # 모든 생존 플레이어가 선택했는지 확인
         alive_count = sum(1 for p in self.players.values() if p.current_hp > 0)
         if len(self.selections) >= alive_count:
-            await self.process_turn()
+            await self.process_turn(interaction)
         else:
             # 갱신 (누가 선택했는지 보여주기 위해)
-            # 메시지 객체를 저장해두지 않았으므로 interaction을 통해 갱신해야 하는데,
-            # 여기서는 마지막 interaction을 저장하거나 해야 함. 
-            # 간단히: receive_selection은 interaction context가 없으므로 
-            # open_selector의 interaction을 저장해두거나, process_turn에서 일괄 처리.
-            pass
+            if self.message:
+                await self.message.edit(embed=self.get_embed())
 
-    async def process_turn(self):
+    async def process_turn(self, interaction):
         # 턴 처리 로직
         self.logs = [f"--- Turn {self.turn} ---"]
         
@@ -1385,12 +1386,12 @@ class RaidBattleView(View):
         
         # 3. 결과 판정
         if self.boss.current_hp <= 0:
-            await self.end_raid(win=True)
+            await self.end_raid(win=True, interaction=interaction)
             return
             
         alive_count = sum(1 for p in self.players.values() if p.current_hp > 0)
         if alive_count == 0:
-            await self.end_raid(win=False)
+            await self.end_raid(win=False, interaction=interaction)
             return
             
         # 다음 턴 준비
@@ -1398,13 +1399,11 @@ class RaidBattleView(View):
         self.selections = {}
         # 메시지 갱신은 interaction이 필요함. 
         # Discord UI 한계상, 마지막으로 상호작용한 interaction을 저장해두거나, 
-        # 채널에 새 메시지를 보내는 방식을 써야 함. 여기서는 채널에 새 메시지 전송.
-        # (self.message를 업데이트하려면 interaction.message.edit 필요)
-        # 편의상 process_turn을 호출한 interaction이 없으므로, 
-        # RaidCardSelector에서 process_turn을 호출할 때 interaction을 넘겨받도록 구조 변경 필요.
-        # 하지만 코드 복잡도를 줄이기 위해 생략하고, 실제로는 interaction을 전달받아야 함.
+        # RaidCardSelector에서 interaction을 전달받아 사용.
+        self.update_buttons()
+        await self.message.edit(embed=self.get_embed(), view=self)
 
-    async def end_raid(self, win):
+    async def end_raid(self, win, interaction):
         embed = discord.Embed(title="레이드 종료", color=discord.Color.gold() if win else discord.Color.dark_grey())
         if win:
             embed.description = f"🎉 **{self.boss.name}** 토벌 성공!"
@@ -1422,8 +1421,7 @@ class RaidBattleView(View):
             embed.description = "☠️ 전멸했습니다..."
             
         # 채널에 전송 (self.message가 있다면 edit, 아니면 send)
-        # 여기서는 구현 생략
-        pass
+        await self.message.edit(content=None, embed=embed, view=None)
 
 class RaidCardSelector(View):
     def __init__(self, battle_view, uid, char):
@@ -1440,20 +1438,13 @@ class RaidCardSelector(View):
         async def cb(interaction):
             from cards import get_card
             card = get_card(name)
-            await self.battle_view.receive_selection(self.uid, card)
+            await self.battle_view.receive_selection(self.uid, card, interaction)
             await interaction.response.edit_message(content=f"✅ **{name}** 선택 완료! 다른 파티원을 기다립니다.", view=None)
             
             # 마지막 선택자였다면 턴 진행 (여기서 interaction을 넘겨서 갱신 가능하게 함)
             alive = sum(1 for p in self.battle_view.players.values() if p.current_hp > 0)
             if len(self.battle_view.selections) >= alive:
-                await self.battle_view.process_turn()
-                # 턴 처리 후 메인 메시지 갱신
-                try:
-                    # battle_view가 메시지 객체를 가지고 있다고 가정하거나, 
-                    # interaction.message.edit은 ephemeral 메시지라 안됨.
-                    # 원래 메시지를 찾아서 수정해야 함.
-                    pass 
-                except: pass
+                await self.battle_view.process_turn(interaction)
         return cb
 
 # --- 7. 길드 창고 ---
