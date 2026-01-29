@@ -62,7 +62,17 @@ class GuildMainView(View):
         if "activities" not in g_data:
             g_data["activities"] = {"process": 0, "refine": 0, "delivery": 0, "host_coop": 0, "join_coop": 0, "shop_soldout": 0}
         if "daily_delivery" not in g_data:
-            g_data["daily_delivery"] = {"date": "", "done": False, "items": {}}
+            g_data["daily_delivery"] = {"date": "", "count": 0, "refresh_count": 0, "items": {}}
+        # [신규] 구버전 데이터 호환 (done -> count)
+        if "done" in g_data["daily_delivery"]:
+            if g_data["daily_delivery"]["done"]:
+                g_data["daily_delivery"]["count"] = 2
+            else:
+                g_data["daily_delivery"]["count"] = 0
+            del g_data["daily_delivery"]["done"]
+        # [신규] refresh_count 호환
+        if "refresh_count" not in g_data["daily_delivery"]:
+            g_data["daily_delivery"]["refresh_count"] = 0
         if "daily_shop" not in g_data:
             g_data["daily_shop"] = {"date": "", "stock": {}}
         
@@ -71,10 +81,12 @@ class GuildMainView(View):
         
         if g_data["daily_delivery"].get("date") != today:
             g_data["daily_delivery"] = {
-                "date": today, "done": False, 
+                "date": today, "count": 0, "refresh_count": 0,
                 "items": self._generate_daily_delivery()
             }
-        
+        # [신규] 납품 완료 후 목록이 비었으면 새로 생성
+        elif not g_data["daily_delivery"].get("items") and g_data["daily_delivery"].get("count", 0) < 2:
+             g_data["daily_delivery"]["items"] = self._generate_daily_delivery()
         if g_data["daily_shop"].get("date") != today:
              g_data["daily_shop"] = {
                 "date": today,
@@ -84,13 +96,13 @@ class GuildMainView(View):
     def _generate_daily_delivery(self):
         # 랜덤 납품 목록 생성 (일반템 2종, 희귀템 1종)
         req = {}
-        # 일반 아이템 풀 (길드 자재 제외)
-        common_pool = [i for i in COMMON_ITEMS if "토큰" not in i and "목재" not in i and "철괴" not in i]
+        # 일반 아이템 풀 (길드 자재, 상자, 열쇠 제외)
+        common_pool = [i for i in COMMON_ITEMS if "토큰" not in i and "목재" not in i and "철괴" not in i and "상자" not in i and "열쇠" not in i]
         for _ in range(2):
             item = random.choice(common_pool)
             req[item] = random.randint(5, 15)
         
-        rare_pool = [i for i in RARE_ITEMS if "토큰" not in i]
+        rare_pool = [i for i in RARE_ITEMS if "토큰" not in i and "열쇠" not in i]
         req[random.choice(rare_pool)] = random.randint(1, 3)
         return req
 
@@ -274,14 +286,30 @@ class GuildWorkView(View):
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
+
+    def _generate_daily_delivery(self):
+        # 랜덤 납품 목록 생성 (일반템 2종, 희귀템 1종)
+        req = {}
+        # 일반 아이템 풀 (길드 자재, 상자, 열쇠 제외)
+        common_pool = [i for i in COMMON_ITEMS if "토큰" not in i and "목재" not in i and "철괴" not in i and "상자" not in i and "열쇠" not in i]
+        for _ in range(2):
+            item = random.choice(common_pool)
+            req[item] = random.randint(5, 15)
+        
+        rare_pool = [i for i in RARE_ITEMS if "토큰" not in i and "열쇠" not in i]
+        req[random.choice(rare_pool)] = random.randint(1, 3)
+        return req
     
     @discord.ui.button(label="📦 오늘의 자재 납품", style=discord.ButtonStyle.primary)
     async def daily_delivery(self, interaction: discord.Interaction, button: discord.ui.Button):
         g_data = self.user_data["guild_data"]
         delivery = g_data["daily_delivery"]
         
-        if delivery["done"]:
-            return await interaction.response.send_message("✅ 오늘은 이미 납품을 완료했습니다.", ephemeral=True)
+        if delivery.get("count", 0) >= 2:
+            return await interaction.response.send_message("✅ 오늘은 납품을 모두 완료했습니다.", ephemeral=True)
+        
+        if not delivery.get("items"):
+            return await interaction.response.send_message("❌ 납품 목록을 불러올 수 없습니다. 길드 메인 화면을 다시 열어주세요.", ephemeral=True)
         
         # 등급별 추가 요구사항 (간소화: 기본 생성된 items에 추가 로직은 생략하고 보상만 차등 지급)
         rank = self.user_data.get("guild_rank")
@@ -302,7 +330,8 @@ class GuildWorkView(View):
             inv[item] -= count
             if inv[item] <= 0: del inv[item]
             
-        delivery["done"] = True
+        delivery["count"] = delivery.get("count", 0) + 1
+        delivery["items"] = {} # 목록 비우기 -> 다음에 길드창 열 때 재생성됨
         g_data["activities"]["delivery"] += 1
         
         # 보상 지급
@@ -322,9 +351,40 @@ class GuildWorkView(View):
         if rank in ["Platinum", "Diamond"]:
             tokens["sorcery"] += 30 + bonus
             msg += ", (주술 토큰 +30)"
-            
+        
+        if delivery["count"] < 2:
+            msg += f"\n\n✅ 다음 납품이 생성되었습니다! ({delivery['count']}/2)"
+        else:
+            msg += "\n\n✅ 오늘의 납품을 모두 완료했습니다!"
+
         await self.save_func(self.author.id, self.user_data)
         await interaction.response.send_message(msg, ephemeral=True)
+
+    @discord.ui.button(label="🔄 납품 새로고침 (300pt)", style=discord.ButtonStyle.danger)
+    async def refresh_delivery(self, interaction: discord.Interaction, button: discord.ui.Button):
+        g_data = self.user_data["guild_data"]
+        delivery_data = g_data["daily_delivery"]
+        
+        if delivery_data.get("refresh_count", 0) >= 2:
+            return await interaction.response.send_message("❌ 오늘은 더 이상 새로고침할 수 없습니다.", ephemeral=True)
+            
+        if self.user_data.get("pt", 0) < 300:
+            return await interaction.response.send_message("❌ 포인트가 부족합니다. (300pt 필요)", ephemeral=True)
+            
+        if delivery_data.get("count", 0) >= 2:
+            return await interaction.response.send_message("✅ 오늘은 납품을 모두 완료하여 새로고침할 수 없습니다.", ephemeral=True)
+
+        self.user_data["pt"] -= 300
+        delivery_data["refresh_count"] = delivery_data.get("refresh_count", 0) + 1
+        delivery_data["items"] = self._generate_daily_delivery()
+
+        await self.save_func(self.author.id, self.user_data)
+        
+        req_str = "\n".join([f"- {k} x{v}" for k,v in delivery_data["items"].items()])
+        await interaction.response.send_message(
+            f"🔄 납품 목록을 새로고침했습니다! (남은 횟수: {2 - delivery_data['refresh_count']}회)\n\n**[신규 납품 목록]**\n{req_str}", 
+            ephemeral=True
+        )
 
     @discord.ui.button(label="🪵 자재 가공/정제", style=discord.ButtonStyle.secondary)
     async def process_material(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1404,8 +1464,8 @@ class GuildWarehouseView(View):
         self.user_data = user_data
         self.save_func = save_func
         self.page = 0
-        self.items = [] # (id, depositor_id, depositor_name, item_name, quantity, created_at)
-        self.PER_PAGE = 5
+        self.items = [] # (id, depositor_id, depositor_name, item_name, quantity, artifact_data, created_at)
+        self.PER_PAGE = 7
 
     async def refresh_ui(self, interaction: discord.Interaction):
         pool = await get_db_pool()
@@ -1436,10 +1496,32 @@ class GuildWarehouseView(View):
             current_items = self.items[start:end]
             
             for item in current_items:
-                # item: (id, dep_id, dep_name, name, qty, time)
+                # item: (id, dep_id, dep_name, name, qty, artifact_data, time)
+                item_name = item[3]
+                item_value = f"기증자: {item[2]}"
+                is_artifact = item[5] is not None
+                if is_artifact:
+                    try:
+                        art_data = json.loads(item[5])
+                        level = art_data.get('level', 0)
+                        item_name = f"🔮 {art_data.get('name', item_name)}"
+                        if level > 0:
+                            item_name += f" (+{level})"
+                        
+                        stats = art_data.get('stats', {})
+                        desc_parts = []
+                        stat_map = {"max_hp": "체력", "max_mental": "정신력", "attack": "공격력", "defense": "방어력", "defense_rate": "피해감소"}
+                        for k, v in stats.items():
+                            if v > 0:
+                                unit = "%" if k == "defense_rate" else ""
+                                desc_parts.append(f"{stat_map.get(k, k)} +{v}{unit}")
+                        if desc_parts:
+                            item_value += "\n" + " | ".join(desc_parts)
+                    except (json.JSONDecodeError, TypeError):
+                        item_name = f"🔮 {item_name} (데이터 오류)"
                 embed.add_field(
-                    name=f"📦 {item[3]} x{item[4]}",
-                    value=f"기증자: {item[2]}",
+                    name=f"📦 {item_name} x{item[4]}",
+                    value=item_value,
                     inline=False
                 )
             embed.set_footer(text=f"페이지 {self.page+1}/{total_pages}")
@@ -1460,13 +1542,36 @@ class GuildWarehouseView(View):
             
             options = []
             for item in current_items:
+                item_name = item[3]
+                item_desc = f"기증자: {item[2]}"
+                is_artifact = item[5] is not None
+                if is_artifact:
+                    try:
+                        art_data = json.loads(item[5])
+                        level = art_data.get('level', 0)
+                        item_name = f"🔮 {art_data.get('name', item_name)}"
+                        if level > 0:
+                            item_name += f" (+{level})"
+                        
+                        stats = art_data.get('stats', {})
+                        desc_parts = []
+                        stat_map = {"max_hp": "체", "max_mental": "정", "attack": "공", "defense": "방", "defense_rate": "피감"}
+                        for k, v in stats.items():
+                            if v > 0:
+                                unit = "%" if k == "defense_rate" else ""
+                                desc_parts.append(f"{stat_map.get(k, k)}{v}{unit}")
+                        if desc_parts:
+                            item_desc += " | " + " ".join(desc_parts)
+                    except (json.JSONDecodeError, TypeError):
+                        item_name = f"🔮 {item_name} (데이터 오류)"
                 options.append(discord.SelectOption(
-                    label=f"{item[3]} x{item[4]}",
-                    description=f"기증자: {item[2]}",
+                    label=f"{item_name} x{item[4]}",
+                    description=item_desc[:100], # description has a 100 character limit
                     value=str(item[0])
                 ))
             
-            select = Select(placeholder="꺼낼 아이템 선택", options=options, custom_id="withdraw")
+            # Allow multi-select for withdrawing items
+            select = Select(placeholder="꺼낼 아이템 선택 (여러 개 선택 가능)", options=options, custom_id="withdraw", max_values=min(25, len(options)))
             select.callback = self.withdraw_callback
             self.add_item(select)
             
@@ -1478,7 +1583,7 @@ class GuildWarehouseView(View):
     async def interaction_check(self, interaction: discord.Interaction):
         cid = interaction.data.get("custom_id")
         if cid == "deposit":
-            await interaction.response.send_modal(WarehouseDepositModal(self.author, self.user_data, self.save_func, self))
+            await interaction.response.send_message("📥 넣을 아이템을 선택하세요.", view=WarehouseDepositSelectView(self.author, self.user_data, self.save_func, self), ephemeral=True)
         elif cid == "prev":
             self.page -= 1
             await self.refresh_ui(interaction)
@@ -1488,67 +1593,222 @@ class GuildWarehouseView(View):
         return True
 
     async def withdraw_callback(self, interaction: discord.Interaction):
-        item_id = int(interaction.data['values'][0])
+        item_ids = interaction.data['values'] # This is now a list
+        
+        pool = await get_db_pool()
+        withdrawn_items = []
+        failed_items = 0
+
+        for item_id_str in item_ids:
+            item_id = int(item_id_str)
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    # 아이템 존재 확인 및 삭제 (동시성 처리)
+                    await cur.execute("SELECT item_name, quantity, artifact_data FROM guild_warehouse WHERE id=%s FOR UPDATE", (item_id,))
+                    row = await cur.fetchone()
+                    
+                    if not row:
+                        failed_items += 1
+                        continue
+                    
+                    await cur.execute("DELETE FROM guild_warehouse WHERE id=%s", (item_id,))
+                    await conn.commit()
+                    
+                    name, qty, artifact_data = row
+                    
+                    # 인벤토리/아티팩트 지급
+                    if artifact_data:
+                        try:
+                            art = json.loads(artifact_data)
+                            self.user_data.setdefault("artifacts", []).append(art)
+                            withdrawn_items.append(f"🔮 {art['name']}")
+                        except json.JSONDecodeError:
+                            failed_items += 1
+                            continue
+                    else:
+                        inv = self.user_data.setdefault("inventory", {})
+                        inv[name] = inv.get(name, 0) + qty
+                        withdrawn_items.append(f"📦 {name} x{qty}")
+
+        if withdrawn_items:
+            await self.save_func(self.author.id, self.user_data)
+
+        msg_parts = []
+        if withdrawn_items:
+            msg_parts.append(f"✅ 다음 아이템을 창고에서 꺼냈습니다:\n" + "\n".join(withdrawn_items))
+        if failed_items > 0:
+            msg_parts.append(f"❌ {failed_items}개의 아이템은 다른 사람이 먼저 가져갔거나 오류가 발생했습니다.")
+            
+        final_msg = "\n\n".join(msg_parts)
+        if not final_msg:
+            final_msg = "❌ 아이템을 꺼내지 못했습니다."
+
+        await interaction.response.send_message(final_msg, ephemeral=True)
+        await self.refresh_ui(interaction)
+
+class WarehouseDepositAmountModal(Modal):
+    def __init__(self, author, user_data, save_func, parent_view, item_name):
+        super().__init__(title=f"'{item_name}' 수량 입력")
+        self.author = author
+        self.user_data = user_data
+        self.save_func = save_func
+        self.parent_view = parent_view # This is WarehouseDepositSelectView
+        self.item_name = item_name
+
+        self.quantity = TextInput(label="수량", placeholder="숫자 또는 '전부'", required=True)
+        self.add_item(self.quantity)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
+        inv = self.user_data.get("inventory", {})
+        current_qty = inv.get(self.item_name, 0)
+        
+        qty_str = self.quantity.value.strip().lower()
+        try:
+            qty = current_qty if qty_str in ['all', '전부'] else int(qty_str)
+        except ValueError:
+            return await interaction.response.send_message("❌ 수량은 숫자 또는 '전부'여야 합니다.", ephemeral=True)
+        
+        if qty <= 0: return await interaction.response.send_message("❌ 1개 이상 넣어야 합니다.", ephemeral=True)
+        if current_qty < qty: return await interaction.response.send_message(f"❌ 아이템이 부족합니다. (보유: {current_qty}개)", ephemeral=True)
+            
+        inv[self.item_name] -= qty
+        if inv[self.item_name] <= 0: del inv[self.item_name]
         
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                # 아이템 존재 확인 및 삭제 (동시성 처리)
-                await cur.execute("SELECT item_name, quantity FROM guild_warehouse WHERE id=%s", (item_id,))
-                row = await cur.fetchone()
-                
-                if not row:
-                    return await interaction.response.send_message("❌ 이미 누군가 가져갔거나 존재하지 않는 아이템입니다.", ephemeral=True)
-                
-                await cur.execute("DELETE FROM guild_warehouse WHERE id=%s", (item_id,))
+                await cur.execute("INSERT INTO guild_warehouse (depositor_id, depositor_name, item_name, quantity, artifact_data) VALUES (%s, %s, %s, %s, %s)", (self.author.id, self.author.display_name, self.item_name, qty, None))
                 await conn.commit()
-                
-                # 인벤토리 지급
-                name, qty = row
-                inv = self.user_data.setdefault("inventory", {})
-                inv[name] = inv.get(name, 0) + qty
-                await self.save_func(self.author.id, self.user_data)
-                
-                await interaction.response.send_message(f"✅ **{name} x{qty}**을(를) 창고에서 꺼냈습니다.", ephemeral=True)
-                await self.refresh_ui(interaction)
+        
+        await self.save_func(self.author.id, self.user_data)
+        await interaction.response.send_message(f"✅ **{self.item_name} x{qty}**을(를) 창고에 넣었습니다.", ephemeral=True)
+        await self.parent_view.parent_view.refresh_ui(interaction)
 
-class WarehouseDepositModal(Modal):
+class WarehouseDepositSelectView(View):
     def __init__(self, author, user_data, save_func, parent_view):
-        super().__init__(title="길드 창고 입고")
+        super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
         self.parent_view = parent_view
-        
-        self.item_name = TextInput(label="아이템 이름", placeholder="정확히 입력하세요", required=True)
-        self.quantity = TextInput(label="수량", placeholder="숫자 입력", required=True)
-        self.add_item(self.item_name)
-        self.add_item(self.quantity)
+        self.page = 0
+        self.PER_PAGE = 7
+        self.item_type = "item"
+        self.update_components()
 
-    async def on_submit(self, interaction: discord.Interaction):
-        item = self.item_name.value.strip()
-        try: qty = int(self.quantity.value)
-        except: return await interaction.response.send_message("❌ 수량은 숫자여야 합니다.", ephemeral=True)
+    def update_components(self):
+        self.clear_items()
+        self.add_item(discord.ui.Button(label="일반 아이템", style=discord.ButtonStyle.primary if self.item_type == "item" else discord.ButtonStyle.secondary, custom_id="switch_item", row=0))
+        self.add_item(discord.ui.Button(label="아티팩트", style=discord.ButtonStyle.primary if self.item_type == "artifact" else discord.ButtonStyle.secondary, custom_id="switch_artifact", row=0))
+
+        options = []
+        total_pages = 1
+        max_vals = 1
+
+        if self.item_type == "item":
+            items = sorted(self.user_data.get("inventory", {}).items())
+            total_pages = (len(items) - 1) // self.PER_PAGE + 1 if items else 1
+            start, end = self.page * self.PER_PAGE, (self.page + 1) * self.PER_PAGE
+            paged_items = items[start:end]
+            for name, qty in paged_items:
+                options.append(discord.SelectOption(label=f"{name} (x{qty})", value=name))
+            placeholder = f"넣을 아이템 선택 ({self.page+1}/{total_pages})"
+            max_vals = 1
+        else:
+            artifacts = self.user_data.get("artifacts", [])
+            equipped_ids = {c.get("equipped_artifact", {}).get("id") for c in self.user_data.get("characters", []) if c.get("equipped_artifact")}
+            depositable_artifacts = [(idx, art) for idx, art in enumerate(artifacts) if art.get("id") not in equipped_ids]
+            total_pages = (len(depositable_artifacts) - 1) // self.PER_PAGE + 1 if depositable_artifacts else 1
+            start, end = self.page * self.PER_PAGE, (self.page + 1) * self.PER_PAGE
+            paged_artifacts = depositable_artifacts[start:end]
+            for idx, art in paged_artifacts:
+                level = art.get('level', 0)
+                label = f"🔮 {art['name']}"
+                if level > 0:
+                    label += f" (+{level})"
+                
+                stats = art.get('stats', {})
+                desc_parts = []
+                stat_map = {"max_hp": "체", "max_mental": "정", "attack": "공", "defense": "방", "defense_rate": "피감"}
+                for k, v in stats.items():
+                    if v > 0:
+                        unit = "%" if k == "defense_rate" else ""
+                        desc_parts.append(f"{stat_map.get(k, k)}{v}{unit}")
+                
+                desc = " | ".join(desc_parts)
+                options.append(discord.SelectOption(label=label, value=f"art_{idx}", description=desc[:100]))
+            placeholder = f"넣을 아티팩트 선택 ({self.page+1}/{total_pages})"
+            max_vals = min(25, len(paged_artifacts))
+
+        if not options:
+            options.append(discord.SelectOption(label="넣을 수 있는 아이템이 없습니다.", value="none"))
+            max_vals = 1
         
-        if qty <= 0: return await interaction.response.send_message("❌ 1개 이상 넣어야 합니다.", ephemeral=True)
+        self.add_item(discord.ui.Select(
+            placeholder=placeholder, 
+            options=options[:25], 
+            custom_id="deposit_select", 
+            row=1,
+            max_values=max_vals
+        ))
+
+        if total_pages > 1:
+            self.add_item(discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, row=2, disabled=(self.page == 0), custom_id="prev_page"))
+            self.add_item(discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, row=2, disabled=(self.page >= total_pages - 1), custom_id="next_page"))
+
+        self.add_item(discord.ui.Button(label="⬅️ 창고로", style=discord.ButtonStyle.gray, row=3, custom_id="back"))
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author.id: return False
+        cid = interaction.data.get("custom_id")
         
-        inv = self.user_data.get("inventory", {})
-        if inv.get(item, 0) < qty:
-            return await interaction.response.send_message(f"❌ 아이템이 부족합니다. (보유: {inv.get(item, 0)}개)", ephemeral=True)
-            
-        # 차감 및 DB 저장
-        inv[item] -= qty
-        if inv[item] <= 0: del inv[item]
-        await self.save_func(self.author.id, self.user_data)
+        if cid == "switch_item": self.item_type = "item"; self.page = 0
+        elif cid == "switch_artifact": self.item_type = "artifact"; self.page = 0
+        elif cid == "prev_page": self.page -= 1
+        elif cid == "next_page": self.page += 1
+        elif cid == "back": return await self.parent_view.refresh_ui(interaction)
         
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("""
-                    INSERT INTO guild_warehouse (depositor_id, depositor_name, item_name, quantity)
-                    VALUES (%s, %s, %s, %s)
-                """, (self.author.id, self.author.display_name, item, qty))
-                await conn.commit()
+        self.update_components()
+        await interaction.response.edit_message(view=self)
+        return True
+
+    @discord.ui.select(custom_id="deposit_select")
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        item_keys = select.values
+        if not item_keys or "none" in item_keys:
+            await interaction.response.defer()
+            return
+
+        # To prevent race conditions and ensure data consistency
+        self.user_data = await get_user_data(self.author.id, self.author.display_name)
         
-        await interaction.response.send_message(f"✅ **{item} x{qty}**을(를) 창고에 넣었습니다.", ephemeral=True)
-        await self.parent_view.refresh_ui(interaction)
+        # Separate keys for artifacts and regular items
+        art_keys = [k for k in item_keys if k.startswith("art_")]
+        item_names = [k for k in item_keys if not k.startswith("art_")]
+
+        if item_names:
+            await interaction.response.send_modal(WarehouseDepositAmountModal(self.author, self.user_data, self.save_func, self, item_names[0]))
+            return
+
+        if art_keys:
+            deposited_items_log = []
+            pool = await get_db_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    art_indices_to_pop = sorted([int(k.replace("art_", "")) for k in art_keys], reverse=True)
+                    original_artifacts = self.user_data.get("artifacts", [])
+                    for art_idx in art_indices_to_pop:
+                        if art_idx < len(original_artifacts):
+                            artifact = original_artifacts.pop(art_idx)
+                            await cur.execute("INSERT INTO guild_warehouse (depositor_id, depositor_name, item_name, quantity, artifact_data) VALUES (%s, %s, %s, %s, %s)", (self.author.id, self.author.display_name, artifact['name'], 1, json.dumps(artifact)))
+                            deposited_items_log.append(f"🔮 {artifact['name']}")
+                    await conn.commit()
+
+            if deposited_items_log:
+                await self.save_func(self.author.id, self.user_data)
+                msg = "✅ 다음 아이템을 창고에 넣었습니다:\n" + "\n".join(deposited_items_log)
+                await interaction.response.send_message(msg, ephemeral=True)
+                await self.parent_view.refresh_ui(interaction)
+            else:
+                await interaction.response.send_message("❌ 아티팩트를 넣지 못했습니다.", ephemeral=True)

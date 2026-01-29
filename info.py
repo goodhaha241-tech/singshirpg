@@ -107,7 +107,7 @@ class InfoMainView(discord.ui.View):
             item_str = f"**{item_name}** x{count}" if target == "special" else f"{item_name} x{count}"
             categories[target]["items"].append(item_str)
 
-        ITEMS_PER_PAGE = 8
+        ITEMS_PER_PAGE = 7
         pages_data = []
         for key in ["consumable", "crafted", "box", "special", "material"]:
             items = categories[key]["items"]
@@ -244,7 +244,7 @@ class InfoView(discord.ui.View):
             item_str = f"**{item_name}** x{count}" if target == "special" else f"{item_name} x{count}"
             categories[target]["items"].append(item_str)
 
-        ITEMS_PER_PAGE = 8
+        ITEMS_PER_PAGE = 7
         pages_data = []
         for key in ["consumable", "crafted", "box", "special", "material"]:
             items = categories[key]["items"]

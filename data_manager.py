@@ -173,16 +173,35 @@ async def check_schema(pool):
             
             # guild_warehouse 테이블 확인 (없으면 생성)
             try:
-                await cur.execute("SELECT 1 FROM guild_warehouse LIMIT 1")
+                await cur.execute("DESCRIBE guild_warehouse")
+                gw_cols = [r[0] for r in await cur.fetchall()]
+                if "artifact_data" not in gw_cols:
+                    logger.warning("⚠️ 'guild_warehouse' 테이블에 'artifact_data' 컬럼 추가 중...")
+                    await cur.execute("ALTER TABLE guild_warehouse ADD COLUMN artifact_data JSON")
+                
+                # [신규] quantity 컬럼 타입 확인 및 BIGINT로 변경
+                await cur.execute("SHOW COLUMNS FROM guild_warehouse WHERE Field = 'quantity'")
+                col_info = await cur.fetchone()
+                if col_info and col_info[1] and not col_info[1].startswith(b'bigint'):
+                    logger.warning("⚠️ 'guild_warehouse' 테이블의 'quantity' 컬럼을 BIGINT로 확장합니다.")
+                    await cur.execute("ALTER TABLE guild_warehouse MODIFY COLUMN quantity BIGINT")
+                
+                # [추가] id 컬럼 타입 확인 및 BIGINT로 변경
+                await cur.execute("SHOW COLUMNS FROM guild_warehouse WHERE Field = 'id'")
+                id_col_info = await cur.fetchone()
+                if id_col_info and id_col_info[1] and not id_col_info[1].startswith(b'bigint'):
+                    logger.warning("⚠️ 'guild_warehouse' 테이블의 'id' 컬럼을 BIGINT로 확장합니다.")
+                    await cur.execute("ALTER TABLE guild_warehouse MODIFY COLUMN id BIGINT AUTO_INCREMENT")
             except (aiomysql.Error, Exception):
                 logger.warning("⚠️ 'guild_warehouse' 테이블이 없어 생성합니다.")
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS guild_warehouse (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
                         depositor_id BIGINT,
                         depositor_name VARCHAR(100),
                         item_name VARCHAR(100),
-                        quantity INT,
+                        quantity BIGINT,
+                        artifact_data JSON,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
