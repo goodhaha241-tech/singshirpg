@@ -11,20 +11,19 @@ from data_manager import get_db_pool, get_user_data, save_user_data
 from decorators import auto_defer
 
 # [각 기능별 View 임포트]
-# 파일이 없거나 이름이 다를 경우 에러가 날 수 있으니 파일명을 확인해주세요.
 from myhome import MyHomeView
 from investigation import InvestigationView
 from shop import ShopView
-from trade import CafeView              # 카페
-from crafting import CraftView          # 제작
-from subjugation import SubjugationRegionView # 던전
-from guild import GuildMainView, RaidBattleView         # [신규] 길드
-from recruitment import RecruitSelectView # 영입
-from use_item import ItemUseView        # 사용 (아이템 사용)
-from card_manager import CardManageView # 카드
-from pvp import PVPInviteView           # 대련
-from info import InfoView               # [수정] InfoView 임포트 추가
-from story import MainStoryView         # [수정] MainStoryView 임포트 추가
+from trade import CafeView
+from crafting import CraftView
+from subjugation import SubjugationRegionView
+from guild import GuildMainView, RaidBattleView
+from recruitment import RecruitSelectView
+from use_item import ItemUseView
+from card_manager import CardManageView
+from pvp import PVPInviteView
+from info import InfoView
+from story import MainStoryView
 from monsters import get_raid_boss
 
 # ==============================================================================
@@ -40,8 +39,6 @@ class StatusMenuView(discord.ui.View):
     @discord.ui.button(label="정보", style=discord.ButtonStyle.primary, emoji="📜")
     @auto_defer(reload_data=True)
     async def info_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        
-        # 정보 임베드 생성
         char_list = self.user_data.get("characters", [])
         idx = self.user_data.get("investigator_index", 0)
         if idx >= len(char_list): idx = 0
@@ -66,7 +63,6 @@ class StatusMenuView(discord.ui.View):
     @discord.ui.button(label="카드", style=discord.ButtonStyle.secondary, emoji="🃏")
     @auto_defer(reload_data=True)
     async def card_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 카드 관리는 캐릭터 인덱스 0번(대표) 기준으로 엽니다.
         view = CardManageView(self.author, self.user_data, self.save_func, char_index=0)
         await interaction.edit_original_response(content=None, embed=view.create_embed(), view=view)
 
@@ -95,7 +91,6 @@ class OutingMenuView(discord.ui.View):
     @discord.ui.button(label="대련", style=discord.ButtonStyle.primary, emoji="⚔️", custom_id="menu:outing:pvp")
     @auto_defer(reload_data=True)
     async def pvp_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # PVP는 상대방 데이터를 로드해야 하므로 load_func(get_user_data)를 넘겨줍니다.
         view = PVPInviteView(self.author, get_user_data, save_user_data)
         embed = discord.Embed(title="⚔️ 대련", description="대련 상대를 선택해주세요.", color=discord.Color.red())
         await interaction.edit_original_response(content=None, embed=embed, view=view)
@@ -117,8 +112,9 @@ class OutingMenuView(discord.ui.View):
     @discord.ui.button(label="길드", style=discord.ButtonStyle.primary, emoji="🛡️", custom_id="menu:outing:guild")
     @auto_defer(reload_data=True)
     async def guild_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = GuildMainView(self.author, self.user_data, self.save_func)
-        embed = discord.Embed(title="🛡️ 여행자 길드", description="길드 업무를 보거나 의뢰를 수행합니다.", color=discord.Color.blue())
+        # [수정] 인자 없이 초기화
+        view = GuildMainView() 
+        embed = await view.get_embed(interaction.user.id, interaction.user.display_name)
         await interaction.edit_original_response(content=None, embed=embed, view=view)
 
 # ==============================================================================
@@ -176,136 +172,90 @@ class RPGCommands(commands.Cog):
         self.bot = bot
 
     async def save_wrapper(self, user_id, user_data):
-        """View에서 호출할 DB 저장 래퍼 함수"""
         await save_user_data(user_id, user_data)
 
     # ---------------------------------------------------------------------
-    # 1. 상태 커맨드 (정보, 사용, 카드, 정비)
+    # 1. 상태 커맨드
     # ---------------------------------------------------------------------
     @app_commands.command(name="상태", description="[메뉴] 정보, 사용, 카드, 정비 기능을 엽니다.")
     async def status_menu(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=False)
-        except discord.errors.NotFound:
-            logger.error("상태 커맨드 처리 중 Unknown Interaction 발생 (만료됨)")
-            return
-            
+        try: await interaction.response.defer(ephemeral=False)
+        except: return
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-        
-        # 래퍼 함수 (user_id 고정)
         async def bound_save(uid_or_all, data=None):
-            if data is None: # 기존 방식: save_func(all_data)
-                await self.save_wrapper(interaction.user.id, user_data)
-            else: # 신규 방식: save_func(user_id, user_data)
-                await self.save_wrapper(uid_or_all, data)
-            
-        # [수정] StatusMenuView 대신 InfoView를 바로 호출하여 상세 정보를 표시
-        # InfoView에 메뉴 버튼들이 통합되었습니다.
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
+            else: await self.save_wrapper(uid_or_all, data)
         view = InfoView(interaction.user, user_data, bound_save)
         await interaction.followup.send(embed=view.create_status_embed(), view=view)
 
     # ---------------------------------------------------------------------
-    # 2. 외출 커맨드 (조사, 대련, 던전, 카페)
+    # 2. 외출 커맨드
     # ---------------------------------------------------------------------
     @app_commands.command(name="외출", description="[메뉴] 조사, 대련, 던전, 카페 기능을 엽니다.")
     async def outing_menu(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=False)
-        except discord.errors.NotFound:
-            logger.error("외출 커맨드 처리 중 Unknown Interaction 발생 (만료됨)")
-            return
-            
+        try: await interaction.response.defer(ephemeral=False)
+        except: return
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-        
         async def bound_save(uid_or_all, data=None):
-            if data is None:
-                await self.save_wrapper(interaction.user.id, user_data)
-            else:
-                await self.save_wrapper(uid_or_all, data)
-
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
+            else: await self.save_wrapper(uid_or_all, data)
         view = OutingMenuView(interaction.user, user_data, bound_save)
-        
         embed = discord.Embed(title="🚀 외출 메뉴", description="어디로 떠나시겠습니까?", color=discord.Color.red())
         await interaction.followup.send(embed=embed, view=view)
 
     # ---------------------------------------------------------------------
-    # 3. 관리 커맨드 (상점, 제작, 스토리, 영입)
+    # 3. 관리 커맨드
     # ---------------------------------------------------------------------
     @app_commands.command(name="관리", description="[메뉴] 상점, 제작, 스토리, 영입 기능을 엽니다.")
     async def manage_menu(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=False)
-        except discord.errors.NotFound:
-            logger.error("관리 커맨드 처리 중 Unknown Interaction 발생 (만료됨)")
-            return
-            
+        try: await interaction.response.defer(ephemeral=False)
+        except: return
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-        
         async def bound_save(uid_or_all, data=None):
-            if data is None:
-                await self.save_wrapper(interaction.user.id, user_data)
-            else:
-                await self.save_wrapper(uid_or_all, data)
-
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
+            else: await self.save_wrapper(uid_or_all, data)
         view = ManagementMenuView(interaction.user, user_data, bound_save)
-        
         embed = discord.Embed(title="🛠️ 관리 메뉴", description="수행할 작업을 선택해주세요.", color=discord.Color.blue())
         await interaction.followup.send(embed=embed, view=view)
 
     # ---------------------------------------------------------------------
-    # 4. 출석 (독립 커맨드)
+    # 4. 출석
     # ---------------------------------------------------------------------
     @app_commands.command(name="출석", description="매일 접속 보상을 받습니다.")
     async def checkin_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-        
         last_date_str = user_data.get("last_checkin")
         today_str = str(date.today())
-        
         if last_date_str == today_str:
             embed = discord.Embed(title="✅ 출석 완료", description="오늘은 이미 출석을 완료했습니다.", color=discord.Color.red())
             return await interaction.followup.send(embed=embed, ephemeral=True)
-        
         reward_money = 3000
         reward_pt = 10
-        
         user_data["money"] += reward_money
         user_data["pt"] += reward_pt
         user_data["last_checkin"] = today_str
-        
         await save_user_data(interaction.user.id, user_data)
-        
         embed = discord.Embed(title="📅 출석 완료!", description=f"오늘의 보상을 수령했습니다.", color=discord.Color.green())
         embed.add_field(name="💰 머니", value=f"+{reward_money:,}원", inline=True)
         embed.add_field(name="⚡ 포인트", value=f"+{reward_pt:,}pt", inline=True)
         await interaction.followup.send(embed=embed)
 
     # ---------------------------------------------------------------------
-    # 5. 단축 커맨드 (편의성)
+    # 5. 단축 커맨드
     # ---------------------------------------------------------------------
     async def _open_feature(self, interaction, view_class, title=None, desc=None, color=None):
-        """단축 커맨드용 뷰 열기 헬퍼"""
-        try:
-            await interaction.response.defer(ephemeral=False)
+        try: await interaction.response.defer(ephemeral=False)
         except: pass
-        
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
         async def bound_save(uid_or_all, data=None):
             if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
-            
         view = view_class(interaction.user, user_data, bound_save)
-        
         embed = None
-        if hasattr(view, 'get_embed'):
-            embed = view.get_embed()
-        elif hasattr(view, 'create_shop_embed'):
-            embed = view.create_shop_embed()
-            
-        if not embed and title:
-            embed = discord.Embed(title=title, description=desc, color=color)
-            
+        if hasattr(view, 'get_embed'): embed = view.get_embed()
+        elif hasattr(view, 'create_shop_embed'): embed = view.create_shop_embed()
+        if not embed and title: embed = discord.Embed(title=title, description=desc, color=color)
         await interaction.followup.send(embed=embed, view=view)
 
     @app_commands.command(name="조사", description="[단축] 조사 지역 선택 화면으로 이동합니다.")
@@ -326,7 +276,12 @@ class RPGCommands(commands.Cog):
 
     @app_commands.command(name="길드", description="[단축] 길드 화면으로 이동합니다.")
     async def shortcut_guild(self, interaction: discord.Interaction):
-        await self._open_feature(interaction, GuildMainView, "🛡️ 여행자 길드", "길드 업무를 보거나 의뢰를 수행합니다.", discord.Color.blue())
+        # [수정] _open_feature 대신 직접 처리 (인자 구조 차이)
+        try: await interaction.response.defer(ephemeral=False)
+        except: pass
+        view = GuildMainView()
+        embed = await view.get_embed(interaction.user.id, interaction.user.display_name)
+        await interaction.followup.send(embed=embed, view=view)
 
     @app_commands.command(name="대련", description="[단축] 대련 상대를 선택합니다.")
     async def shortcut_pvp(self, interaction: discord.Interaction):
@@ -344,7 +299,6 @@ class RPGCommands(commands.Cog):
         async def bound_save(uid_or_all, data=None):
             if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
-        
         view = CafeView(interaction.user, user_data, get_user_data, bound_save)
         embed = discord.Embed(title="☕ 카페", description="카페에 오신 것을 환영합니다.", color=discord.Color.gold())
         await interaction.followup.send(embed=embed, view=view)
@@ -357,16 +311,14 @@ class RPGCommands(commands.Cog):
         async def bound_save(uid_or_all, data=None):
             if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
-            
         async def back_callback(i):
             await i.response.edit_message(content="영입소를 나갔습니다.", embed=None, view=None)
-
         view = RecruitSelectView(interaction.user, user_data, bound_save, back_callback)
         embed = discord.Embed(title="🕵️ 영입소", description="함께할 동료를 찾아보세요.", color=discord.Color.blue())
         await interaction.followup.send(embed=embed, view=view)
 
     # ---------------------------------------------------------------------
-    # 6. 관리자 커맨드 그룹
+    # 6. 관리자 커맨드
     # ---------------------------------------------------------------------
     @admin.command(name="지급", description="[관리자] 특정 유저에게 재화를 지급합니다.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -377,10 +329,8 @@ class RPGCommands(commands.Cog):
     async def admin_give_currency(self, interaction: discord.Interaction, target: discord.User, currency: str, amount: int):
         await interaction.response.defer(ephemeral=False)
         target_data = await get_user_data(target.id, target.display_name)
-        
         target_data[currency] = target_data.get(currency, 0) + amount
         await save_user_data(target.id, target_data)
-        
         unit = "원" if currency == "money" else "pt"
         embed = discord.Embed(title="✅ 관리자 지급 완료", description=f"**{target.display_name}**님에게 재화를 지급했습니다.", color=discord.Color.gold())
         embed.add_field(name="지급액", value=f"{amount:,}{unit}", inline=False)
@@ -393,17 +343,11 @@ class RPGCommands(commands.Cog):
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                # 1. 모든 심어진 작물을 수확 가능 단계(3)로 변경
                 await cur.execute("UPDATE garden_slots SET stage = 3 WHERE planted = TRUE")
-                
-                # 2. 모든 물고기 해체 시작 카운트를 과거로 돌려 즉시 완료 처리
                 await cur.execute("UPDATE fishing_slots SET start_count = start_count - 1000")
-                
                 await conn.commit()
-        
         embed = discord.Embed(title="✅ 전체 즉시 완료 처리", description="모든 유저의 작물과 물고기 해체가 즉시 완료 상태로 변경되었습니다.", color=discord.Color.gold())
         await interaction.followup.send(embed=embed)
-
 
     @admin.command(name="길드설정", description="[관리자] 길드 등급을 설정하고 가입 처리합니다.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -418,14 +362,12 @@ class RPGCommands(commands.Cog):
     async def admin_set_guild_rank(self, interaction: discord.Interaction, rank: str):
         await interaction.response.defer(ephemeral=True)
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-        
         if rank == "None":
             user_data["guild_rank"] = None
             user_data["guild_data"] = {}
             msg = "✅ 길드 정보를 초기화했습니다. (미가입 상태)"
         else:
             user_data["guild_rank"] = rank
-            # 길드 데이터가 없거나 비어있으면 초기화
             if "guild_data" not in user_data or not isinstance(user_data["guild_data"], dict) or not user_data["guild_data"]:
                 user_data["guild_data"] = {
                     "tokens": {"wood": 100, "iron": 100, "magic": 100, "sorcery": 100},
@@ -434,12 +376,10 @@ class RPGCommands(commands.Cog):
                     "daily_shop": {"date": "", "stock": {}}
                 }
             else:
-                # 기존 데이터가 있다면 토큰만 보충 (테스트 용이성)
                 tokens = user_data["guild_data"].setdefault("tokens", {})
                 for t in ["wood", "iron", "magic", "sorcery"]:
                     tokens[t] = max(tokens.get(t, 0), 100)
             msg = f"✅ 길드 등급을 **{rank}**로 설정했습니다. (테스트용 토큰 100개씩 지급됨)"
-            
         await save_user_data(interaction.user.id, user_data)
         await interaction.followup.send(msg)
 
@@ -452,13 +392,8 @@ class RPGCommands(commands.Cog):
     ])
     async def admin_mock_raid(self, interaction: discord.Interaction, rank: str):
         await interaction.response.defer(ephemeral=False)
-        
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-        members = {
-            interaction.user.id: {
-                "user": interaction.user, "data": user_data, "ready": True
-            }
-        }
+        members = {interaction.user.id: {"user": interaction.user, "data": user_data, "ready": True}}
         boss = get_raid_boss(rank)
         battle_view = RaidBattleView(members, boss, self.save_wrapper, rank)
         msg = await interaction.followup.send(content="⚔️ **모의 레이드 전투 시작!**", embed=battle_view.get_embed(), view=battle_view)
