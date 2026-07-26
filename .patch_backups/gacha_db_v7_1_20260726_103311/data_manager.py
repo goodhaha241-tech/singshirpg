@@ -46,18 +46,6 @@ async def check_schema(pool):
     if not os.path.exists("schema.sql"): return
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            async def create_table_if_missing(table_name, create_sql):
-                """Avoid MySQL 1050 warnings by checking before CREATE TABLE."""
-                await cur.execute(
-                    """SELECT 1
-                       FROM information_schema.tables
-                       WHERE table_schema=DATABASE() AND table_name=%s
-                       LIMIT 1""",
-                    (table_name,),
-                )
-                if not await cur.fetchone():
-                    await cur.execute(create_sql)
-
             await cur.execute("SHOW TABLES LIKE 'users'")
             if not await cur.fetchone():
                 with open("schema.sql", "r", encoding="utf-8") as f:
@@ -68,7 +56,7 @@ async def check_schema(pool):
             
             # 길드 테이블 확인
             try:
-                await create_table_if_missing("guilds", """CREATE TABLE guilds (
+                await cur.execute("""CREATE TABLE IF NOT EXISTS guilds (
                         guild_id INT AUTO_INCREMENT PRIMARY KEY,
                         name VARCHAR(50) NOT NULL UNIQUE,
                         owner_id VARCHAR(50),
@@ -79,21 +67,21 @@ async def check_schema(pool):
                         token_magic INT DEFAULT 0, token_sorcery INT DEFAULT 0,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )""")
-                await create_table_if_missing("guild_members", """CREATE TABLE guild_members (
+                await cur.execute("""CREATE TABLE IF NOT EXISTS guild_members (
                         guild_id INT, user_id VARCHAR(50), role VARCHAR(20) DEFAULT 'member',
                         contribution INT DEFAULT 0, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (guild_id, user_id), FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                     )""")
-                await create_table_if_missing("guild_inventory", """CREATE TABLE guild_inventory (
+                await cur.execute("""CREATE TABLE IF NOT EXISTS guild_inventory (
                         guild_id INT, item_name VARCHAR(100), count INT DEFAULT 0, category VARCHAR(50),
                         PRIMARY KEY (guild_id, item_name), FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                     )""")
-                await create_table_if_missing("guild_stored_artifacts", """CREATE TABLE guild_stored_artifacts (
+                await cur.execute("""CREATE TABLE IF NOT EXISTS guild_stored_artifacts (
                         id BIGINT AUTO_INCREMENT PRIMARY KEY, guild_id INT, artifact_id VARCHAR(100),
                         name VARCHAR(100), rank_level INT, level INT, data JSON,
                         stored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                     )""")
-                await create_table_if_missing("guild_log", """CREATE TABLE guild_log (
+                await cur.execute("""CREATE TABLE IF NOT EXISTS guild_log (
                         id BIGINT AUTO_INCREMENT PRIMARY KEY, guild_id INT, user_id VARCHAR(50),
                         user_name VARCHAR(100), action_type VARCHAR(50), item_name VARCHAR(100),
                         count INT, logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -133,7 +121,7 @@ async def check_schema(pool):
                 except Exception as e:
                     logger.warning("total_turns migration skipped: %s", e)
 
-            await create_table_if_missing("user_life_data", """CREATE TABLE user_life_data (
+            await cur.execute("""CREATE TABLE IF NOT EXISTS user_life_data (
                 user_id VARCHAR(50) PRIMARY KEY,
                 data JSON NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

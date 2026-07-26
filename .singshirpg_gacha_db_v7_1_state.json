@@ -1,0 +1,18 @@
+{
+  "patch": "singshirpg-gacha-db-v7.1",
+  "applied_at": "2026-07-26T10:33:11",
+  "records": [
+    {
+      "name": "data_manager.py",
+      "backup": "H:\\디코봇\\.patch_backups\\gacha_db_v7_1_20260726_103311\\data_manager.py"
+    },
+    {
+      "name": "life_system.py",
+      "backup": "H:\\디코봇\\.patch_backups\\gacha_db_v7_1_20260726_103311\\life_system.py"
+    },
+    {
+      "name": "requirements.txt",
+      "backup": "H:\\디코봇\\.patch_backups\\gacha_db_v7_1_20260726_103311\\requirements.txt"
+    }
+  ]
+}

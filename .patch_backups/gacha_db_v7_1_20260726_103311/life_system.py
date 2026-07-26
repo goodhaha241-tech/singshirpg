@@ -15,8 +15,7 @@ PURE_HOPE_ITEM = "순수한 희망"
 PURE_HOPE_PRICE = 1_000_000
 RAW_STONE_ITEM = "원석"
 
-TOOL_GACHA_STONE_WEIGHT = 65
-TOOL_GACHA_TOOL_WEIGHT = 35
+TOOL_STONE_BONUS_CHANCE = 0.05
 APPRAISAL_TURNS = 30
 CRAFT_TURNS = 20
 MAX_TOOL_BREAKTHROUGH = 3
@@ -338,6 +337,11 @@ def draw_crafting_tool(user_data: dict[str, Any]) -> dict[str, Any]:
         life["tool_overflow_duplicates"] = int(life.get("tool_overflow_duplicates", 0)) + 1
         result = "overflow"
 
+    # This is an explicit tool-gacha bonus source, not a generic random-drop table.
+    bonus_stone = random.random() < TOOL_STONE_BONUS_CHANCE
+    if bonus_stone:
+        inv = _inventory(user_data)
+        inv[RAW_STONE_ITEM] = int(inv.get(RAW_STONE_ITEM, 0)) + 1
     try:
         from progression_system_v6 import add_collection, ensure_progression
         add_collection(user_data, "tools", name)
@@ -350,40 +354,24 @@ def draw_crafting_tool(user_data: dict[str, Any]) -> dict[str, Any]:
         pass
 
     return {
-        "kind": "tool",
         "name": name,
         "rarity": TOOL_DEFS[name]["rarity"],
         "result": result,
         "old_level": old_level,
         "level": int(tools[name]),
+        "bonus_stone": bonus_stone,
     }
-
-
-def draw_tool_gacha_result(user_data: dict[str, Any]) -> dict[str, Any]:
-    """Draw either a raw stone or a reusable crafting tool."""
-    result_kind = random.choices(
-        ["stone", "tool"],
-        weights=[TOOL_GACHA_STONE_WEIGHT, TOOL_GACHA_TOOL_WEIGHT],
-        k=1,
-    )[0]
-    if result_kind == "stone":
-        inventory = _inventory(user_data)
-        inventory[RAW_STONE_ITEM] = int(inventory.get(RAW_STONE_ITEM, 0)) + 1
-        return {"kind": "stone", "name": RAW_STONE_ITEM, "count": 1}
-    return draw_crafting_tool(user_data)
 
 
 def draw_crafting_tools(user_data: dict[str, Any], count: int) -> list[dict[str, Any]]:
     count = int(count)
     if count not in (1, 10):
         raise ValueError("tool gacha count must be 1 or 10")
-    return [draw_tool_gacha_result(user_data) for _ in range(count)]
+    return [draw_crafting_tool(user_data) for _ in range(count)]
 
 
 def format_tool_result(result: dict[str, Any], index: int | None = None) -> str:
     prefix = f"`{index:02d}` " if index is not None else ""
-    if result.get("kind") == "stone":
-        return f"{prefix}💎 **원석 ×{int(result.get('count', 1))}**"
     name = result["name"]
     rarity = result["rarity"]
     if result["result"] == "new":
@@ -392,7 +380,8 @@ def format_tool_result(result: dict[str, Any], index: int | None = None) -> str:
         status = f"자동 돌파 {result['old_level']}→{result['level']}"
     else:
         status = "이미 3돌파 · 초과 중복 기록"
-    return f"{prefix}🛠️ **[{rarity}] {name}** — {status}"
+    stone = " · 원석 보너스!" if result.get("bonus_stone") else ""
+    return f"{prefix}**[{rarity}] {name}** — {status}{stone}"
 
 
 def start_appraisal(user_data: dict[str, Any]) -> tuple[bool, str]:
@@ -1191,27 +1180,22 @@ class _LifeChildView(discord.ui.View):
 
 class ToolGachaView(_LifeChildView):
     def get_embed(self, message: str | None = None) -> discord.Embed:
+        life = ensure_life_data(self.user_data)
         inv = _inventory(self.user_data)
         embed = discord.Embed(
             title="🛠️ 세공 도구 뽑기",
-            description=(
-                "이번 뽑기 결과입니다."
-                if message
-                else "1회당 순수한 희망 1개를 사용합니다. 도구는 영구 재사용되며 중복 획득 즉시 자동 돌파됩니다."
-            ),
+            description=message or "1회당 순수한 희망 1개를 사용합니다. 도구는 영구 재사용되며 중복 획득 즉시 자동 돌파됩니다.",
             color=discord.Color.purple(),
         )
         embed.add_field(name="순수한 희망", value=f"{inv.get(PURE_HOPE_ITEM, 0)}개", inline=True)
-        embed.add_field(
-            name="등장 확률",
-            value=(
-                f"원석 {TOOL_GACHA_STONE_WEIGHT}% · "
-                f"세공 도구 {TOOL_GACHA_TOOL_WEIGHT}%"
-            ),
-            inline=True,
-        )
-        if message:
-            embed.add_field(name="획득 결과", value=message[:1024], inline=False)
+        embed.add_field(name="보유 도구", value=f"{len(life['tools'])}/{len(TOOL_DEFS)}종", inline=True)
+        embed.add_field(name="초과 중복", value=f"{life.get('tool_overflow_duplicates', 0)}회", inline=True)
+        lines = []
+        for name, level in sorted(life["tools"].items()):
+            effect = TOOL_DEFS[name]["effects"][int(level)]
+            lines.append(f"**{name}** · {level}돌파\n{effect}")
+        if lines:
+            embed.add_field(name="도구 목록", value="\n".join(lines[:12]), inline=False)
         return embed
 
     async def _draw(self, interaction, count: int):
