@@ -1,4 +1,3 @@
-# rollback-guard-appraisal-gems-v8
 import discord
 # cumulative-v2: one shared guild, automatic membership
 import random
@@ -228,10 +227,7 @@ class ArtifactDepositSelectView(discord.ui.View):
         success, msg = await deposit_guild_artifact(self.author.id, self.guild_id, artifact)
         
         if success:
-            # The DB helper moves the artifact atomically and increments the
-            # snapshot revision. Reload instead of writing the old full snapshot.
-            self.user_data = await get_user_data(self.author.id, self.author.display_name)
-            self.artifacts = self.user_data.get("artifacts", [])
+            await save_user_data(self.author.id, self.user_data)
             await interaction.response.send_message(f"✅ **{artifact['name']}**을(를) 보관했습니다!", ephemeral=True)
         else:
             self.artifacts.insert(idx, artifact)

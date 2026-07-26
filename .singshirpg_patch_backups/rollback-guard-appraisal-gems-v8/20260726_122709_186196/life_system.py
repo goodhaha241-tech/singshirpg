@@ -1,5 +1,4 @@
 # cumulative-v3-life-system
-# rollback-guard-appraisal-gems-v8
 from __future__ import annotations
 
 import random
@@ -247,16 +246,7 @@ def ensure_life_data(user_data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(life, dict):
         life = {}
         user_data["life_data"] = life
-    legacy_appraisal = life.get("appraisal")
-    appraisal_slots = life.get("appraisal_slots")
-    if not isinstance(appraisal_slots, list):
-        appraisal_slots = [legacy_appraisal if isinstance(legacy_appraisal, dict) else None]
-    appraisal_slots = (appraisal_slots + [None, None, None])[:3]
-    life["appraisal_slots"] = [
-        task if isinstance(task, dict) else None for task in appraisal_slots
-    ]
-    # Compatibility field for older views; v8 uses appraisal_slots exclusively.
-    life["appraisal"] = None
+    life.setdefault("appraisal", None)
     life.setdefault("stones", {})
     life.setdefault("gems", [])
     life.setdefault("tools", {})
@@ -322,24 +312,13 @@ def _life_gem(user_data: dict[str, Any], worker_index: int, name: str) -> dict[s
 
 
 def _life_gem_value(user_data: dict[str, Any], worker_index: int, name: str, default: int = 0) -> int:
-    matches = [
-        gem for gem in _worker_life_gems(user_data, worker_index)
-        if gem.get("name") == name
-    ]
-    if not matches:
-        return default
-    return sum(int(gem.get("effect_value", 0) or 0) for gem in matches)
+    gem = _life_gem(user_data, worker_index, name)
+    return int(gem.get("effect_value", default)) if gem else default
 
 
 def _life_gem_star(user_data: dict[str, Any], worker_index: int, name: str) -> int:
-    matches = [
-        gem for gem in _worker_life_gems(user_data, worker_index)
-        if gem.get("name") == name
-    ]
-    return max(
-        (max(0, min(5, int(gem.get("star", 0) or 0))) for gem in matches),
-        default=-1,
-    )
+    gem = _life_gem(user_data, worker_index, name)
+    return max(0, min(5, int(gem.get("star", 0)))) if gem else -1
 
 
 def _choose_tool_name() -> str:
@@ -427,43 +406,22 @@ def format_tool_result(result: dict[str, Any], index: int | None = None) -> str:
     return f"{prefix}🛠️ **[{rarity}] {name}** — {status}"
 
 
-def _appraisal_slots(user_data: dict[str, Any]) -> list[dict[str, Any] | None]:
-    return ensure_life_data(user_data)["appraisal_slots"]
-
-
-def start_appraisal(
-    user_data: dict[str, Any],
-    slot_index: int | None = None,
-) -> tuple[bool, str]:
-    slots = _appraisal_slots(user_data)
-    if slot_index is None:
-        slot_index = next((idx for idx, task in enumerate(slots) if task is None), -1)
-    slot_index = int(slot_index)
-    if not 0 <= slot_index < len(slots):
-        return False, "빈 감정 슬롯이 없습니다."
-    if slots[slot_index] is not None:
-        return False, f"{slot_index + 1}번 슬롯은 이미 감정 중입니다."
+def start_appraisal(user_data: dict[str, Any]) -> tuple[bool, str]:
+    life = ensure_life_data(user_data)
+    if life.get("appraisal"):
+        return False, "이미 감정 중인 원석이 있습니다."
     inv = _inventory(user_data)
     if int(inv.get(RAW_STONE_ITEM, 0)) <= 0:
         return False, "미감정 원석이 없습니다."
     inv[RAW_STONE_ITEM] = int(inv.get(RAW_STONE_ITEM, 0)) - 1
     now = int(user_data.get("myhome", {}).get("total_turns", 0) or 0)
-    slots[slot_index] = {"start_turn": now, "required_turns": APPRAISAL_TURNS}
-    return True, (
-        f"{slot_index + 1}번 슬롯에서 원석 감정을 시작했습니다. "
-        f"공용 활동 {APPRAISAL_TURNS}턴이 필요합니다."
-    )
+    life["appraisal"] = {"start_turn": now, "required_turns": APPRAISAL_TURNS}
+    return True, f"원석 감정을 시작했습니다. 공용 활동 {APPRAISAL_TURNS}턴이 필요합니다."
 
 
-def appraisal_progress(
-    user_data: dict[str, Any],
-    slot_index: int = 0,
-) -> tuple[int, int]:
-    slots = _appraisal_slots(user_data)
-    slot_index = int(slot_index)
-    if not 0 <= slot_index < len(slots):
-        return 0, 0
-    task = slots[slot_index]
+def appraisal_progress(user_data: dict[str, Any]) -> tuple[int, int]:
+    life = ensure_life_data(user_data)
+    task = life.get("appraisal")
     if not task:
         return 0, 0
     now = int(user_data.get("myhome", {}).get("total_turns", 0) or 0)
@@ -472,24 +430,17 @@ def appraisal_progress(
     return min(progress, required), required
 
 
-def claim_appraisal(
-    user_data: dict[str, Any],
-    slot_index: int = 0,
-) -> tuple[bool, str]:
+def claim_appraisal(user_data: dict[str, Any]) -> tuple[bool, str]:
     life = ensure_life_data(user_data)
-    slots = _appraisal_slots(user_data)
-    slot_index = int(slot_index)
-    if not 0 <= slot_index < len(slots):
-        return False, "잘못된 감정 슬롯입니다."
-    if not slots[slot_index]:
+    if not life.get("appraisal"):
         return False, "감정 중인 원석이 없습니다."
-    progress, required = appraisal_progress(user_data, slot_index)
+    progress, required = appraisal_progress(user_data)
     if progress < required:
         return False, f"감정 진행 중입니다. ({progress}/{required})"
     stone = random.choice(STONE_NAMES)
     stones = life["stones"]
     stones[stone] = int(stones.get(stone, 0)) + 1
-    slots[slot_index] = None
+    life["appraisal"] = None
     try:
         from progression_system_v6 import add_collection, ensure_progression
         add_collection(user_data, "stones", stone)
@@ -499,19 +450,6 @@ def claim_appraisal(
     except ImportError:
         pass
     return True, stone
-
-
-def claim_all_appraisals(user_data: dict[str, Any]) -> tuple[bool, list[str]]:
-    results = []
-    for slot_index in range(3):
-        progress, required = appraisal_progress(user_data, slot_index)
-        if required and progress >= required:
-            ok, stone = claim_appraisal(user_data, slot_index)
-            if ok:
-                results.append(f"{slot_index + 1}번: {stone}")
-    if not results:
-        return False, ["수령 가능한 감정 결과가 없습니다."]
-    return True, results
 
 
 def start_gem_crafting(
@@ -1489,10 +1427,6 @@ class ToolGachaView(_LifeChildView):
 
 
 class AppraisalView(_LifeChildView):
-    def __init__(self, author, user_data, save_func):
-        super().__init__(author, user_data, save_func)
-        self.selected_slot = 0
-
     def get_embed(self, message: str | None = None) -> discord.Embed:
         life = ensure_life_data(self.user_data)
         inv = _inventory(self.user_data)
@@ -1502,61 +1436,34 @@ class AppraisalView(_LifeChildView):
             color=discord.Color.blurple(),
         )
         embed.add_field(name="미감정 원석", value=f"{inv.get(RAW_STONE_ITEM, 0)}개", inline=True)
-        slot_lines = []
-        for slot_index in range(3):
-            progress, required = appraisal_progress(self.user_data, slot_index)
-            marker = "▶ " if slot_index == self.selected_slot else ""
-            state = "비어 있음" if required == 0 else (
-                "완료 · 수령 가능" if progress >= required else f"{progress}/{required} 활동 턴"
-            )
-            slot_lines.append(f"{marker}**{slot_index + 1}번 슬롯** · {state}")
-        embed.add_field(name="감정 슬롯", value="\n".join(slot_lines), inline=False)
+        progress, required = appraisal_progress(self.user_data)
+        embed.add_field(
+            name="진행",
+            value="대기 중" if required == 0 else f"{progress}/{required} 활동 턴",
+            inline=True,
+        )
         stones = [f"{k} ×{v}" for k, v in life["stones"].items() if int(v) > 0]
         embed.add_field(name="감정된 원석", value="\n".join(stones) or "없음", inline=False)
         return embed
 
-    @discord.ui.select(
-        placeholder="관리할 감정 슬롯 선택",
-        options=[
-            discord.SelectOption(label="1번 감정 슬롯", value="0"),
-            discord.SelectOption(label="2번 감정 슬롯", value="1"),
-            discord.SelectOption(label="3번 감정 슬롯", value="2"),
-        ],
-        row=0,
-    )
-    async def select_slot(self, interaction, select):
-        self.selected_slot = int(select.values[0])
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    @discord.ui.button(label="선택 슬롯 감정 시작", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="감정 시작", style=discord.ButtonStyle.primary)
     async def start(self, interaction, button):
         await _defer(interaction)
-        ok, msg = start_appraisal(self.user_data, self.selected_slot)
+        ok, msg = start_appraisal(self.user_data)
         if ok:
             await _save(self.save_func, self.author, self.user_data)
         await interaction.edit_original_response(embed=self.get_embed(msg), view=self)
 
-    @discord.ui.button(label="선택 슬롯 결과 수령", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="결과 수령", style=discord.ButtonStyle.success)
     async def claim(self, interaction, button):
         await _defer(interaction)
-        ok, msg = claim_appraisal(self.user_data, self.selected_slot)
+        ok, msg = claim_appraisal(self.user_data)
         if ok:
             await _save(self.save_func, self.author, self.user_data)
             msg = f"✅ 감정 완료: **{msg}**"
         await interaction.edit_original_response(embed=self.get_embed(msg), view=self)
 
-    @discord.ui.button(label="완료 결과 모두 수령", style=discord.ButtonStyle.success, row=2)
-    async def claim_all(self, interaction, button):
-        await _defer(interaction)
-        ok, results = claim_all_appraisals(self.user_data)
-        if ok:
-            await _save(self.save_func, self.author, self.user_data)
-        await interaction.edit_original_response(
-            embed=self.get_embed("\n".join(results)),
-            view=self,
-        )
-
-    @discord.ui.button(label="뒤로", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="뒤로", style=discord.ButtonStyle.secondary)
     async def back(self, interaction, button):
         await self.go_back(interaction)
 

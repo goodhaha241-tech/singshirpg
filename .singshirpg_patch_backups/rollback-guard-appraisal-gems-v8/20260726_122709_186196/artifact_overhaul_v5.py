@@ -1,5 +1,4 @@
 # life-artifact-v7.3-manager
-# rollback-guard-appraisal-gems-v8
 from __future__ import annotations
 
 import random
@@ -8,7 +7,6 @@ from typing import Any
 import discord
 
 from artifact_events_v5 import CHARACTER_ARTIFACT_EFFECTS, COMMON_ARTIFACT_EFFECTS
-from character import artifact_effective_stats
 from gem_manager import (
     CHARACTER_SPECIALS,
     GemManagerView,
@@ -182,9 +180,9 @@ class ArtifactHubView(discord.ui.View):
 
     async def _save(self):
         try:
-            await self.save_func(self.author.id, self.user_data)
-        except TypeError:
             await self.save_func(self.user_data)
+        except TypeError:
+            await self.save_func(self.author.id, self.user_data)
 
     def _life_hub_factory(self):
         from life_overhaul_v5 import LifeHubView
@@ -391,16 +389,8 @@ class ArtifactHubView(discord.ui.View):
                 )
                 for index, gem in enumerate(sockets[:artifact_socket_count(selected)])
             ]
-            base_stats = selected.get("stats", {})
-            effective_stats = artifact_effective_stats(selected)
-            stat_parts = []
-            for key, base_value in base_stats.items():
-                actual_value = effective_stats.get(key, base_value)
-                stat_parts.append(
-                    f"{key} +{base_value}"
-                    + (f" → **+{actual_value}**" if actual_value != base_value else "")
-                )
-            stat_text = ", ".join(stat_parts) or "없음"
+            stats = selected.get("stats", {})
+            stat_text = ", ".join(f"{key} +{value}" for key, value in stats.items()) or "없음"
             embed.add_field(
                 name=f"{'🔒 ' if selected['metadata']['locked'] else ''}{selected.get('name', '아티팩트')} +{selected.get('level', 0)}",
                 value=(

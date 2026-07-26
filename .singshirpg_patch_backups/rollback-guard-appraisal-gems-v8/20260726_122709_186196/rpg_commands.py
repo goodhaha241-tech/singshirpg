@@ -1,4 +1,3 @@
-# rollback-guard-appraisal-gems-v8
 import discord
 # completion-v6 command routes
 from discord import app_commands
@@ -189,7 +188,7 @@ class RPGCommands(commands.Cog):
         except: return
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
         async def bound_save(uid_or_all, data=None):
-            if data is None: await self.save_wrapper(interaction.user.id, uid_or_all if isinstance(uid_or_all, dict) else user_data)
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
         view = InfoView(interaction.user, user_data, bound_save)
         await interaction.followup.send(embed=view.create_status_embed(), view=view)
@@ -203,7 +202,7 @@ class RPGCommands(commands.Cog):
         except: return
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
         async def bound_save(uid_or_all, data=None):
-            if data is None: await self.save_wrapper(interaction.user.id, uid_or_all if isinstance(uid_or_all, dict) else user_data)
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
         view = OutingMenuView(interaction.user, user_data, bound_save)
         embed = discord.Embed(title="🚀 외출 메뉴", description="어디로 떠나시겠습니까?", color=discord.Color.red())
@@ -218,7 +217,7 @@ class RPGCommands(commands.Cog):
         except: return
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
         async def bound_save(uid_or_all, data=None):
-            if data is None: await self.save_wrapper(interaction.user.id, uid_or_all if isinstance(uid_or_all, dict) else user_data)
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
         view = ManagementMenuView(interaction.user, user_data, bound_save)
         embed = discord.Embed(title="🛠️ 관리 메뉴", description="수행할 작업을 선택해주세요.", color=discord.Color.blue())
@@ -246,7 +245,7 @@ class RPGCommands(commands.Cog):
         except: pass
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
         async def bound_save(uid_or_all, data=None):
-            if data is None: await self.save_wrapper(interaction.user.id, uid_or_all if isinstance(uid_or_all, dict) else user_data)
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
         view = view_class(interaction.user, user_data, bound_save)
         if view_class is LifeHubView:
@@ -305,7 +304,7 @@ class RPGCommands(commands.Cog):
         except: pass
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
         async def bound_save(uid_or_all, data=None):
-            if data is None: await self.save_wrapper(interaction.user.id, uid_or_all if isinstance(uid_or_all, dict) else user_data)
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
         view = CafeView(interaction.user, user_data, get_user_data, bound_save)
         embed = discord.Embed(title="☕ 카페", description="카페에 오신 것을 환영합니다.", color=discord.Color.gold())
@@ -317,7 +316,7 @@ class RPGCommands(commands.Cog):
         except: pass
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
         async def bound_save(uid_or_all, data=None):
-            if data is None: await self.save_wrapper(interaction.user.id, uid_or_all if isinstance(uid_or_all, dict) else user_data)
+            if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
         async def back_callback(i):
             await i.response.edit_message(content="영입소를 나갔습니다.", embed=None, view=None)

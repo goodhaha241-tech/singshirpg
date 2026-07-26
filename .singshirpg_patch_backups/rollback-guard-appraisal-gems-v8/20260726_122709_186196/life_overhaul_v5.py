@@ -1,5 +1,4 @@
 # life-artifact-v5-life-hub
-# rollback-guard-appraisal-gems-v8
 from __future__ import annotations
 
 import discord
@@ -96,9 +95,9 @@ class LifeSupplyShopView(discord.ui.View):
 
     async def _save(self):
         try:
-            await self.save_func(self.author.id, self.user_data)
-        except TypeError:
             await self.save_func(self.user_data)
+        except TypeError:
+            await self.save_func(self.author.id, self.user_data)
 
     async def select_item(self, interaction):
         self.selected_item = interaction.data["values"][0]
@@ -269,15 +268,7 @@ class LifeHubView(discord.ui.View):
     def get_embed(self):
         life = ensure_life_data(self.user_data)
         cooking = ensure_cooking_data(self.user_data)
-        appraisal_slots = life.get("appraisal_slots", [])
-        appraisal_active = sum(task is not None for task in appraisal_slots)
-        appraisal_ready = 0
-        now = int(self.user_data.get("myhome", {}).get("total_turns", 0) or 0)
-        for task in appraisal_slots:
-            if isinstance(task, dict):
-                start = int(task.get("start_turn", now))
-                required = int(task.get("required_turns", 30))
-                appraisal_ready += int(now - start >= required)
+        appraisal = life.get("appraisal")
         craft = life.get("gem_crafting")
         plot = life.get("vegetable_garden", {}).get("plot")
         tank = life.get("fish_farm", {}).get("tank")
@@ -291,10 +282,7 @@ class LifeHubView(discord.ui.View):
         )
         e.add_field(name="🌱 채소밭", value=(f"{plot.get('crop')} · {plot.get('turn',0)}턴" if plot else "대기 중"), inline=True)
         e.add_field(name="🐟 양어장", value=(f"{tank.get('species')} · {tank.get('turn',0)}턴" if tank else "대기 중"), inline=True)
-        appraisal_text = f"{appraisal_active}/3 진행"
-        if appraisal_ready:
-            appraisal_text += f" · {appraisal_ready}개 완료"
-        e.add_field(name="💎 감정", value=appraisal_text, inline=True)
+        e.add_field(name="💎 감정", value=("진행 중" if appraisal else "대기 중"), inline=True)
         e.add_field(name="🔨 세공", value=(f"{craft.get('gem_name','젬')} · {craft.get('turn',0)}/20" if craft else "대기 중"), inline=True)
         e.add_field(name="🍳 완성 요리", value=f"{sum(cooking['foods'].values())}개", inline=True)
         e.add_field(name="🛠️ 세공 도구", value=f"{len(life.get('tools',{}))}종", inline=True)

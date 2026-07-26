@@ -1,5 +1,4 @@
 # completion-v6-cooking
-# rollback-guard-appraisal-gems-v8
 from __future__ import annotations
 
 import random
@@ -137,18 +136,13 @@ def _cooking_gem_bonus(user_data: dict[str, Any]) -> int:
         character.get("equipped_artifact"),
         character.get("equipped_engraved_artifact"),
     ]
-    matches = []
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             continue
         for gem in artifact.get("gems", []):
             if gem and gem.get("name") == "조리의 젬":
-                matches.append(gem)
-    if not matches:
-        return 0
-    effect_total = sum(max(0, int(gem.get("effect_value", 0) or 0)) for gem in matches)
-    star_bonus = max(int(gem.get("star", 0) or 0) for gem in matches)
-    return effect_total + star_bonus
+                return max(0, int(gem.get("effect_value", 0))) + int(gem.get("star", 0))
+    return 0
 
 
 def _consume_quality_records(user_data: dict[str, Any], item: str, count: int) -> list[int]:
@@ -372,9 +366,9 @@ def research_recipe(user_data: dict[str, Any], category: str):
 
 async def _save(save_func, author, user_data):
     try:
-        await save_func(author.id, user_data)
-    except TypeError:
         await save_func(user_data)
+    except TypeError:
+        await save_func(author.id, user_data)
 
 
 class CookingView(discord.ui.View):

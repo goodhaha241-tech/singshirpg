@@ -5,8 +5,6 @@ import logging
 import copy
 import random
 import datetime
-import asyncio
-from collections import defaultdict
 from config import DB_CONFIG
 from character import DEFAULT_PLAYER_DATA
 
@@ -14,23 +12,8 @@ logger = logging.getLogger(__name__)
 
 # stability-v1 + cumulative-v2 + cumulative-v3 integrated baseline
 # guild-pvp-stability-v7.2
-# rollback-guard-appraisal-gems-v8
 
 _pool = None
-_user_save_locks = defaultdict(asyncio.Lock)
-
-
-class StaleUserDataError(RuntimeError):
-    """An old Discord view attempted to overwrite a newer saved snapshot."""
-
-    def __init__(self, user_id, loaded_revision, current_revision):
-        self.user_id = str(user_id)
-        self.loaded_revision = int(loaded_revision)
-        self.current_revision = int(current_revision)
-        super().__init__(
-            "다른 화면에서 데이터가 먼저 변경되었습니다. "
-            "최신 상태를 보호하기 위해 저장을 중단했습니다. 메뉴를 다시 열어주세요."
-        )
 
 async def get_db_pool():
     global _pool
@@ -134,7 +117,6 @@ async def check_schema(pool):
                 ("current_dungeon", "JSON"),
                 ("max_subjugation_char", "VARCHAR(100)"),
                 ("max_subjugation_region", "VARCHAR(100)"),
-                ("data_revision", "BIGINT NOT NULL DEFAULT 0"),
             ]
             for col, typ in required_user_columns:
                 if col not in u_cols:
@@ -157,15 +139,6 @@ async def check_schema(pool):
                 data JSON NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     ON UPDATE CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )""")
-            await create_table_if_missing("user_save_history", """CREATE TABLE user_save_history (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                user_id VARCHAR(50) NOT NULL,
-                revision BIGINT NOT NULL,
-                data JSON NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_user_revision (user_id, revision),
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )""")
             try:
@@ -201,7 +174,6 @@ async def _get_new_user_data(user_name=None):
     new_char = copy.deepcopy(DEFAULT_PLAYER_DATA)
     new_char["name"] = user_name if user_name else "플레이어"
     return {
-        "_data_revision": 0,
         "pt": 0, "money": 0, "last_checkin": None, "investigator_index": 0,
         "main_quest_id": 0, "main_quest_current": 0, "main_quest_index": 0,
         "cards": ["기본공격", "기본방어", "기본반격"], "buffs": {}, "main_quest_progress": {},
@@ -288,44 +260,14 @@ async def get_user_data(user_id, user_name=None):
 
             inventory = await _get_inventory(cur, user_id)
             characters, artifacts = await _get_characters_and_artifacts(cur, user_id)
-            json_chars = user_row.get("characters")
-            parsed_json_chars = []
-            if json_chars:
-                try:
-                    parsed_json_chars = (
-                        json.loads(json_chars) if isinstance(json_chars, str) else json_chars
-                    )
-                    if not isinstance(parsed_json_chars, list):
-                        parsed_json_chars = []
-                except (TypeError, ValueError):
-                    logger.warning("Invalid users.characters JSON for user %s", user_id)
-                    parsed_json_chars = []
-
-            # The relational character rows remain authoritative for persisted
-            # combat stats. Preserve character-specific extension fields from the
-            # JSON snapshot so loading does not silently erase them.
-            if characters and parsed_json_chars:
-                json_by_name = {
-                    str(item.get("name")): item
-                    for item in parsed_json_chars
-                    if isinstance(item, dict) and item.get("name")
-                }
-                merged_characters = []
-                for index, relational in enumerate(characters):
-                    extension = json_by_name.get(str(relational.get("name")))
-                    if extension is None and index < len(parsed_json_chars):
-                        candidate = parsed_json_chars[index]
-                        extension = candidate if isinstance(candidate, dict) else None
-                    merged = copy.deepcopy(extension) if extension else {}
-                    merged.update(relational)
-                    if "equipped_artifact" not in relational:
-                        merged["equipped_artifact"] = None
-                    merged_characters.append(merged)
-                characters = merged_characters
-
+            
             if not characters:
-                if parsed_json_chars:
-                    characters = parsed_json_chars
+                json_chars = user_row.get('characters')
+                if json_chars:
+                    try: 
+                        parsed = json.loads(json_chars)
+                        if isinstance(parsed, list) and parsed: characters = parsed
+                    except: pass
             if not characters:
                 new_char = copy.deepcopy(DEFAULT_PLAYER_DATA)
                 new_char["name"] = f"모험가_{str(user_id)[-4:]}"
@@ -351,7 +293,6 @@ async def get_user_data(user_id, user_name=None):
             fertilizers = [{"target": r['target']} for r in await cur.fetchall()]
 
             return {
-                "_data_revision": int(user_row.get("data_revision", 0) or 0),
                 "pt": user_row['pt'] or 0, "money": user_row['money'] or 0,
                 "last_checkin": str(user_row['last_checkin']) if user_row['last_checkin'] else None,
                 "investigator_index": user_row['investigator_index'] or 0,
@@ -372,27 +313,11 @@ async def get_user_data(user_id, user_name=None):
                 "life_data": life_data,
             }
 
-async def _save_user_data_unlocked(user_id, data):
-    user_key = str(user_id)
+async def save_user_data(user_id, data):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             try:
-                # DB_CONFIG uses autocommit=True. Explicitly bind every replacement
-                # table write to a single transaction so a mid-save failure cannot
-                # leave a half-written snapshot.
-                await conn.begin()
-                await cur.execute(
-                    "SELECT data_revision FROM users WHERE user_id=%s FOR UPDATE",
-                    (user_key,),
-                )
-                revision_row = await cur.fetchone()
-                current_revision = int((revision_row or (0,))[0] or 0)
-                loaded_revision = int(data.get("_data_revision", current_revision) or 0)
-                if revision_row and loaded_revision != current_revision:
-                    raise StaleUserDataError(user_key, loaded_revision, current_revision)
-                next_revision = current_revision + 1
-
                 artifact_owner_map = {}
                 for idx, c in enumerate(data.get("characters", [])):
                     eq_art = c.get("equipped_artifact")
@@ -514,82 +439,20 @@ async def _save_user_data_unlocked(user_id, data):
                 if data.get("recruit_progress"):
                     await cur.executemany("INSERT INTO recruit_progress (user_id, char_key, progress) VALUES (%s, %s, %s)", [(user_id, k, v) for k, v in data["recruit_progress"].items()])
 
-                await cur.execute(
-                    "UPDATE users SET data_revision=%s WHERE user_id=%s",
-                    (next_revision, user_key),
-                )
-                history_snapshot = copy.deepcopy(data)
-                history_snapshot["_data_revision"] = next_revision
-                await cur.execute(
-                    """INSERT INTO user_save_history (user_id, revision, data)
-                       VALUES (%s, %s, %s)""",
-                    (
-                        user_key,
-                        next_revision,
-                        json.dumps(history_snapshot, ensure_ascii=False, default=str),
-                    ),
-                )
-                await cur.execute(
-                    """DELETE FROM user_save_history
-                       WHERE user_id=%s
-                         AND id NOT IN (
-                             SELECT id FROM (
-                                 SELECT id FROM user_save_history
-                                 WHERE user_id=%s
-                                 ORDER BY revision DESC, id DESC
-                                 LIMIT 10
-                             ) AS retained
-                         )""",
-                    (user_key, user_key),
-                )
                 await conn.commit()
-                data["_data_revision"] = next_revision
-            except StaleUserDataError:
-                await conn.rollback()
-                logger.warning(
-                    "Rejected stale save for user %s (loaded=%s, current=%s)",
-                    user_key,
-                    data.get("_data_revision", 0),
-                    current_revision if "current_revision" in locals() else "?",
-                )
-                raise
             except Exception as e:
                 await conn.rollback()
                 logger.error(f"Save Error for {user_id}: {e}")
-                raise
-
-
-async def save_user_data(user_id, data):
-    """Serialize snapshots per user and reject stale full-state writes."""
-    user_key = str(user_id)
-    async with _user_save_locks[user_key]:
-        return await _save_user_data_unlocked(user_key, data)
+                raise e
 
 async def update_user_resources(user_id, money_change=0, pt_change=0):
-    user_key = str(user_id)
-    async with _user_save_locks[user_key]:
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                try:
-                    await conn.begin()
-                    await cur.execute(
-                        """UPDATE users
-                           SET money=money+%s, pt=pt+%s,
-                               data_revision=data_revision+1
-                           WHERE user_id=%s""",
-                        (money_change, pt_change, user_key),
-                    )
-                    await cur.execute(
-                        "SELECT money, pt, data_revision FROM users WHERE user_id=%s",
-                        (user_key,),
-                    )
-                    result = await cur.fetchone()
-                    await conn.commit()
-                    return result
-                except Exception:
-                    await conn.rollback()
-                    raise
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE users SET money = money + %s, pt = pt + %s WHERE user_id = %s", (money_change, pt_change, str(user_id)))
+            await conn.commit()
+            await cur.execute("SELECT money, pt FROM users WHERE user_id = %s", (str(user_id),))
+            return await cur.fetchone()
 
 GLOBAL_GUILD_ID = 1
 GLOBAL_GUILD_NAME = "공용 길드"
@@ -694,11 +557,6 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
         async with conn.cursor() as cur:
             try:
                 await conn.begin()
-                # Lock the user snapshot row and invalidate older open menus.
-                await cur.execute(
-                    "UPDATE users SET data_revision=data_revision+1 WHERE user_id=%s",
-                    (str(user_id),),
-                )
                 await cur.execute(
                     "SELECT 1 FROM guild_members WHERE guild_id=%s AND user_id=%s FOR UPDATE",
                     (GLOBAL_GUILD_ID, str(user_id)),
@@ -744,34 +602,14 @@ async def deposit_guild_artifact(user_id, guild_id, artifact_data):
             try:
                 await conn.begin()
                 await cur.execute(
-                    "UPDATE users SET data_revision=data_revision+1 WHERE user_id=%s",
-                    (str(user_id),),
-                )
-                await cur.execute(
                     "SELECT 1 FROM guild_members WHERE guild_id=%s AND user_id=%s FOR UPDATE",
                     (GLOBAL_GUILD_ID, str(user_id)),
                 )
                 if not await cur.fetchone():
                     await conn.rollback()
                     return False, "공용 길드 소속이 아닙니다."
-                await cur.execute(
-                    """SELECT equipped_char_index FROM artifacts
-                       WHERE id=%s AND user_id=%s FOR UPDATE""",
-                    (artifact_data["id"], str(user_id)),
-                )
-                stored = await cur.fetchone()
-                if not stored:
-                    await conn.rollback()
-                    return False, "보관할 아티팩트를 찾을 수 없습니다."
-                if int(stored[0] if stored[0] is not None else -1) != -1:
-                    await conn.rollback()
-                    return False, "캐릭터가 장착 중인 아티팩트는 보관할 수 없습니다."
                 await cur.execute("INSERT INTO guild_stored_artifacts (guild_id, artifact_id, name, rank_level, level, data) VALUES (%s, %s, %s, %s, %s, %s)", 
                                   (guild_id, artifact_data['id'], artifact_data['name'], artifact_data.get('rank', 1), artifact_data.get('level', 0), json.dumps(artifact_data)))
-                await cur.execute(
-                    "DELETE FROM artifacts WHERE id=%s AND user_id=%s",
-                    (artifact_data["id"], str(user_id)),
-                )
                 await cur.execute("INSERT INTO guild_log (guild_id, user_id, action_type, item_name, count) VALUES (%s, %s, 'deposit_artifact', %s, 1)", (guild_id, str(user_id), artifact_data['name']))
                 await conn.commit()
                 return True, "보관 완료"

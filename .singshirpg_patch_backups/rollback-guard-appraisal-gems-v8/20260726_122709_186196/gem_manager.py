@@ -1,5 +1,4 @@
 # gem-link-v7.3-manager
-# rollback-guard-appraisal-gems-v8
 from __future__ import annotations
 
 from typing import Any
@@ -177,10 +176,7 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
         lines.append("현재 수치 보정이 실제 전투·생활 계산에 아직 연결되지 않음")
 
     if stat:
-        lines.append(
-            f"보조 수치 **+{stat}%**: 이 젬을 장착한 아티팩트의 "
-            "모든 기본 스탯을 강화"
-        )
+        lines.append(f"보조 수치 **+{stat}**: 저장되어 있으나 별도 능력치 계산에는 아직 미연결")
     return lines
 
 
@@ -375,9 +371,9 @@ class _OwnedView(discord.ui.View):
 
     async def _save(self):
         try:
-            await self.save_func(self.author.id, self.user_data)
-        except TypeError:
             await self.save_func(self.user_data)
+        except TypeError:
+            await self.save_func(self.author.id, self.user_data)
 
     def _life_hub_factory(self):
         from life_overhaul_v5 import LifeHubView

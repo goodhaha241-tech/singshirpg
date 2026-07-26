@@ -1,30 +1,5 @@
 # character.py
-# rollback-guard-appraisal-gems-v8
 import json
-
-
-def artifact_effective_stats(artifact):
-    """Apply every socketed gem's auxiliary value to its host artifact stats."""
-    if not isinstance(artifact, dict):
-        return {}
-    stats = artifact.get("stats", {})
-    if not isinstance(stats, dict):
-        return {}
-    stat_bonus_pct = sum(
-        int(gem.get("stat_value", 0) or 0)
-        for gem in artifact.get("gems", [])
-        if isinstance(gem, dict)
-    )
-    if stat_bonus_pct <= 0:
-        return dict(stats)
-    return {
-        key: (
-            int(value) + round(int(value) * stat_bonus_pct / 100)
-            if isinstance(value, (int, float))
-            else value
-        )
-        for key, value in stats.items()
-    }
 
 # ==================================================================================
 # 1. 기본 플레이어 데이터 템플릿
@@ -103,7 +78,6 @@ class Character:
         # [전투 로직용 플래그] (저장되지 않음)
         self.has_artifact_buff = False # 전투 진입 시 스탯 중복 적용 방지
         self.runtime_cooldowns = {}    # 아티팩트 특수효과 쿨타임 관리
-        self._applied_artifact_stats = []
 
     @classmethod
     def from_dict(cls, data):
@@ -188,19 +162,16 @@ class Character:
         # (전투 중 튕겨서 버프가 해제되지 않은 상태로 재시작하는 경우 방지)
         if self.has_artifact_buff: 
             self.remove_battle_buffs()
-        self._applied_artifact_stats = []
 
         # 1. 일반 아티팩트
         if self.equipped_artifact and isinstance(self.equipped_artifact, dict):
-            stats = artifact_effective_stats(self.equipped_artifact)
+            stats = self.equipped_artifact.get("stats", {})
             self._add_stats(stats)
-            self._applied_artifact_stats.append(stats)
 
         # 2. 각인 아티팩트 (중복 적용 가능)
         if self.equipped_engraved_artifact and isinstance(self.equipped_engraved_artifact, dict):
-            stats = artifact_effective_stats(self.equipped_engraved_artifact)
+            stats = self.equipped_engraved_artifact.get("stats", {})
             self._add_stats(stats)
-            self._applied_artifact_stats.append(stats)
 
         self.has_artifact_buff = True
 
@@ -208,10 +179,14 @@ class Character:
         """전투 종료 후 아티팩트 스탯을 제거합니다."""
         if not self.has_artifact_buff: return
 
-        for stats in self._applied_artifact_stats:
+        if self.equipped_artifact and isinstance(self.equipped_artifact, dict):
+            stats = self.equipped_artifact.get("stats", {})
             self._remove_stats(stats)
 
-        self._applied_artifact_stats = []
+        if self.equipped_engraved_artifact and isinstance(self.equipped_engraved_artifact, dict):
+            stats = self.equipped_engraved_artifact.get("stats", {})
+            self._remove_stats(stats)
+
         self.has_artifact_buff = False
 
     def _add_stats(self, stats):

@@ -1,7 +1,6 @@
-# rollback-guard-appraisal-gems-v8
 from functools import wraps
 import discord
-from data_manager import get_user_data, StaleUserDataError
+from data_manager import get_user_data
 
 def auto_defer(arg=None, *, reload_data: bool = False):
     """
@@ -50,15 +49,6 @@ def auto_defer(arg=None, *, reload_data: bool = False):
 
             try:
                 await func(self, interaction, *args, **kwargs)
-            except StaleUserDataError as e:
-                self.user_data = await get_user_data(self.author.id, self.author.display_name)
-                try:
-                    if interaction.response.is_done():
-                        await interaction.followup.send(str(e), ephemeral=True)
-                    else:
-                        await interaction.response.send_message(str(e), ephemeral=True)
-                except (discord.errors.InteractionResponded, discord.errors.NotFound):
-                    pass
             except discord.errors.NotFound:
                 pass
             except Exception as e:

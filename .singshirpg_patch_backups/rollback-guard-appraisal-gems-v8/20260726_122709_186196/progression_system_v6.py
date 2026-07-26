@@ -1,5 +1,4 @@
 # completion-v6-progression
-# rollback-guard-appraisal-gems-v8
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -32,8 +31,6 @@ def ensure_progression(user_data: dict[str, Any]) -> dict[str, Any]:
     p.setdefault("notifications", [])
     p.setdefault("notification_keys", [])
     p.setdefault("collection_rewards", [])
-    p.setdefault("achievement_rewards", [])
-    p.setdefault("dungeon_hope_rewards", [])
     p.setdefault("hidden_tutorial", False)
     return p
 
@@ -68,15 +65,14 @@ def sync_life_notifications(user_data):
             "양어장의 물고기를 출하할 수 있습니다.",
         ),
     }
-    for slot_index, appraisal in enumerate(life.get("appraisal_slots", [])):
-        if not appraisal:
-            continue
+    appraisal = life.get("appraisal")
+    if appraisal:
         now = int(user_data.get("myhome", {}).get("total_turns", 0) or 0)
         start = int(appraisal.get("start_turn", now))
         required = int(appraisal.get("required_turns", 30))
-        states[f"appraisal_ready_{slot_index}"] = (
+        states["appraisal_ready"] = (
             now - start >= required,
-            f"{slot_index + 1}번 원석 감정이 완료되었습니다.",
+            "원석 감정이 완료되었습니다.",
         )
     for key, (ready, message) in states.items():
         if ready and key not in keys:
@@ -167,54 +163,15 @@ def claim_weekly_reward(user_data):
         int(weekly["progress"].get(key, 0)) >= target
         for key, (_, target) in WEEKLY_MISSIONS.items()
     )
+    if completed < 4:
+        return False, f"주간 미션을 4개 완료해야 합니다. 현재 {completed}개"
+    if "main" in weekly["claimed"]:
+        return False, "이번 주 보상을 이미 받았습니다."
+    weekly["claimed"].append("main")
+    user_data["money"] = int(user_data.get("money", 0)) + 100_000
     inventory = user_data.setdefault("inventory", {})
-    messages = []
-    if completed >= 4 and "main" not in weekly["claimed"]:
-        weekly["claimed"].append("main")
-        user_data["money"] = int(user_data.get("money", 0)) + 100_000
-        inventory[PURE_HOPE_ITEM] = int(inventory.get(PURE_HOPE_ITEM, 0)) + 1
-        messages.append("주간 기본 보상 100,000원과 순수한 희망 1개")
-    if completed == len(WEEKLY_MISSIONS) and "perfect" not in weekly["claimed"]:
-        weekly["claimed"].append("perfect")
-        inventory[PURE_HOPE_ITEM] = int(inventory.get(PURE_HOPE_ITEM, 0)) + 1
-        messages.append("주간 전체 완료 보너스 순수한 희망 1개")
-    if not messages:
-        if completed < 4:
-            return False, f"주간 미션을 4개 완료해야 합니다. 현재 {completed}개"
-        if completed < len(WEEKLY_MISSIONS):
-            return False, (
-                "기본 주간 보상은 받았습니다. 모든 주간 미션을 완료하면 "
-                "순수한 희망 1개를 추가로 받을 수 있습니다."
-            )
-        return False, "이번 주의 모든 보상을 이미 받았습니다."
-    return True, " · ".join(messages) + "를 받았습니다."
-
-
-def claim_achievement_and_dungeon_rewards(user_data):
-    p = ensure_progression(user_data)
-    inventory = user_data.setdefault("inventory", {})
-    claimed = []
-
-    achievement_count = len(p["achievements"])
-    for threshold in (5, 10):
-        if achievement_count >= threshold and threshold not in p["achievement_rewards"]:
-            p["achievement_rewards"].append(threshold)
-            inventory[PURE_HOPE_ITEM] = int(inventory.get(PURE_HOPE_ITEM, 0)) + 1
-            claimed.append(f"일반 업적 {threshold}개")
-
-    best_depth = int(user_data.get("myhome", {}).get("max_subjugation_depth", 0) or 0)
-    for threshold in (10, 25, 50):
-        if best_depth >= threshold and threshold not in p["dungeon_hope_rewards"]:
-            p["dungeon_hope_rewards"].append(threshold)
-            inventory[PURE_HOPE_ITEM] = int(inventory.get(PURE_HOPE_ITEM, 0)) + 1
-            claimed.append(f"던전 최고 {threshold}층")
-
-    if not claimed:
-        return False, "지금 받을 수 있는 새 업적·던전 기록 보상이 없습니다."
-    return True, (
-        f"{', '.join(claimed)} 달성 보상으로 "
-        f"순수한 희망 {len(claimed)}개를 받았습니다."
-    )
+    inventory[PURE_HOPE_ITEM] = int(inventory.get(PURE_HOPE_ITEM, 0)) + 1
+    return True, "주간 보상 100,000원과 순수한 희망 1개를 받았습니다."
 
 
 def claim_collection_rewards(user_data):
@@ -265,23 +222,14 @@ class ProgressionView(discord.ui.View):
             for key, (label, target) in WEEKLY_MISSIONS.items()
         ]
         e.add_field(name=f"주간 미션 · {p['weekly']['week_key']}", value="\n".join(weekly_lines), inline=False)
-        e.add_field(
-            name="순수한 희망 기록 보상",
-            value=(
-                f"일반 업적 {len(p['achievements'])}개 · "
-                f"던전 최고 {int(self.user_data.get('myhome', {}).get('max_subjugation_depth', 0) or 0)}층\n"
-                "업적 5·10개 / 던전 10·25·50층에서 각각 1개"
-            ),
-            inline=False,
-        )
         e.add_field(name="알림", value=f"읽지 않음 {sum(not n['read'] for n in p['notifications'])}개", inline=True)
         return e
 
     async def _save(self):
         try:
-            await self.save_func(self.author.id, self.user_data)
-        except TypeError:
             await self.save_func(self.user_data)
+        except TypeError:
+            await self.save_func(self.author.id, self.user_data)
 
     @discord.ui.button(label="도감 보상", style=discord.ButtonStyle.success)
     async def collection_reward(self, interaction, button):
@@ -293,13 +241,6 @@ class ProgressionView(discord.ui.View):
     @discord.ui.button(label="주간 보상", style=discord.ButtonStyle.primary)
     async def weekly_reward(self, interaction, button):
         ok, message = claim_weekly_reward(self.user_data)
-        if ok:
-            await self._save()
-        await interaction.response.edit_message(content=message, embed=self.get_embed(), view=self)
-
-    @discord.ui.button(label="업적·던전 기록 보상", style=discord.ButtonStyle.success)
-    async def achievement_reward(self, interaction, button):
-        ok, message = claim_achievement_and_dungeon_rewards(self.user_data)
         if ok:
             await self._save()
         await interaction.response.edit_message(content=message, embed=self.get_embed(), view=self)

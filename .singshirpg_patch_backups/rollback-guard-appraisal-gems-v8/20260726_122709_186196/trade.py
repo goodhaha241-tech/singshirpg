@@ -1,4 +1,3 @@
-# rollback-guard-appraisal-gems-v8
 import discord
 from discord.ui import View, Button, Select, Modal, TextInput
 from discord import SelectOption, ButtonStyle
@@ -6,7 +5,7 @@ import aiomysql
 import random
 import datetime
 # [수정] DB 연결 풀을 공유하기 위해 data_manager에서 import
-from data_manager import get_db_pool, get_user_data
+from data_manager import get_db_pool
 from decorators import auto_defer
 from items import REGIONS, ITEM_CATEGORIES, CRAFT_RECIPES, COMMON_ITEMS, RARE_ITEMS
 
@@ -632,119 +631,63 @@ class TradeBoardView(View):
     @auto_defer()
     async def buy_callback(self, interaction: discord.Interaction):
         trade_id = int(interaction.data['values'][0])
+        
+        # [수정] 비동기 DB 연결 사용
         pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            try:
+        try:
+            async with pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    await conn.begin()
-                    await cursor.execute(
-                        "SELECT * FROM global_trades WHERE id=%s FOR UPDATE",
-                        (trade_id,),
-                    )
+                    # 1. 거래 정보 확인
+                    await cursor.execute("SELECT * FROM global_trades WHERE id = %s", (trade_id,))
                     trade = await cursor.fetchone()
+                    
                     if not trade:
-                        await conn.rollback()
-                        return await interaction.followup.send(
-                            "❌ 이미 판매되었거나 존재하지 않는 매물입니다.",
-                            ephemeral=True,
-                        )
-
-                    seller_id = str(trade["seller_id"])
-                    buyer_id = str(self.author.id)
-                    item_name = trade["item_name"]
-                    quantity = int(trade["quantity"])
-
-                    if seller_id == buyer_id:
-                        await cursor.execute(
-                            """INSERT INTO inventory (user_id,item_name,quantity)
-                               VALUES (%s,%s,%s)
-                               ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity)""",
-                            (seller_id, item_name, quantity),
-                        )
-                        await cursor.execute(
-                            "UPDATE users SET data_revision=data_revision+1 WHERE user_id=%s",
-                            (seller_id,),
-                        )
-                        await cursor.execute("DELETE FROM global_trades WHERE id=%s", (trade_id,))
+                        return await interaction.response.send_message("❌ 이미 판매되었거나 존재하지 않는 매물입니다.", ephemeral=True)
+                    
+                    if trade['seller_id'] == self.author.id:
+                        # 본인 물건이면 회수 로직
+                        await cursor.execute("DELETE FROM global_trades WHERE id = %s", (trade_id,))
                         await conn.commit()
-                        fresh = await get_user_data(self.author.id, self.author.display_name)
-                        self.user_data.clear()
-                        self.user_data.update(fresh)
-                        await interaction.followup.send(
-                            f"✅ **{item_name}** 판매를 취소하고 회수했습니다.",
-                            ephemeral=True,
-                        )
+                        
+                        inv = self.user_data.setdefault("inventory", {})
+                        inv[trade['item_name']] = inv.get(trade['item_name'], 0) + trade['quantity']
+                        await self.save_func(self.author.id, self.user_data)
+                        
+                        await interaction.followup.send(f"✅ **{trade['item_name']}** 판매를 취소하고 회수했습니다.", ephemeral=True)
                         await self.update_message(interaction)
                         return
 
-                    price = int(trade["price"])
-                    currency = str(trade["currency"])
-                    if currency not in {"money", "pt"}:
-                        await conn.rollback()
-                        return await interaction.followup.send(
-                            "❌ 지원하지 않는 거래 화폐입니다.",
-                            ephemeral=True,
-                        )
-                    await cursor.execute(
-                        f"""SELECT user_id, {currency} AS balance FROM users
-                            WHERE user_id IN (%s,%s)
-                            ORDER BY user_id FOR UPDATE""",
-                        (buyer_id, seller_id),
-                    )
-                    account_rows = {
-                        str(row["user_id"]): row for row in await cursor.fetchall()
-                    }
-                    buyer = account_rows.get(buyer_id)
-                    if seller_id not in account_rows:
-                        await conn.rollback()
-                        return await interaction.followup.send(
-                            "❌ 판매자 데이터를 찾을 수 없습니다.",
-                            ephemeral=True,
-                        )
-                    if not buyer or int(buyer["balance"] or 0) < price:
-                        await conn.rollback()
-                        return await interaction.followup.send(
-                            f"❌ 잔액이 부족합니다. (필요: {price}{currency})",
-                            ephemeral=True,
-                        )
-
-                    await cursor.execute(
-                        f"""UPDATE users
-                            SET {currency}={currency}-%s,
-                                data_revision=data_revision+1
-                            WHERE user_id=%s""",
-                        (price, buyer_id),
-                    )
-                    await cursor.execute(
-                        """INSERT INTO inventory (user_id,item_name,quantity)
-                           VALUES (%s,%s,%s)
-                           ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity)""",
-                        (buyer_id, item_name, quantity),
-                    )
-                    await cursor.execute(
-                        f"""UPDATE users
-                            SET {currency}={currency}+%s,
-                                data_revision=data_revision+1
-                            WHERE user_id=%s""",
-                        (price, seller_id),
-                    )
-                    await cursor.execute("DELETE FROM global_trades WHERE id=%s", (trade_id,))
+                    # 2. 구매자 자산 확인
+                    price = trade['price']
+                    currency = trade['currency']
+                    user_balance = self.user_data.get(currency, 0)
+                    
+                    if user_balance < price:
+                        return await interaction.followup.send(f"❌ 잔액이 부족합니다. (필요: {price}{currency})", ephemeral=True)
+                    
+                    # 3. 거래 실행 (트랜잭션)
+                    # 3-1. 구매자 차감 및 아이템 지급
+                    self.user_data[currency] -= price
+                    inv = self.user_data.setdefault("inventory", {})
+                    inv[trade['item_name']] = inv.get(trade['item_name'], 0) + trade['quantity']
+                    
+                    # 3-2. 판매자에게 돈 지급 (DB 직접 업데이트)
+                    update_sql = f"UPDATE users SET {currency} = {currency} + %s WHERE user_id = %s"
+                    await cursor.execute(update_sql, (price, trade['seller_id']))
+                    
+                    # 3-3. 거래 삭제
+                    await cursor.execute("DELETE FROM global_trades WHERE id = %s", (trade_id,))
                     await conn.commit()
-                    fresh = await get_user_data(self.author.id, self.author.display_name)
-                    self.user_data.clear()
-                    self.user_data.update(fresh)
-                    await interaction.followup.send(
-                        f"✅ **{item_name}** 구매 완료!",
-                        ephemeral=True,
-                    )
+                    
+                    # 3-4. 구매자 데이터 저장
+                    await self.save_func(self.author.id, self.user_data)
+                    
+                    await interaction.followup.send(f"✅ **{trade['item_name']}** 구매 완료!", ephemeral=True)
                     await self.update_message(interaction)
-            except Exception as e:
-                await conn.rollback()
-                print(f"Trade Error: {e}")
-                await interaction.followup.send(
-                    "❌ 거래 처리 중 오류가 발생했습니다.",
-                    ephemeral=True,
-                )
+
+        except Exception as e:
+            print(f"Trade Error: {e}")
+            await interaction.followup.send("❌ 거래 처리 중 오류가 발생했습니다.", ephemeral=True)
 
 
 class RegisterTradeModal(Modal):
@@ -789,59 +732,28 @@ class RegisterTradeModal(Modal):
         if inv.get(item, 0) < qty:
             return await interaction.response.send_message(f"❌ 아이템이 부족합니다. (보유: {inv.get(item, 0)}개)", ephemeral=True)
 
-        # Listing creation and inventory removal must commit together.
+        # DB 등록 [수정] 비동기 처리
         pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            try:
+        try:
+            async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    await conn.begin()
-                    await cursor.execute(
-                        """SELECT quantity FROM inventory
-                           WHERE user_id=%s AND item_name=%s FOR UPDATE""",
-                        (str(interaction.user.id), item),
-                    )
-                    stored = await cursor.fetchone()
-                    if not stored or int(stored[0]) < qty:
-                        await conn.rollback()
-                        return await interaction.response.send_message(
-                            "❌ 등록 직전에 재고가 변경되었습니다. 메뉴를 다시 열어주세요.",
-                            ephemeral=True,
-                        )
-                    if int(stored[0]) == qty:
-                        await cursor.execute(
-                            "DELETE FROM inventory WHERE user_id=%s AND item_name=%s",
-                            (str(interaction.user.id), item),
-                        )
-                    else:
-                        await cursor.execute(
-                            """UPDATE inventory SET quantity=quantity-%s
-                               WHERE user_id=%s AND item_name=%s""",
-                            (qty, str(interaction.user.id), item),
-                        )
-                    await cursor.execute(
-                        "UPDATE users SET data_revision=data_revision+1 WHERE user_id=%s",
-                        (str(interaction.user.id),),
-                    )
                     await cursor.execute("""
                         INSERT INTO global_trades (seller_id, seller_name, item_name, quantity, price, currency)
                         VALUES (%s, %s, %s, %s, %s, %s)
                     """, (interaction.user.id, interaction.user.display_name, item, qty, price, currency))
                     await conn.commit()
-                fresh = await get_user_data(interaction.user.id, interaction.user.display_name)
-                self.user_data.clear()
-                self.user_data.update(fresh)
-                await interaction.response.send_message(
-                    f"✅ **{item} x{qty}** 판매 등록 완료!",
-                    ephemeral=True,
-                )
-                await self.parent_view.update_message(interaction)
-            except Exception as e:
-                await conn.rollback()
-                print(f"Register Error: {e}")
-                await interaction.response.send_message(
-                    "❌ 등록 중 오류가 발생했습니다.",
-                    ephemeral=True,
-                )
+            
+            # 아이템 차감 및 저장
+            inv[item] -= qty
+            if inv[item] <= 0: del inv[item]
+            await self.save_func(interaction.user.id, self.user_data)
+            
+            await interaction.response.send_message(f"✅ **{item} x{qty}** 판매 등록 완료!", ephemeral=True)
+            await self.parent_view.update_message(interaction)
+            
+        except Exception as e:
+            print(f"Register Error: {e}")
+            await interaction.response.send_message("❌ 등록 중 오류가 발생했습니다.", ephemeral=True)
 
 
 class SendMoneyView(discord.ui.View):
@@ -882,14 +794,18 @@ class SendMoneyAmountModal(Modal):
         currency_str = self.currency.value.strip()
         target_id = self.target_user.id
 
+        # [수정] get_user_data_func는 비동기이므로 await 필수
+        try:
+            target_data = await self.get_user_data_func(target_id, self.target_user.display_name)
+        except:
+            await interaction.response.send_message("❌ 유효하지 않은 유저 ID입니다.", ephemeral=True)
+            return
+
         if not amount_str.isdigit():
             await interaction.response.send_message("❌ 보낼 금액은 숫자여야 합니다.", ephemeral=True)
             return
         
         amount = int(amount_str)
-        if amount <= 0:
-            await interaction.response.send_message("❌ 보낼 금액은 1 이상이어야 합니다.", ephemeral=True)
-            return
         
         if currency_str in ["돈", "money", "원"]:
             key = "money"
@@ -901,60 +817,19 @@ class SendMoneyAmountModal(Modal):
             await interaction.response.send_message("❌ 화폐 종류는 '돈' 또는 'pt'여야 합니다.", ephemeral=True)
             return
 
-        sender_id = str(interaction.user.id)
-        target_key = str(target_id)
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            try:
-                async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    await conn.begin()
-                    await cursor.execute(
-                        f"""SELECT user_id, {key} AS balance FROM users
-                            WHERE user_id IN (%s,%s)
-                            ORDER BY user_id FOR UPDATE""",
-                        (sender_id, target_key),
-                    )
-                    rows = {str(row["user_id"]): row for row in await cursor.fetchall()}
-                    if sender_id not in rows or target_key not in rows:
-                        await conn.rollback()
-                        return await interaction.response.send_message(
-                            "❌ 송금 대상의 게임 데이터를 찾을 수 없습니다.",
-                            ephemeral=True,
-                        )
-                    balance = int(rows[sender_id]["balance"] or 0)
-                    if balance < amount:
-                        await conn.rollback()
-                        return await interaction.response.send_message(
-                            f"❌ 잔액이 부족합니다. (보유: {balance}{unit})",
-                            ephemeral=True,
-                        )
-                    await cursor.execute(
-                        f"""UPDATE users
-                            SET {key}={key}-%s, data_revision=data_revision+1
-                            WHERE user_id=%s""",
-                        (amount, sender_id),
-                    )
-                    await cursor.execute(
-                        f"""UPDATE users
-                            SET {key}={key}+%s, data_revision=data_revision+1
-                            WHERE user_id=%s""",
-                        (amount, target_key),
-                    )
-                    await conn.commit()
-                fresh = await get_user_data(interaction.user.id, interaction.user.display_name)
-                self.user_data.clear()
-                self.user_data.update(fresh)
-                await interaction.response.send_message(
-                    f"✅ **송금 완료!**\n{self.target_user.mention}님에게 {amount}{unit}을 보냈습니다.",
-                    ephemeral=True,
-                )
-            except Exception as e:
-                await conn.rollback()
-                print(f"Transfer Error: {e}")
-                await interaction.response.send_message(
-                    "❌ 송금 처리 중 오류가 발생했습니다.",
-                    ephemeral=True,
-                )
+        if self.user_data[key] < amount:
+            await interaction.response.send_message(f"❌ 잔액이 부족합니다. (보유: {self.user_data[key]}{unit})", ephemeral=True)
+            return
+
+        # 송금 실행
+        self.user_data[key] -= amount
+        target_data[key] += amount
+        
+        # [수정] save_func 비동기 호출
+        await self.save_func(interaction.user.id, self.user_data)
+        await self.save_func(int(target_id), target_data)
+
+        await interaction.response.send_message(f"✅ **송금 완료!**\n{self.target_user.mention}님에게 {amount}{unit}을 보냈습니다.", ephemeral=True)
 
 # ---------------------------------------------------------
 # 2. 카페 주문 (버프 음식)

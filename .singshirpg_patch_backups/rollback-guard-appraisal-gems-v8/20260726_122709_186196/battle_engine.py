@@ -1,5 +1,4 @@
 # battle_engine.py
-# rollback-guard-appraisal-gems-v8
 import random
 from gem_effects import (
     artifact_modifier,
@@ -286,18 +285,18 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
             attack_index2 += 1
         if t1 != "none":
             if i == 0:
-                v1 += turn_first_dice_bonus(char1)
+                v1 += turn_first_dice_bonus(art1)
             if len(valid1) == 1:
-                v1 += single_dice_bonus(char1)
-            v1 += multi_attack_bonus(char1, attack_index1)
-            v1 += low_mental_bonus(char1, char1.current_mental, char1.max_mental)
+                v1 += single_dice_bonus(art1)
+            v1 += multi_attack_bonus(art1, attack_index1)
+            v1 += low_mental_bonus(art1, char1.current_mental, char1.max_mental)
         if t2 != "none":
             if i == 0:
-                v2 += turn_first_dice_bonus(char2)
+                v2 += turn_first_dice_bonus(art2)
             if len(valid2) == 1:
-                v2 += single_dice_bonus(char2)
-            v2 += multi_attack_bonus(char2, attack_index2)
-            v2 += low_mental_bonus(char2, char2.current_mental, char2.max_mental)
+                v2 += single_dice_bonus(art2)
+            v2 += multi_attack_bonus(art2, attack_index2)
+            v2 += low_mental_bonus(art2, char2.current_mental, char2.max_mental)
         
         if i == 0: first_type1, first_type2 = t1, t2
         if t1 == "defense": total_def1 += v1
@@ -446,8 +445,8 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if state2.get("guardian_turn") != turn_count:
             state2["guardian_turn"] = turn_count
             state2["guardian_turn_used"] = False
-        dmg1 = reduce_turn_first_damage(char1, dmg1, state1)
-        dmg2 = reduce_turn_first_damage(char2, dmg2, state2)
+        dmg1 = reduce_turn_first_damage(art1, dmg1, state1)
+        dmg2 = reduce_turn_first_damage(art2, dmg2, state2)
 
         # 출혈 추가 피해
         bleed1 = char1.status_effects.get("bleed", 0)

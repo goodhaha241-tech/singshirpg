@@ -1,4 +1,3 @@
--- rollback-guard-appraisal-gems-v8
 CREATE DATABASE IF NOT EXISTS discord_bot_db
     DEFAULT CHARACTER SET = 'utf8mb4'
     DEFAULT COLLATE = 'utf8mb4_unicode_ci';
@@ -44,7 +43,6 @@ CREATE TABLE IF NOT EXISTS users (
     guild_rank VARCHAR(20),
     guild_data JSON,
     characters JSON,
-    data_revision BIGINT NOT NULL DEFAULT 0,
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -235,15 +233,5 @@ CREATE TABLE IF NOT EXISTS user_life_data (
     user_id VARCHAR(50) PRIMARY KEY,
     data JSON NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS user_save_history (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(50) NOT NULL,
-    revision BIGINT NOT NULL,
-    data JSON NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_user_revision (user_id, revision),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
