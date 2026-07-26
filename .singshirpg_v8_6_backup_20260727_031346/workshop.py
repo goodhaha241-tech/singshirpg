@@ -1,5 +1,4 @@
 # workshop.py
-# comparison-select-ui-v8.6.6
 import discord
 import json
 import os
@@ -176,7 +175,7 @@ class WorkshopRerollView(discord.ui.View):
         super().__init__(timeout=60)
         self.author, self.user_data, self.save_func = author, user_data, save_func
         self.page = 0
-        self.PER_PAGE = 8
+        self.PER_PAGE = 7
         self.filter_option = "all"
         self.last_rerolled_key = None
         self.update_components()
@@ -616,7 +615,7 @@ class ModifierView(discord.ui.View):
         super().__init__(timeout=60)
         self.author, self.user_data, self.save_func = author, user_data, save_func
         self.page = 0
-        self.PER_PAGE = 8
+        self.PER_PAGE = 7
         self.update_components()
 
     def get_embed(self):

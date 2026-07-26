@@ -1,5 +1,4 @@
 # crafting.py
-# comparison-select-ui-v8.6.6
 import discord
 import json
 import os
@@ -114,7 +113,7 @@ class RegionCraftView(discord.ui.View):
         self.save_func = save_func
         self.region_name = region_name
         self.page = 0
-        self.PER_PAGE = 8
+        self.PER_PAGE = 7 
         self.update_components()
 
     async def reload_data(self):
@@ -169,29 +168,14 @@ class RegionCraftView(discord.ui.View):
         self.add_item(select)
             
         if total_pages > 1:
-            prev = discord.ui.Button(
-                label="◀️ 이전",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=self.page == 0,
-            )
-            counter = discord.ui.Button(
-                label=f"{self.page + 1}/{total_pages}",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=True,
-            )
-            nxt = discord.ui.Button(
-                label="다음 ▶️",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=self.page >= total_pages - 1,
-            )
-            prev.callback = self.prev_page
-            nxt.callback = self.next_page
-            self.add_item(prev)
-            self.add_item(counter)
-            self.add_item(nxt)
+            if self.page > 0:
+                prev = discord.ui.Button(label="◀️ 이전", style=discord.ButtonStyle.secondary, row=1)
+                prev.callback = self.prev_page
+                self.add_item(prev)
+            if self.page < total_pages - 1:
+                nxt = discord.ui.Button(label="다음 ▶️", style=discord.ButtonStyle.secondary, row=1)
+                nxt.callback = self.next_page
+                self.add_item(nxt)
                 
         back_btn = discord.ui.Button(label="⬅️ 지역 선택", style=discord.ButtonStyle.gray, row=2)
         back_btn.callback = self.go_back
@@ -385,72 +369,27 @@ class CraftAmountView(discord.ui.View):
 
 class MissingMaterialCraftView(discord.ui.View):
     """부족한 중간 재료를 현재 제작 흐름에서 바로 만든다."""
-    PER_PAGE = 8
-
     def __init__(self, author, user_data, save_func, craftable, parent_view):
         super().__init__(timeout=90)
         self.author, self.user_data, self.save_func = author, user_data, save_func
         self.craftable, self.parent_view = craftable, parent_view
         self.selected_key = next(iter(craftable))
-        self.page = 0
-        self._rebuild()
-
-    def _rebuild(self):
-        self.clear_items()
-        entries = list(self.craftable.items())
-        total_pages = max(1, (len(entries) + self.PER_PAGE - 1) // self.PER_PAGE)
-        self.page = max(0, min(self.page, total_pages - 1))
-        visible = entries[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
-        if visible and self.selected_key not in {key for key, _ in visible}:
-            self.selected_key = visible[0][0]
-        inventory = self.user_data.get("inventory", {})
         select = discord.ui.Select(
-            placeholder=f"바로 만들 부족 재료 선택 ({self.page + 1}/{total_pages})",
+            placeholder="바로 만들 부족 재료 선택",
             options=[
                 discord.SelectOption(
                     label=recipe["result"],
-                    description=(
-                        f"{shortage}개 부족 · "
-                        + " · ".join(
-                            f"{item} {int(inventory.get(item, 0))}/{int(amount)}"
-                            for item, amount in recipe["need"].items()
-                        )
-                    )[:100],
+                    description=f"{shortage}개 부족",
                     value=key,
-                    default=key == self.selected_key,
                 )
-                for key, (recipe, shortage) in visible
+                for key, (recipe, shortage) in list(craftable.items())[:8]
             ],
             row=0,
         )
         select.callback = self.select_recipe
         self.add_item(select)
-        if total_pages > 1:
-            previous = discord.ui.Button(
-                label="이전",
-                disabled=self.page == 0,
-                style=discord.ButtonStyle.secondary,
-                row=1,
-            )
-            counter = discord.ui.Button(
-                label=f"{self.page + 1}/{total_pages}",
-                disabled=True,
-                style=discord.ButtonStyle.secondary,
-                row=1,
-            )
-            following = discord.ui.Button(
-                label="다음",
-                disabled=self.page >= total_pages - 1,
-                style=discord.ButtonStyle.secondary,
-                row=1,
-            )
-            previous.callback = self.prev_page
-            following.callback = self.next_page
-            self.add_item(previous)
-            self.add_item(counter)
-            self.add_item(following)
-        make = discord.ui.Button(label="필요량 제작", style=discord.ButtonStyle.success, row=2)
-        back = discord.ui.Button(label="원래 제작으로", style=discord.ButtonStyle.secondary, row=2)
+        make = discord.ui.Button(label="필요량 제작", style=discord.ButtonStyle.success, row=1)
+        back = discord.ui.Button(label="원래 제작으로", style=discord.ButtonStyle.secondary, row=1)
         make.callback, back.callback = self.make_needed, self.go_back
         self.add_item(make); self.add_item(back)
 
@@ -475,17 +414,6 @@ class MissingMaterialCraftView(discord.ui.View):
 
     async def select_recipe(self, interaction):
         self.selected_key = interaction.data["values"][0]
-        self._rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def prev_page(self, interaction):
-        self.page = max(0, self.page - 1)
-        self._rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def next_page(self, interaction):
-        self.page += 1
-        self._rebuild()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
     async def make_needed(self, interaction):
@@ -538,31 +466,12 @@ class BoxOpenView(discord.ui.View):
         self.clear_items()
         box_types = [("낡은 보물상자", "낡은 열쇠"), ("섬세한 보물상자", "섬세한 열쇠"), ("깔끔한 보물상자", "깔끔한 열쇠")]
         inv = self.user_data.get("inventory", {})
-        available = [
-            (box, key)
-            for box, key in box_types
-            if int(inv.get(box, 0)) > 0 and int(inv.get(key, 0)) > 0
-        ]
-        if available:
-            select = discord.ui.Select(
-                placeholder="개봉할 보물상자 선택",
-                options=[
-                    discord.SelectOption(
-                        label=box,
-                        value=str(index),
-                        description=f"상자 {int(inv.get(box, 0))}개 · 열쇠 {int(inv.get(key, 0))}개",
-                    )
-                    for index, (box, key) in enumerate(available)
-                ],
-                row=0,
-            )
-
-            async def select_box(interaction):
-                box, key = available[int(interaction.data["values"][0])]
-                await self.open_box(interaction, box, key)
-
-            select.callback = select_box
-            self.add_item(select)
+        
+        for box, key in box_types:
+            box_count = inv.get(box, 0)
+            btn = discord.ui.Button(label=f"{box} ({box_count})", style=discord.ButtonStyle.secondary)
+            btn.callback = self.make_open_callback(box, key)
+            self.add_item(btn)
             
         self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=1, custom_id="back"))
 
@@ -573,17 +482,17 @@ class BoxOpenView(discord.ui.View):
             await i.response.edit_message(content="🔨 제작소", embed=None, view=self.parent_view)
         return True
 
-    async def open_box(self, interaction, box_name, key_name):
-        if interaction.user != self.author:
-            return
-        await self.reload_data()
-        inv = self.user_data.get("inventory", {})
-        if inv.get(box_name, 0) <= 0:
-            return await interaction.response.send_message(f"❌ {box_name} 없음", ephemeral=True)
-        if inv.get(key_name, 0) <= 0:
-            return await interaction.response.send_message(f"❌ {key_name} 필요", ephemeral=True)
-        view = BoxAmountView(self.author, self.user_data, self.save_func, box_name, key_name, self)
-        await interaction.response.edit_message(content=f"🗝️ **{box_name}** 개봉", embed=None, view=view)
+    def make_open_callback(self, box_name, key_name):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user != self.author: return
+            await self.reload_data()
+            inv = self.user_data.get("inventory", {})
+            if inv.get(box_name, 0) <= 0: return await interaction.response.send_message(f"❌ {box_name} 없음", ephemeral=True)
+            if inv.get(key_name, 0) <= 0: return await interaction.response.send_message(f"❌ {key_name} 필요", ephemeral=True)
+            
+            view = BoxAmountView(self.author, self.user_data, self.save_func, box_name, key_name, self)
+            await interaction.response.edit_message(content=f"🗝️ **{box_name}** 개봉", embed=None, view=view)
+        return callback
 
 class BoxAmountView(discord.ui.View):
     def __init__(self, author, user_data, save_func, box_name, key_name, parent_view):

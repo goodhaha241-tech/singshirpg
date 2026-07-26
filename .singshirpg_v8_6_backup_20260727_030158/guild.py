@@ -33,7 +33,6 @@ from gem_effects import (
 
 # guild-pvp-stability-v7.2
 # raid-private-command-panel-v8.5
-# comparison-select-ui-v8.6.6
 # guild-shop-training-v8.6
 # guild-workshop-warehouse-v8.6.1
 # guild-rank-training-score-v8.6.2
@@ -326,7 +325,7 @@ async def advance_guild_world_turn(user, amount=1):
 
 class InventoryManageView(discord.ui.View):
     """재고를 보면서 수량 버튼으로 납품하거나 공용 창고에 반입한다."""
-    PER_PAGE = 8
+    PER_PAGE = 4
 
     def __init__(self, author, guild_info, mode="donate"):
         super().__init__(timeout=180)
@@ -396,41 +395,24 @@ class InventoryManageView(discord.ui.View):
         self.add_item(store)
 
         visible = self.items[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
-        if visible:
-            item_select = Select(
-                placeholder=f"처리할 재고 선택 ({self.page + 1}/{total_pages})",
+        if not visible:
+            self.add_item(Button(label="옮길 수 있는 재고가 없습니다", disabled=True, row=1))
+        for item_name, count in visible:
+            selected = item_name == self.selected_item
+            button = Button(
+                label=f"{item_name} ×{count}",
+                style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
                 row=1,
-                options=[
-                    discord.SelectOption(
-                        label=f"{item_name} ×{count}",
-                        value=item_name,
-                        description=(
-                            (
-                                f"개인 {count}개 · 1개 납품 시 "
-                                f"{_format_token_cost(_scale_donation_rewards(ITEM_TOKEN_VALUES[item_name], self.guild_info.get('level', 1)))}"
-                            )
-                            if self.mode == "donate"
-                            else (
-                                f"개인 {count}개 · 공용 {int(self.guild_stock.get(item_name, 0))}개"
-                            )
-                        )[:100],
-                        default=item_name == self.selected_item,
-                    )
-                    for item_name, count in visible
-                ],
             )
 
-            async def select_item(interaction):
-                self.selected_item = interaction.data["values"][0]
-                self.quantity = min(
-                    1,
-                    int(self.user_data.get("inventory", {}).get(self.selected_item, 0)),
-                )
+            async def select_item(interaction, name=item_name):
+                self.selected_item = name
+                self.quantity = min(1, int(self.user_data.get("inventory", {}).get(name, 0)))
                 await self.setup_view()
                 await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
-            item_select.callback = select_item
-            self.add_item(item_select)
+            button.callback = select_item
+            self.add_item(button)
 
         previous = Button(label="이전", disabled=self.page == 0, row=2)
         counter = Button(label=f"{self.page + 1}/{total_pages}", disabled=True, row=2)
@@ -622,7 +604,7 @@ class InventoryManageView(discord.ui.View):
 
 class GuildWorkshopView(discord.ui.View):
     """길드 제작 재료를 개인 또는 공용 재고 한쪽에서 선택해 사용한다."""
-    PER_PAGE = 8
+    PER_PAGE = 4
 
     def __init__(self, author, guild_info):
         super().__init__(timeout=180)
@@ -672,37 +654,20 @@ class GuildWorkshopView(discord.ui.View):
         self.add_item(shared)
 
         visible = self.recipe_names[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
-        if visible:
-            if self.selected_recipe not in visible:
-                self.selected_recipe = visible[0]
-            stock = self.personal_stock if self.source == "personal" else self.guild_stock
-            recipe_select = Select(
-                placeholder=f"제작할 레시피 선택 ({self.page + 1}/{total_pages})",
+        for recipe_name in visible:
+            button = Button(
+                label=recipe_name,
+                style=discord.ButtonStyle.success if recipe_name == self.selected_recipe else discord.ButtonStyle.secondary,
                 row=1,
-                options=[
-                    discord.SelectOption(
-                        label=recipe_name,
-                        value=recipe_name,
-                        description=(
-                            " · ".join(
-                                f"{material} {int(stock.get(material, 0))}/{int(need)}"
-                                for material, need in GUILD_WORKSHOP_RECIPES[recipe_name]["need"].items()
-                            )
-                            + f" · {GUILD_WORKSHOP_RECIPES[recipe_name]['description']}"
-                        )[:100],
-                        default=recipe_name == self.selected_recipe,
-                    )
-                    for recipe_name in visible
-                ],
             )
 
-            async def select_recipe(interaction):
-                self.selected_recipe = interaction.data["values"][0]
+            async def select_recipe(interaction, name=recipe_name):
+                self.selected_recipe = name
                 await self.setup_view()
                 await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
-            recipe_select.callback = select_recipe
-            self.add_item(recipe_select)
+            button.callback = select_recipe
+            self.add_item(button)
 
         previous = Button(label="이전", disabled=self.page == 0, row=2)
         counter = Button(label=f"{self.page + 1}/{total_pages}", disabled=True, row=2)
@@ -943,7 +908,7 @@ class GuildMissionView(discord.ui.View):
 
 
 class GuildShopView(discord.ui.View):
-    PER_PAGE = 8
+    PER_PAGE = 4
 
     def __init__(self, author, guild_info, parent_view):
         super().__init__(timeout=120)
@@ -986,11 +951,6 @@ class GuildShopView(discord.ui.View):
                 "stock": -1,
                 "initial_stock": -1,
             })
-        self.items = [
-            item
-            for item in self.items
-            if item.get("persistent") or int(item.get("stock", 0)) > 0
-        ]
         valid_slots = {int(item["slot_index"]) for item in self.items}
         if self.selected_slot not in valid_slots and self.items:
             self.selected_slot = int(self.items[0]["slot_index"])
@@ -1007,42 +967,26 @@ class GuildShopView(discord.ui.View):
         total_pages = max(1, (len(self.items) + self.PER_PAGE - 1) // self.PER_PAGE)
         self.page = max(0, min(self.page, total_pages - 1))
         start = self.page * self.PER_PAGE
-        visible = self.items[start:start + self.PER_PAGE]
-        if visible:
-            visible_slots = {int(item["slot_index"]) for item in visible}
-            if int(self.selected_slot) not in visible_slots:
-                self.selected_slot = int(visible[0]["slot_index"])
-            shop_select = Select(
-                placeholder=f"길드 상품 선택 ({self.page + 1}/{total_pages})",
+        for item in self.items[start:start + self.PER_PAGE]:
+            slot = int(item["slot_index"])
+            selected = slot == int(self.selected_slot)
+            button = Button(
+                label=f"{'✓ ' if selected else ''}{item['item_name']}"[:80],
+                style=discord.ButtonStyle.primary if selected else discord.ButtonStyle.secondary,
+                disabled=(
+                    not item.get("persistent")
+                    and int(item.get("stock", 0)) <= 0
+                ),
                 row=0,
-                options=[
-                    discord.SelectOption(
-                        label=item["item_name"],
-                        value=str(int(item["slot_index"])),
-                        description=(
-                            _format_token_cost(item.get("cost", {}))
-                            + " · "
-                            + (
-                                "상시 판매"
-                                if item.get("persistent")
-                                else f"재고 {int(item.get('stock', 0))}개"
-                            )
-                            + " · "
-                            + (item.get("description") or "길드 상점 상품")
-                        )[:100],
-                        default=int(item["slot_index"]) == int(self.selected_slot),
-                    )
-                    for item in visible
-                ],
             )
 
-            async def choose(interaction):
-                self.selected_slot = int(interaction.data["values"][0])
+            async def choose(interaction, selected_slot=slot):
+                self.selected_slot = selected_slot
                 self.rebuild()
                 await interaction.response.edit_message(content=None, embed=await self.get_embed(), view=self)
 
-            shop_select.callback = choose
-            self.add_item(shop_select)
+            button.callback = choose
+            self.add_item(button)
 
         if total_pages > 1:
             previous = Button(label="이전", disabled=self.page == 0, row=1)

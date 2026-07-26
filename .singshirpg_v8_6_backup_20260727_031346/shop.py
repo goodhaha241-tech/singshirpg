@@ -1,5 +1,4 @@
 # shop.py
-# comparison-select-ui-v8.6.6
 import discord
 import json
 import os
@@ -258,7 +257,7 @@ class BuyDropdownView(discord.ui.View):
         self.selected_item = None
         self.all_options = all_options
         self.page = 0
-        self.PER_PAGE = 8
+        self.PER_PAGE = 7
         self.buy_amount = 1
         
         self.update_view()
@@ -503,7 +502,7 @@ class SellItemView(discord.ui.View):
         self.region_key = region_key
         self.selected_item = None
         self.page = 0
-        self.PER_PAGE = 8
+        self.PER_PAGE = 7
         
         # 초기 옵션 로드
         self.all_options = self.generate_options()

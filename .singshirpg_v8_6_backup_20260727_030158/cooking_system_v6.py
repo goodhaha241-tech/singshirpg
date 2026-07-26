@@ -2,7 +2,6 @@
 # rollback-guard-appraisal-gems-v8
 # pve-gem-runtime-v8.2
 # gem-visibility-tools-v8.3
-# cooking-select-details-v8.6.5
 from __future__ import annotations
 
 import random
@@ -98,20 +97,6 @@ def format_recipe_materials(user_data: dict[str, Any], recipe_name: str, count: 
         f"{item} {have}/{need}"
         for item, have, need in recipe_material_status(user_data, recipe_name, count)
     )
-
-
-def format_recipe_option(user_data: dict[str, Any], recipe_name: str, count: int = 1) -> str:
-    materials = format_recipe_materials(user_data, recipe_name, count)
-    effect = RECIPES.get(recipe_name, {}).get("effect", "효과 정보 없음")
-    return f"재료 {materials} · 효과 {effect}"[:100]
-
-
-def food_recipe_name(food_key: str) -> str:
-    return food_key.split(" ", 1)[1] if " " in food_key else food_key
-
-
-def food_quality(food_key: str) -> str:
-    return food_key.split(" ", 1)[0] if " " in food_key else "보통"
 
 
 def research_materials(category: str) -> list[str]:
@@ -548,21 +533,10 @@ class SellFoodView(discord.ui.View):
     def rebuild(self):
         self.clear_items()
         visible = self.foods[self.page * 8:self.page * 8 + 8]
-        total_pages = max(1, (len(self.foods) + 7) // 8)
         if visible:
             select = discord.ui.Select(
-                placeholder=f"판매할 완성 요리 선택 ({self.page + 1}/{total_pages})",
-                options=[
-                    discord.SelectOption(
-                        label=f"{name} ×{count}",
-                        value=name,
-                        description=(
-                            f"1개 판매가 "
-                            f"{int(RECIPES.get(food_recipe_name(name), {}).get('price', 0) * COOKING_QUALITY_MULTIPLIER.get(food_quality(name), 1)):,}원"
-                        )[:100],
-                    )
-                    for name, count in visible
-                ],
+                placeholder="판매할 완성 요리 선택",
+                options=[discord.SelectOption(label=f"{name} ×{count}", value=name) for name, count in visible],
             )
             select.callback = self.selected
             self.add_item(select)
@@ -574,15 +548,11 @@ class SellFoodView(discord.ui.View):
     def _page_buttons(self):
         if len(self.foods) <= 8: return
         prev = discord.ui.Button(label="이전", disabled=self.page == 0)
-        page = discord.ui.Button(
-            label=f"{self.page + 1}/{(len(self.foods) + 7) // 8}",
-            disabled=True,
-        )
         nxt = discord.ui.Button(label="다음", disabled=(self.page + 1) * 8 >= len(self.foods))
         async def move(i, delta):
             self.page += delta; self.rebuild(); await i.response.edit_message(view=self)
         prev.callback = lambda i: move(i, -1); nxt.callback = lambda i: move(i, 1)
-        self.add_item(prev); self.add_item(page); self.add_item(nxt)
+        self.add_item(prev); self.add_item(nxt)
 
     async def selected(self, interaction):
         food = interaction.data["values"][0]
@@ -610,34 +580,20 @@ class UseFoodView(discord.ui.View):
     def rebuild(self):
         self.clear_items()
         visible = self.foods[self.page * 8:self.page * 8 + 8]
-        total_pages = max(1, (len(self.foods) + 7) // 8)
         if visible:
             select = discord.ui.Select(
-                placeholder=f"먹을 완성 요리 선택 ({self.page + 1}/{total_pages})",
-                options=[
-                    discord.SelectOption(
-                        label=f"{name} ×{count}",
-                        value=name,
-                        description=(
-                            f"효과: {RECIPES.get(food_recipe_name(name), {}).get('effect', '정보 없음')}"
-                        )[:100],
-                    )
-                    for name, count in visible
-                ],
+                placeholder="먹을 완성 요리 선택",
+                options=[discord.SelectOption(label=f"{name} ×{count}", value=name) for name, count in visible],
             )
             select.callback = self.selected
             self.add_item(select)
         if len(self.foods) > 8:
             prev = discord.ui.Button(label="이전", disabled=self.page == 0)
-            page = discord.ui.Button(
-                label=f"{self.page + 1}/{total_pages}",
-                disabled=True,
-            )
             nxt = discord.ui.Button(label="다음", disabled=(self.page + 1) * 8 >= len(self.foods))
             async def move(i, delta):
                 self.page += delta; self.rebuild(); await i.response.edit_message(view=self)
             prev.callback = lambda i: move(i, -1); nxt.callback = lambda i: move(i, 1)
-            self.add_item(prev); self.add_item(page); self.add_item(nxt)
+            self.add_item(prev); self.add_item(nxt)
         back = discord.ui.Button(label="요리로 돌아가기", style=discord.ButtonStyle.secondary, row=4)
         back.callback = lambda interaction: _back_to_cooking(self.parent, interaction)
         self.add_item(back)
@@ -662,14 +618,13 @@ class RecipeSelectView(discord.ui.View):
     def rebuild(self):
         self.clear_items()
         visible = self.recipes[self.page * 8:self.page * 8 + 8]
-        total_pages = max(1, (len(self.recipes) + 7) // 8)
         select = discord.ui.Select(
-            placeholder=f"레시피 선택 · {self.count}개 조리 ({self.page + 1}/{total_pages})",
+            placeholder="레시피 선택",
             options=[
                 discord.SelectOption(
                     label=r,
                     value=r,
-                    description=format_recipe_option(self.parent.user_data, r, self.count),
+                    description=format_recipe_materials(self.parent.user_data, r, self.count)[:100],
                 )
                 for r in visible
             ],
@@ -678,15 +633,11 @@ class RecipeSelectView(discord.ui.View):
         self.add_item(select)
         if len(self.recipes) > 8:
             prev = discord.ui.Button(label="이전", disabled=self.page == 0)
-            page = discord.ui.Button(
-                label=f"{self.page + 1}/{total_pages}",
-                disabled=True,
-            )
             nxt = discord.ui.Button(label="다음", disabled=(self.page + 1) * 8 >= len(self.recipes))
             async def move(i, delta):
                 self.page += delta; self.rebuild(); await i.response.edit_message(view=self)
             prev.callback = lambda i: move(i, -1); nxt.callback = lambda i: move(i, 1)
-            self.add_item(prev); self.add_item(page); self.add_item(nxt)
+            self.add_item(prev); self.add_item(nxt)
         back = discord.ui.Button(label="요리로 돌아가기", style=discord.ButtonStyle.secondary, row=4)
         back.callback = lambda interaction: _back_to_cooking(self.parent, interaction)
         self.add_item(back)
@@ -714,32 +665,9 @@ class ResearchView(discord.ui.View):
     def __init__(self, parent):
         super().__init__(timeout=90)
         self.parent = parent
-        inventory = parent.user_data.setdefault("inventory", {})
-        options = []
-        for category in RESEARCH_POOLS:
-            if not research_available(parent.user_data, category):
-                continue
-            stocks = ", ".join(
-                f"{item} {int(inventory.get(item, 0))}/{RECIPE_RESEARCH_MATERIALS}"
-                for item in research_materials(category)
-            )
-            options.append(
-                discord.SelectOption(
-                    label=f"{category} 연구",
-                    value=category,
-                    description=(
-                        f"재료 {stocks or '없음'} · 연구비 {RECIPE_RESEARCH_MONEY:,}원"
-                    )[:100],
-                )
-            )
-        if options:
-            category_select = discord.ui.Select(
-                placeholder="연구 가능한 계열 선택",
-                options=options[:8],
-                row=0,
-            )
-            category_select.callback = self.select_category
-            self.add_item(category_select)
+        for item in self.children:
+            if isinstance(item, discord.ui.Button) and item.label in RESEARCH_POOLS:
+                item.disabled = not research_available(parent.user_data, item.label)
         back = discord.ui.Button(label="요리로 돌아가기", style=discord.ButtonStyle.secondary, row=1)
         back.callback = lambda interaction: _back_to_cooking(self.parent, interaction)
         self.add_item(back)
@@ -764,7 +692,7 @@ class ResearchView(discord.ui.View):
                 if name not in cooking["unlocked_recipes"]
             ]
             stocks = " · ".join(
-                f"{item} {int(inventory.get(item, 0))}/{RECIPE_RESEARCH_MATERIALS}"
+                f"{item} {int(inventory.get(item, 0))}개"
                 for item in research_materials(category)
             ) or "사용 가능한 재료 없음"
             state = "연구 가능" if research_available(self.parent.user_data, category) else "연구 불가"
@@ -787,8 +715,12 @@ class ResearchView(discord.ui.View):
         refreshed = ResearchView(self.parent)
         await interaction.response.edit_message(content=None, embed=refreshed.get_embed(msg), view=refreshed)
 
-    async def select_category(self, interaction):
-        await self.run(interaction, interaction.data["values"][0])
+    @discord.ui.button(label="작물", style=discord.ButtonStyle.success)
+    async def crop(self, i, b): await self.run(i, "작물")
+    @discord.ui.button(label="수산", style=discord.ButtonStyle.primary)
+    async def fish(self, i, b): await self.run(i, "수산")
+    @discord.ui.button(label="특수", style=discord.ButtonStyle.danger)
+    async def special(self, i, b): await self.run(i, "특수")
 
 
 class CookingDeliveryView(discord.ui.View):
@@ -805,35 +737,20 @@ class CookingDeliveryView(discord.ui.View):
     def rebuild(self):
         self.clear_items()
         visible = self.foods[self.page * 8:self.page * 8 + 8]
-        total_pages = max(1, (len(self.foods) + 7) // 8)
         if visible:
             select = discord.ui.Select(
-                placeholder=f"납품할 완성 요리 선택 ({self.page + 1}/{total_pages})",
-                options=[
-                    discord.SelectOption(
-                        label=f"{name} ×{count}",
-                        value=name,
-                        description=(
-                            f"1개당 실적 {delivery_points(food_quality(name))} · "
-                            f"{int(RECIPES.get(food_recipe_name(name), {}).get('price', 0) * 0.8):,}원"
-                        )[:100],
-                    )
-                    for name, count in visible
-                ],
+                placeholder="납품할 완성 요리 선택",
+                options=[discord.SelectOption(label=f"{name} ×{count}", value=name) for name, count in visible],
             )
             select.callback = self.deliver
             self.add_item(select)
         if len(self.foods) > 8:
             prev = discord.ui.Button(label="이전", disabled=self.page == 0)
-            page = discord.ui.Button(
-                label=f"{self.page + 1}/{total_pages}",
-                disabled=True,
-            )
             nxt = discord.ui.Button(label="다음", disabled=(self.page + 1) * 8 >= len(self.foods))
             async def move(i, delta):
                 self.page += delta; self.rebuild(); await i.response.edit_message(view=self)
             prev.callback = lambda i: move(i, -1); nxt.callback = lambda i: move(i, 1)
-            self.add_item(prev); self.add_item(page); self.add_item(nxt)
+            self.add_item(prev); self.add_item(nxt)
 
     def get_embed(self):
         from progression_system_v6 import korea_today

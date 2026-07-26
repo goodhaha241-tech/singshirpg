@@ -1,6 +1,6 @@
 {
-  "version": "8.6",
-  "backup": "H:\\디코봇\\.singshirpg_v8_6_backup_20260727_025044",
+  "version": "8.6.6",
+  "backup": "H:\\디코봇\\.singshirpg_v8_6_backup_20260727_031346",
   "files": [
     "data_manager.py",
     "guild.py",
@@ -16,6 +16,9 @@
     "battle.py",
     "progression_system_v6.py",
     "life_system.py",
-    "life_overhaul_v5.py"
+    "life_overhaul_v5.py",
+    "crafting.py",
+    "workshop.py",
+    "garden.py"
   ]
 }

@@ -1,5 +1,4 @@
 # garden.py
-# comparison-select-ui-v8.6.6
 import discord
 import random
 from items import RARE_ITEMS, GUILD_ITEMS
@@ -456,18 +455,15 @@ class WaterRefillView(discord.ui.View):
 
 
 class FertilizerCraftView(discord.ui.View):
-    PER_PAGE = 8
-
     def __init__(self, author, user_data, save_func, parent):
         super().__init__(timeout=60)
         self.author, self.user_data, self.save_func, self.parent = author, user_data, save_func, parent
-        self.page = 0
         self.update_components()
 
     def update_components(self):
         self.clear_items()
         self.add_select()
-        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=2, custom_id="back"))
+        self.add_item(discord.ui.Button(label="⬅️ 뒤로가기", style=discord.ButtonStyle.gray, row=1, custom_id="back"))
 
     def get_embed(self):
         inv = self.user_data.get("inventory", {})
@@ -478,78 +474,29 @@ class FertilizerCraftView(discord.ui.View):
 
     def add_select(self):
         inv = self.user_data.get("inventory", {})
+        options = []
 
         # 물고기 아이템 목록을 가져와서 필터링
         all_fish = set()
         for tier_list in FISH_TIERS.values():
             all_fish.update(tier_list)
 
-        eligible = [
-            item
-            for item in RARE_ITEMS
-            if item not in all_fish and int(inv.get(item, 0)) > 0
-        ]
-        total_pages = max(1, (len(eligible) + self.PER_PAGE - 1) // self.PER_PAGE)
-        self.page = max(0, min(self.page, total_pages - 1))
-        visible = eligible[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
-        if visible:
-            options = [
-                discord.SelectOption(
-                    label=f"{item} ×{int(inv.get(item, 0))}",
-                    value=item,
-                    description=(
-                        f"{item} {int(inv.get(item, 0))}/1 · "
-                        f"나뭇가지 {int(inv.get('나뭇가지', 0))}/7 · "
-                        f"버려진 장갑 {int(inv.get('버려진 장갑', 0))}/2"
-                    )[:100],
-                )
-                for item in visible
-            ]
-            self.add_item(discord.ui.Select(
-                placeholder=f"비료 속성 재료 선택 ({self.page + 1}/{total_pages})",
-                options=options,
-                custom_id="craft_select",
-                row=0,
-            ))
-        if total_pages > 1:
-            self.add_item(discord.ui.Button(
-                label="이전",
-                disabled=self.page == 0,
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                custom_id="prev_page",
-            ))
-            self.add_item(discord.ui.Button(
-                label=f"{self.page + 1}/{total_pages}",
-                disabled=True,
-                style=discord.ButtonStyle.secondary,
-                row=1,
-            ))
-            self.add_item(discord.ui.Button(
-                label="다음",
-                disabled=self.page >= total_pages - 1,
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                custom_id="next_page",
-            ))
+        for item in RARE_ITEMS:
+            if item in all_fish:
+                continue
+            if inv.get(item, 0) > 0:
+                options.append(discord.SelectOption(label=f"{item} ({inv[item]}개 보유)", value=item))
+        
+        if not options:
+            options.append(discord.SelectOption(label="제작 가능한 희귀재료 없음", value="none"))
+        
+        self.add_item(discord.ui.Select(placeholder="비료 속성으로 부여할 재료 선택", options=options[:25], custom_id="craft_select"))
 
     async def interaction_check(self, i):
         if i.user != self.author: return False
         
         # [DB 수정] 데이터 갱신
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
-
-        if i.data.get("custom_id") == "prev_page":
-            self.page = max(0, self.page - 1)
-            self.update_components()
-            await i.response.edit_message(embed=self.get_embed(), view=self)
-            return True
-
-        if i.data.get("custom_id") == "next_page":
-            self.page += 1
-            self.update_components()
-            await i.response.edit_message(embed=self.get_embed(), view=self)
-            return True
 
         if i.data.get("custom_id") == "back":
             # [FIX] 부모 뷰(GardenView) 데이터 동기화

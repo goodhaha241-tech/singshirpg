@@ -3,7 +3,6 @@
 # appraisal-gem-affixes-v8.1
 # pve-gem-runtime-v8.2
 # gem-visibility-tools-v8.3
-# comparison-select-ui-v8.6.6
 # life-button-ui-v8.5
 from __future__ import annotations
 
@@ -1657,10 +1656,9 @@ class _LifeChildView(discord.ui.View):
 
 
 class _PagedButtonMixin:
-    """Render action choices as buttons and comparison choices as lists."""
+    """Render long life-system choices as four buttons per page."""
 
     BUTTON_PAGE_SIZE = 4
-    SELECT_PAGE_SIZE = 8
     _DYNAMIC_PREFIX = "life_page:"
 
     def _clear_paged_buttons(self):
@@ -1701,97 +1699,6 @@ class _PagedButtonMixin:
 
             button.callback = choose
             self.add_item(button)
-
-        if total_pages > 1:
-            previous = discord.ui.Button(
-                label="이전",
-                emoji="◀️",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=page <= 0,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:previous",
-            )
-            counter = discord.ui.Button(
-                label=f"{page + 1}/{total_pages}",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=True,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:counter",
-            )
-            following = discord.ui.Button(
-                label="다음",
-                emoji="▶️",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=page >= total_pages - 1,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:next",
-            )
-
-            async def move(interaction, delta):
-                await _defer(interaction)
-                setattr(self, page_attr, max(0, min(page + delta, total_pages - 1)))
-                self._render_buttons()
-                await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-            async def previous_callback(interaction):
-                await move(interaction, -1)
-
-            async def next_callback(interaction):
-                await move(interaction, 1)
-
-            previous.callback = previous_callback
-            following.callback = next_callback
-            self.add_item(previous)
-            self.add_item(counter)
-            self.add_item(following)
-
-    def _add_paged_select(
-        self,
-        entries,
-        *,
-        page_attr,
-        label_func,
-        description_func,
-        select_callback,
-        namespace,
-        placeholder,
-        selected_func=None,
-    ):
-        self._clear_paged_buttons()
-        entries = list(entries)
-        total_pages = max(1, (len(entries) + self.SELECT_PAGE_SIZE - 1) // self.SELECT_PAGE_SIZE)
-        page = max(0, min(int(getattr(self, page_attr, 0)), total_pages - 1))
-        setattr(self, page_attr, page)
-        start = page * self.SELECT_PAGE_SIZE
-        visible = entries[start:start + self.SELECT_PAGE_SIZE]
-
-        if visible:
-            options = []
-            for offset, entry in enumerate(visible):
-                selected = bool(selected_func(entry)) if selected_func else False
-                label = str(label_func(entry))
-                if selected:
-                    label = f"✓ {label}"
-                options.append(
-                    discord.SelectOption(
-                        label=label[:100],
-                        value=str(start + offset),
-                        description=str(description_func(entry))[:100],
-                    )
-                )
-            select = discord.ui.Select(
-                placeholder=f"{placeholder} ({page + 1}/{total_pages})",
-                options=options,
-                row=0,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:select",
-            )
-
-            async def choose(interaction):
-                index = int(interaction.data["values"][0])
-                await select_callback(interaction, entries[index])
-
-            select.callback = choose
-            self.add_item(select)
 
         if total_pages > 1:
             previous = discord.ui.Button(
@@ -2265,18 +2172,12 @@ class CropSetupView(_PagedButtonMixin, _LifeChildView):
             self.remove_item(self.confirm)
 
         if self.stage == "crop":
-            self._add_paged_select(
+            self._add_paged_buttons(
                 self.stocked,
                 page_attr="choice_page",
                 label_func=lambda entry: f"{entry[0]} ×{entry[2]}",
-                description_func=lambda entry: (
-                    f"보유 {entry[2]}개 · {entry[1]['turns']}턴 · "
-                    f"수확 {entry[1]['yield'][0]}~{entry[1]['yield'][1]} · "
-                    f"적정 수분 {entry[1]['water'][0]}~{entry[1]['water'][1]}"
-                ),
                 select_callback=self._select_crop,
                 namespace="crop",
-                placeholder="심을 작물 선택",
             )
         elif self.stage == "worker":
             indexed_characters = list(enumerate(self.characters))
@@ -2472,18 +2373,12 @@ class FishSetupView(_PagedButtonMixin, _LifeChildView):
             self.remove_item(self.confirm)
 
         if self.stage == "species":
-            self._add_paged_select(
+            self._add_paged_buttons(
                 self.stocked,
                 page_attr="choice_page",
                 label_func=lambda entry: f"{entry[0]} ×{entry[2]}",
-                description_func=lambda entry: (
-                    f"보유 {entry[2]}개 · {entry[1]['turns']}턴 · "
-                    f"출하 {entry[1]['yield'][0]}~{entry[1]['yield'][1]} · "
-                    f"적정 수질 {entry[1]['water'][0]}~{entry[1]['water'][1]}"
-                ),
                 select_callback=self._select_species,
                 namespace="species",
-                placeholder="양식할 어종 선택",
             )
         elif self.stage == "worker":
             indexed_characters = list(enumerate(self.characters))
@@ -2698,17 +2593,12 @@ class StoneChoiceView(_PagedButtonMixin, _LifeChildView):
         self._render_buttons()
 
     def _render_buttons(self):
-        stone_stock = ensure_life_data(self.user_data)["stones"]
-        self._add_paged_select(
+        self._add_paged_buttons(
             self.stones,
             page_attr="choice_page",
             label_func=lambda stone: stone,
-            description_func=lambda stone: (
-                f"현재 {int(stone_stock.get(stone, 0))}개 · 세공 시작 시 1개 소비"
-            ),
             select_callback=self._select_stone,
             namespace="stone",
-            placeholder="세공할 원석 선택",
         )
 
     async def _select_stone(self, interaction, stone):
@@ -2724,7 +2614,7 @@ class StoneChoiceView(_PagedButtonMixin, _LifeChildView):
         return discord.Embed(
             title="💎 원석 선택",
             description=(
-                "현재 재고를 확인하고 사용할 원석을 목록에서 선택하세요.\n\n"
+                "사용할 감정된 원석을 버튼으로 선택하세요.\n\n"
                 + ("\n".join(stocks) if stocks else "사용 가능한 원석이 없습니다.")
             ),
             color=discord.Color.magenta(),
@@ -2751,14 +2641,12 @@ class GemSetupView(_PagedButtonMixin, _LifeChildView):
 
         if self.stage == "gem":
             gem_entries = list(enumerate(STONE_GEMS[self.stone]))
-            self._add_paged_select(
+            self._add_paged_buttons(
                 gem_entries,
                 page_attr="choice_page",
                 label_func=lambda entry: entry[1]["name"],
-                description_func=lambda entry: f"효과: {entry[1]['summary']}",
                 select_callback=self._select_gem,
                 namespace="gem",
-                placeholder="완성할 젬 선택",
             )
         elif self.stage == "worker":
             indexed_characters = list(enumerate(self.characters))
@@ -2771,17 +2659,12 @@ class GemSetupView(_PagedButtonMixin, _LifeChildView):
             )
             self._add_step_back_button("젬 다시 선택", "gem")
         elif self.stage == "tools":
-            self._add_paged_select(
+            self._add_paged_buttons(
                 self.tools,
                 page_attr="choice_page",
                 label_func=lambda entry: f"{entry[0]} · {entry[1]}돌파",
-                description_func=lambda entry: (
-                    f"{'선택됨 · ' if entry[0] in self.tool_names else ''}"
-                    f"{TOOL_DEFS[entry[0]]['effects'][int(entry[1])]}"
-                ),
                 select_callback=self._toggle_tool,
                 namespace="gem_tools",
-                placeholder=f"세공 도구 선택 ({len(self.tool_names)}/{MAX_EQUIPPED_TOOLS})",
                 selected_func=lambda entry: entry[0] in self.tool_names,
             )
             self._add_step_back_button("담당 다시 선택", "worker")
