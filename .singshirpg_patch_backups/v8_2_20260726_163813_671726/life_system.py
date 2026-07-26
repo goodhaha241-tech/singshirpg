@@ -1,7 +1,6 @@
 # cumulative-v3-life-system
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
-# pve-gem-runtime-v8.2
 from __future__ import annotations
 
 import asyncio
@@ -18,10 +17,6 @@ from character import (
     roll_gem_stat_affixes,
 )
 from data_manager import StaleUserDataError, advance_world_turn, get_user_data
-from gem_effects import (
-    gem_final_aux_value,
-    gem_final_effect_value,
-)
 from navigation_v7 import attach_navigation
 
 # guild-pvp-stability-v7.2
@@ -379,7 +374,7 @@ def _life_gem_value(user_data: dict[str, Any], worker_index: int, name: str, def
     ]
     if not matches:
         return default
-    return sum(gem_final_effect_value(gem) for gem in matches)
+    return sum(int(gem.get("effect_value", 0) or 0) for gem in matches)
 
 
 def _life_gem_star(user_data: dict[str, Any], worker_index: int, name: str) -> int:
@@ -655,13 +650,7 @@ def _craft_worker_bonus(user_data: dict[str, Any], craft: dict[str, Any]) -> int
     gem = _life_gem(user_data, int(craft.get("worker_index", -1)), "장인의 젬")
     if not gem:
         return 0
-    value = max(1, gem_final_effect_value(gem))
-    star = max(0, int(gem.get("star", 0) or 0))
-    if star >= 5:
-        value += 7
-    elif star >= 3:
-        value += 3
-    return value
+    return max(1, int(gem.get("effect_value", 0))) + max(0, int(gem.get("star", 0)))
 
 
 def _balance_relief(craft: dict[str, Any]) -> int:
@@ -978,8 +967,6 @@ def perform_crop_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
             star = _life_gem_star(user_data, worker, "관개의 젬")
             if star < 3:
                 plot["health"] = _clamp(int(plot["health"]) - 5)
-        if _life_gem_star(user_data, worker, "관개의 젬") >= 5:
-            plot["health"] = _clamp(int(plot["health"]) + 2)
         log = "💧 물을 주었습니다."
     elif action == "fertilize":
         plot["nutrition"] = _clamp(int(plot["nutrition"]) + 20)
@@ -1057,22 +1044,13 @@ def claim_crop(user_data: dict[str, Any]) -> tuple[bool, str]:
         return False, "아직 수확할 수 없습니다."
     worker = int(plot.get("worker_index", -1))
     crop = CROPS[plot["crop"]]
-    farming_star = _life_gem_star(user_data, worker, "경작의 젬")
-    farming_unlock = 10 if farming_star >= 5 else (5 if farming_star >= 3 else 0)
-    score = _clamp(
-        int(plot["quality"])
-        + _life_gem_value(user_data, worker, "경작의 젬", 0)
-        + farming_unlock
-    )
+    score = _clamp(int(plot["quality"]) + _life_gem_value(user_data, worker, "경작의 젬", 0))
     amount = random.randint(*crop["yield"])
     abundance = _life_gem_value(user_data, worker, "풍요의 젬", 0)
     for _ in range(amount):
         if random.randint(1, 100) <= abundance:
             amount += 1
-    abundance_star = _life_gem_star(user_data, worker, "풍요의 젬")
-    if abundance_star >= 3 and score >= 70:
-        amount += 1
-    if abundance_star >= 5 and score >= 85:
+    if _life_gem_star(user_data, worker, "풍요의 젬") >= 5 and score >= 85:
         amount += 1
     item = f"{_quality_name(score)} {plot['crop']}"
     produce = garden["produce"]
@@ -1143,7 +1121,7 @@ def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
         water_loss = 8
         if _life_gem_star(user_data, worker, "양식의 젬") >= 3 and tank.get("first_feed"):
             water_loss = 0
-        elif _life_gem_star(user_data, worker, "양식의 젬") >= 3:
+        elif _life_gem_star(user_data, worker, "양식의 젬") >= 2:
             water_loss = 6
         tank["first_feed"] = False
         tank["water_quality"] = _clamp(int(tank["water_quality"]) - water_loss)
@@ -1177,7 +1155,7 @@ def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
     low, high = species["water"]
     tank["satiety"] = _clamp(int(tank["satiety"]) - 8)
     water_decay = 4
-    if _life_gem_star(user_data, worker, "청류의 젬") >= 3:
+    if _life_gem_star(user_data, worker, "청류의 젬") >= 2:
         water_decay = max(1, water_decay - 1)
     tank["water_quality"] = _clamp(int(tank["water_quality"]) - water_decay)
 
@@ -1221,10 +1199,7 @@ def claim_fish(user_data: dict[str, Any]) -> tuple[bool, str]:
     for _ in range(amount):
         if random.randint(1, 100) <= abundance:
             amount += 1
-    abundance_star = _life_gem_star(user_data, worker, "풍요의 젬")
-    if abundance_star >= 3 and score >= 70:
-        amount += 1
-    if abundance_star >= 5 and score >= 85:
+    if _life_gem_star(user_data, worker, "풍요의 젬") >= 5 and score >= 85:
         amount += 1
     if _life_gem_star(user_data, worker, "양식의 젬") >= 5 and random.randint(1, 100) <= 25:
         amount += 1
@@ -2104,15 +2079,9 @@ class GemCraftingView(_LifeChildView):
         embed.add_field(
             name="현재 수치",
             value=(
-                f"고유 효과 **{gem_final_effect_value(craft)}**"
-                + (
-                    f" (세공값 {craft['effect_value']})"
-                    if gem_final_effect_value(craft) != int(craft["effect_value"])
-                    else ""
-                )
-                + "\n"
+                f"고유 효과 **{craft['effect_value']}**\n"
                 f"주 능력 **{gem_main_stat_text(craft)}**\n"
-                f"보조 능력 **아티팩트 주 능력치 +{gem_final_aux_value(craft)}**"
+                f"보조 능력 **아티팩트 주 능력치 +{craft['aux_stat_value']}**"
             ),
             inline=True,
         )

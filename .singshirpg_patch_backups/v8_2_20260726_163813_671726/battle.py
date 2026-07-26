@@ -1,5 +1,4 @@
 # battle.py
-# pve-gem-runtime-v8.2
 import discord
 import random
 import json
@@ -8,13 +7,6 @@ import asyncio
 from cards import get_card
 from story import update_quest_progress 
 import battle_engine
-from gem_effects import (
-    battle_end_gem_heal,
-    escalation_roll,
-    process_gem_turn_start,
-    revive_gem_effects,
-    runtime_cooldowns,
-)
 
 DATA_FILE = "user_data.json"
 
@@ -66,7 +58,6 @@ class BattleView(discord.ui.View):
         for m in self.monsters:
             if not hasattr(m, "status_effects"):
                 m.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
-            runtime_cooldowns(m)
 
         # 던전 런 체크: 외부에서 버프를 적용했으므로 중복 적용 방지
         if not self.is_dungeon_run and hasattr(self.player, "apply_battle_start_buffs"):
@@ -216,26 +207,6 @@ class BattleView(discord.ui.View):
         if art and isinstance(art, dict): effects.append(art.get("special"))
         if engrave and isinstance(engrave, dict): effects.append(engrave.get("special"))
 
-        gem_turn_log = process_gem_turn_start(
-            self.player,
-            target,
-            self.turn_count,
-            self.selected_card.name if self.selected_card else "",
-        )
-        if gem_turn_log:
-            rec_log += gem_turn_log + "\n"
-        if target.current_hp <= 0:
-            self.killed_monsters.append(target)
-            self.monsters.remove(target)
-            if not self.monsters:
-                return await self.finish_battle(interaction, rec_log, True)
-            self.turn_count += 1
-            self.update_buttons()
-            self._processing = False
-            return await interaction.edit_original_response(
-                content=None, embed=self.make_embed(rec_log), view=self
-            )
-
         # 턴 보너스
         applied_bonus = self.next_turn_bonus
         if applied_bonus > 0:
@@ -314,7 +285,7 @@ class BattleView(discord.ui.View):
         if "escalation" in effects and not is_stunned and len(p_res) > 0:
             last_used = self.player.runtime_cooldowns.get("escalation", -10)
             if self.turn_count - last_used >= 2:
-                bonus = escalation_roll(self.player)
+                bonus = random.randint(1, 30)
                 p_res[-1]["value"] += bonus
                 self.player.runtime_cooldowns["escalation"] = self.turn_count
                 log += f"🔥 **[고조된]** 주사위 폭주! (+{bonus})\n"
@@ -372,9 +343,6 @@ class BattleView(discord.ui.View):
                 self.revived = True
                 self.player.current_hp = self.player.max_hp
                 log += "\n\n👼 **[불멸의]** 권능으로 부활했습니다! (HP 완전 회복)"
-                revive_log = revive_gem_effects(self.player)
-                if revive_log:
-                    log += f"\n💎 {revive_log}"
             # 2. [던전 아이템] 부활 (소모성)
             elif self.dungeon_item and self.dungeon_item["type"] == "consumable" and self.dungeon_item.get("effect") == "revive":
                 if self.dungeon_item.get("remaining", 0) > 0:
@@ -445,9 +413,6 @@ class BattleView(discord.ui.View):
         # 전투 종료 시 아티팩트 수치 제거 (던전 포함 모든 전투 공통)
         if hasattr(self.player, "remove_battle_buffs"):
             self.player.remove_battle_buffs()
-        dawn_heal = battle_end_gem_heal(self.player)
-        if dawn_heal:
-            log += f"\n🌅 **[여명의 젬]** 전투 종료 후 체력 +{dawn_heal}"
         
         buffs = self.user_data.setdefault("buffs", {})
         expired_buffs = []

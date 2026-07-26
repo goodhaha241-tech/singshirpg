@@ -1,17 +1,10 @@
 # pvp.py
-# pve-gem-runtime-v8.2
 import discord
 import random
 import asyncio
 from cards import get_card
 from character import Character 
 import battle_engine
-from gem_effects import (
-    battle_end_gem_heal,
-    escalation_roll,
-    process_gem_turn_start,
-    revive_gem_effects,
-)
 
 # guild-pvp-stability-v7.2
 ACTIVE_PVP_USERS = set()
@@ -439,27 +432,6 @@ class PVPBattleView(discord.ui.View):
         if bonus1 > 0: log += f"✨ P1 시간가속(+{bonus1})\n"
         if bonus2 > 0: log += f"✨ P2 시간가속(+{bonus2})\n"
 
-        gem_log1 = process_gem_turn_start(
-            self.p1_char,
-            self.p2_char,
-            self.turn_count,
-            self.p1_card.name if self.p1_card not in (None, "waiting") else "",
-        )
-        gem_log2 = process_gem_turn_start(
-            self.p2_char,
-            self.p1_char,
-            self.turn_count,
-            self.p2_card.name if self.p2_card not in (None, "waiting") else "",
-        )
-        if gem_log1:
-            log += f"🔵 {gem_log1}\n"
-        if gem_log2:
-            log += f"🔴 {gem_log2}\n"
-        if self.p1_char.current_hp <= 0:
-            self.p1_card = None
-        if self.p2_char.current_hp <= 0:
-            self.p2_card = None
-
         p1_res = []
         if self.p1_card is None: 
             self.p1_char.current_mental += self.p1_char.max_mental//2
@@ -534,12 +506,12 @@ class PVPBattleView(discord.ui.View):
         if "escalation" in effs1 and p1_res:
             last = self.p1_char.runtime_cooldowns.get("escalation", -10)
             if self.turn_count - last >= 2:
-                p1_res[-1]["value"] += escalation_roll(self.p1_char)
+                p1_res[-1]["value"] += random.randint(1, 30)
                 self.p1_char.runtime_cooldowns["escalation"] = self.turn_count
         if "escalation" in effs2 and p2_res:
             last = self.p2_char.runtime_cooldowns.get("escalation", -10)
             if self.turn_count - last >= 2:
-                p2_res[-1]["value"] += escalation_roll(self.p2_char)
+                p2_res[-1]["value"] += random.randint(1, 30)
                 self.p2_char.runtime_cooldowns["escalation"] = self.turn_count
 
         # [수정] battle_engine을 사용한 합 진행
@@ -567,15 +539,9 @@ class PVPBattleView(discord.ui.View):
         if self.p2_char.status_effects.get("bleed", 0) > 0: self.p2_char.status_effects["bleed"] = max(0, self.p2_char.status_effects["bleed"] - 1)
 
         if self.p1_char.current_hp <= 0 and "immortality" in effs1 and not self.p1_revived:
-            self.p1_revived = True
-            self.p1_char.current_hp = self.p1_char.max_hp
-            revive_log = revive_gem_effects(self.p1_char)
-            log += "\n👼 P1 부활!" + (f" ({revive_log})" if revive_log else "")
+            self.p1_revived = True; self.p1_char.current_hp = self.p1_char.max_hp; log += "\n👼 P1 부활!"
         if self.p2_char.current_hp <= 0 and "immortality" in effs2 and not self.p2_revived:
-            self.p2_revived = True
-            self.p2_char.current_hp = self.p2_char.max_hp
-            revive_log = revive_gem_effects(self.p2_char)
-            log += "\n👼 P2 부활!" + (f" ({revive_log})" if revive_log else "")
+            self.p2_revived = True; self.p2_char.current_hp = self.p2_char.max_hp; log += "\n👼 P2 부활!"
 
         if self.p1_char.current_hp <= 0 or self.p2_char.current_hp <= 0:
             if self.p1_char.current_hp <= 0 and self.p2_char.current_hp <= 0:
@@ -587,12 +553,6 @@ class PVPBattleView(discord.ui.View):
             
             if hasattr(self.p1_char, "remove_battle_buffs"): self.p1_char.remove_battle_buffs()
             if hasattr(self.p2_char, "remove_battle_buffs"): self.p2_char.remove_battle_buffs()
-            dawn1 = battle_end_gem_heal(self.p1_char)
-            dawn2 = battle_end_gem_heal(self.p2_char)
-            if dawn1:
-                log += f"\n🌅 P1 여명의 젬: 체력 +{dawn1}"
-            if dawn2:
-                log += f"\n🌅 P2 여명의 젬: 체력 +{dawn2}"
             
             latest_p1 = await self.load_func(self.p1_user.id, self.p1_user.display_name)
             latest_p2 = await self.load_func(self.p2_user.id, self.p2_user.display_name)

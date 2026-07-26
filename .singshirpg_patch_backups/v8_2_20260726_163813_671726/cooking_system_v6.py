@@ -1,6 +1,5 @@
 # completion-v6-cooking
 # rollback-guard-appraisal-gems-v8
-# pve-gem-runtime-v8.2
 from __future__ import annotations
 
 import random
@@ -17,7 +16,6 @@ from balance_config_v6 import (
     RECIPE_RESEARCH_MONEY,
 )
 from life_system import PURE_HOPE_ITEM, ensure_life_data
-from gem_effects import gem_final_effect_value
 
 
 RECIPES = {
@@ -122,17 +120,17 @@ def research_available(user_data: dict[str, Any], category: str) -> bool:
     )
 
 
-def _roll_quality(bonus: int = 0, masterpiece_bonus: int = 0) -> str:
+def _roll_quality(bonus: int = 0) -> str:
     normal = max(0, COOKING_QUALITY_WEIGHTS["보통"] - bonus)
     great = COOKING_QUALITY_WEIGHTS["훌륭함"] + bonus * 0.8
-    master = COOKING_QUALITY_WEIGHTS["걸작"] + bonus * 0.2 + masterpiece_bonus
+    master = COOKING_QUALITY_WEIGHTS["걸작"] + bonus * 0.2
     return random.choices(["보통", "훌륭함", "걸작"], [normal, great, master], k=1)[0]
 
 
-def _cooking_gem_bonus(user_data: dict[str, Any]) -> tuple[int, int]:
+def _cooking_gem_bonus(user_data: dict[str, Any]) -> int:
     characters = user_data.get("characters", [])
     if not characters:
-        return 0, 0
+        return 0
     index = min(int(user_data.get("investigator_index", 0) or 0), len(characters) - 1)
     character = characters[index]
     artifacts = [
@@ -147,12 +145,10 @@ def _cooking_gem_bonus(user_data: dict[str, Any]) -> tuple[int, int]:
             if gem and gem.get("name") == "조리의 젬":
                 matches.append(gem)
     if not matches:
-        return 0, 0
-    effect_total = sum(gem_final_effect_value(gem) for gem in matches)
-    maximum_star = max(int(gem.get("star", 0) or 0) for gem in matches)
-    great_bonus = 5 if maximum_star >= 3 else 0
-    masterpiece_bonus = 3 if maximum_star >= 5 else 0
-    return effect_total + great_bonus, masterpiece_bonus
+        return 0
+    effect_total = sum(max(0, int(gem.get("effect_value", 0) or 0)) for gem in matches)
+    star_bonus = max(int(gem.get("star", 0) or 0) for gem in matches)
+    return effect_total + star_bonus
 
 
 def _consume_quality_records(user_data: dict[str, Any], item: str, count: int) -> list[int]:
@@ -200,11 +196,10 @@ def cook(user_data: dict[str, Any], recipe_name: str, count: int = 1, quality_bo
         round(sum(ingredient_bonuses) / len(ingredient_bonuses))
         if ingredient_bonuses else 0
     )
-    cooking_bonus, masterpiece_bonus = _cooking_gem_bonus(user_data)
-    final_quality_bonus = int(quality_bonus) + ingredient_bonus + cooking_bonus
+    final_quality_bonus = int(quality_bonus) + ingredient_bonus + _cooking_gem_bonus(user_data)
     results = []
     for _ in range(count):
-        quality = _roll_quality(final_quality_bonus, masterpiece_bonus)
+        quality = _roll_quality(final_quality_bonus)
         key = f"{quality} {recipe_name}"
         cooking["foods"][key] = int(cooking["foods"].get(key, 0)) + 1
         results.append(quality)

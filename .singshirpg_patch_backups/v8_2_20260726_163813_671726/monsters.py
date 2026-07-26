@@ -1,5 +1,4 @@
 # monsters.py
-# pve-gem-runtime-v8.2
 import random
 from cards import get_card, SKILL_CARDS
 
@@ -21,10 +20,6 @@ class Monster:
         self.reward_count = reward_count
         self.pt_range = pt_range 
         self.money_range = money_range
-        # PvE uses the same battle engine as PvP.  Monsters do not equip gems,
-        # but the shared engine still needs harmless runtime/status stores.
-        self.runtime_cooldowns = {}
-        self.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
         
         self.card_deck = card_deck if card_deck else ["기본공격", "기본방어"]
 

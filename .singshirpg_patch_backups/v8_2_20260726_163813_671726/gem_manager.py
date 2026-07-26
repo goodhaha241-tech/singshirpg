@@ -1,7 +1,6 @@
 # gem-link-v7.3-manager
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
-# pve-gem-runtime-v8.2
 from __future__ import annotations
 
 import copy
@@ -18,12 +17,6 @@ from character import (
     gem_main_stat_text,
 )
 from life_system import STONE_GEMS, ensure_life_data
-from gem_effects import (
-    gem_final_aux_value,
-    gem_final_effect_value,
-    gem_final_main_value,
-    gem_star_unlock_lines,
-)
 from navigation_v7 import attach_navigation
 
 
@@ -103,78 +96,80 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
     """Describe the numeric effect that the current runtime actually applies."""
     gem = ensure_gem_stat_affixes(gem)
     name = str(gem.get("name", ""))
-    raw_effect = max(0, int(gem.get("effect_value", 0) or 0))
-    effect = gem_final_effect_value(gem)
-    raw_main = max(0, int(gem.get("main_stat_value", 0) or 0))
-    final_main = gem_final_main_value(gem)
-    raw_auxiliary = max(0, int(gem.get("aux_stat_value", 0) or 0))
-    auxiliary = gem_final_aux_value(gem)
+    effect = max(0, int(gem.get("effect_value", 0) or 0))
+    auxiliary = max(0, int(gem.get("aux_stat_value", 0) or 0))
     star = max(0, min(5, int(gem.get("star", 0) or 0)))
 
     lines_by_name = {
-        "복기의 젬": [f"꼼꼼한 재사용 주사위 위력 **+{effect}**"],
-        "교정의 젬": [f"재사용 실패 1회당 다음 재사용 위력 **+{effect}**"],
-        "여백의 젬": [f"재사용할 주사위가 없을 때 방어값 **{effect}** 생성"],
         "격화의 젬": [f"맹렬한 발동의 추가 주사위 위력 **+{effect}**"],
-        "도화선의 젬": [
-            "맹렬한 발동 간격 **2턴**"
-            + (" → **1턴**" if star >= 3 else "")
-        ],
-        "잔불의 젬": [f"맹렬한 추가 위력의 **{min(80, effect)}%**를 다음 턴 잔불 피해로 전환"],
         "맥박의 젬": [f"견고한 발동의 체력 회복량 **+{effect}**"],
-        "축성의 젬": [f"견고한 초과 회복의 **{min(100, effect)}%**를 보호막으로 전환"],
-        "인내의 젬": [f"견고한 발동 후 다음 실피해 **{min(60, effect + (5 if star >= 3 else 0))}% 감소**"],
         "가시의 젬": [f"앙심품은 발동의 반사 피해 **+{effect}**"],
-        "원한의 젬": [f"피격 후 다음 반사 피해 누적량 **+{effect}**"],
-        "응보의 젬": [f"반사 대상 실피해 **{min(50, effect + (5 if star >= 3 else 0))}% 감소**"],
-        "고양의 젬": [f"고조된 보너스 최솟값 **+{effect}**"],
-        "폭주의 젬": [
-            (
-                f"고조된 보너스를 **{3 if star >= 5 else 2}회** 굴려 높은 값 선택"
-                if star >= 3
-                else f"고조된 보너스 **{min(75, effect)}% 확률로 재굴림**"
-            )
-        ],
-        "연쇄의 젬": [f"고조된 보너스의 **{min(80, effect)}%**를 다음 주사위에 전달"],
-        "회귀의 젬": [f"부활 후 다음 실피해 **{min(60, effect)}% 감소**"],
-        "여명의 젬": [f"전투 종료 후 체력 **+{effect if star < 3 else (effect * 2 if star >= 5 else effect + (effect + 1) // 2)}**"],
         "선봉의 젬": [f"매 턴 첫 유효 주사위 위력 **+{effect}**"],
-        "균형의 젬": [f"합 패배 시 다음 유효 주사위 위력 **+{effect}**"],
         "집중의 젬": [f"유효 주사위가 1개인 카드의 주사위 위력 **+{effect}**"],
         "연격의 젬": [
             f"같은 카드의 두 번째 공격 주사위 위력 **+{effect}**",
-            *([f"세 번째 이후 공격 주사위 위력 **+{effect + (effect + 1) // 2}**"] if star >= 3 else []),
-            *([f"네 번째 이후 공격 주사위 위력 **+{effect * 2}**"] if star >= 5 else []),
+            f"세 번째 이후 공격 주사위 위력 **+{effect + 2}**",
         ],
         "결의의 젬": [
             (
-                f"정신력 **{60 if star >= 5 else (50 if star >= 3 else 40)}% 이하**일 때 "
+                f"정신력 **{'50' if star >= 2 else '40'}% 이하**일 때 "
                 f"모든 유효 주사위 위력 **+{effect}**"
             )
         ],
-        "순환의 젬": [f"서로 다른 카드를 번갈아 사용하면 정신력 **+{effect}**"],
         "수호의 젬": [
-            f"매 턴 처음 받는 실피해 **{min(60, effect)}% 감소**"
+            f"매 턴 처음 받는 실피해 **{min(40, effect)}% 감소**"
         ],
         "풍요의 젬": [
             f"채소·양식 수확물 1개마다 추가 획득 확률 **{effect}%**",
+            *(
+                ["최종 품질 85 이상이면 수확량 **+1**"]
+                if star >= 5 else []
+            ),
         ],
         "경작의 젬": [f"채소 수확의 최종 품질 점수 **+{effect}**"],
         "관개의 젬": [
             f"물주기 수분 회복량 **+{effect}** (기본 25 → **{25 + effect}**)",
+            *(
+                ["과습 시 건강 감소를 방지"]
+                if star >= 3 else []
+            ),
         ],
         "청류의 젬": [
             f"물갈이·청소의 수질 회복량 **+{effect}**",
+            *(
+                ["매 행동의 자연 수질 감소 **-1**"]
+                if star >= 2 else []
+            ),
+            *(
+                ["수질 악화 질병을 양식 1회당 **1회 방지**"]
+                if star >= 3 else []
+            ),
+            *(
+                ["출하 시 수질 75 이상이면 품질 점수 **+6**"]
+                if star >= 5 else []
+            ),
         ],
         "양식의 젬": [
             f"적정 수질일 때 행동당 성장도 **+{effect}**",
+            *(
+                ["먹이 주기의 수질 감소 8 → **6**"]
+                if star == 2 else []
+            ),
+            *(
+                ["첫 먹이 주기의 수질 감소 **0**"]
+                if star >= 3 else []
+            ),
+            *(
+                ["출하 수량 **+1** 확률 25%"]
+                if star >= 5 else []
+            ),
         ],
         "장인의 젬": [
-            f"마법부여·모양 내기·불순물 제거 성공률 **+{effect + (7 if star >= 5 else (3 if star >= 3 else 0))}%p**"
+            f"마법부여·모양 내기·불순물 제거 성공률 **+{effect + star}%p**"
         ],
         "조리의 젬": [
             (
-                f"요리 품질 판정 보너스 **+{effect + (5 if star >= 3 else 0)}** "
+                f"요리 품질 판정 보너스 **+{effect + star}** "
                 "(훌륭함·걸작 가중치 증가)"
             )
         ],
@@ -182,19 +177,14 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
     lines = list(lines_by_name.get(name, []))
 
     if name == "정화의 젬" and gem.get("category") == "combat_common":
-        lines.append(f"받는 상태이상 지속시간 **{min(75, effect)}% 감소**")
-        if star >= 3:
-            lines.append("3성: 감소 계산 후 지속시간 **추가 -1턴**")
         if star >= 5:
-            lines.append("5성: 전투당 1회 현재 상태이상 **전부 제거**")
-    elif name == "정화의 젬" and gem.get("category") == "dedicated":
-        lines.append(f"부활 시 상태이상 지속시간 **{min(90, effect)}% 감소**")
-        if star >= 3:
-            lines.append("3성: 부활 시 상태이상 **전부 제거**")
-        if star >= 5:
-            lines.append("5성: 부활 후 **1턴 상태이상 면역**")
+            lines.append("5성 상태이상 전부 제거 효과는 정의되어 있으나 전투 호출 지점은 미연결")
+        else:
+            lines.append("상태이상 지속시간 감소 효과는 현재 전투 계산에 미연결")
+    elif name == "고양의 젬":
+        lines.append(f"고조된 보너스 최솟값 +{effect} 수치는 정의되어 있으나 전투 호출 지점은 미연결")
     elif not lines:
-        lines.append(f"고유 효과 최종 적용값 **{effect}**")
+        lines.append("현재 수치 보정이 실제 전투·생활 계산에 아직 연결되지 않음")
 
     lines.append(f"주 능력 보정: **{gem_main_stat_text(gem)}**")
     if auxiliary:
@@ -202,16 +192,6 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
             f"보조 능력 **+{auxiliary}**: 장착한 아티팩트의 "
             "주 능력치에 상수로 먼저 적용"
         )
-    lines.extend(gem_star_unlock_lines(gem))
-    corrections = []
-    if effect != raw_effect:
-        corrections.append(f"고유 {raw_effect}→{effect}")
-    if final_main != raw_main:
-        corrections.append(f"주 능력 {raw_main}→{final_main}")
-    if auxiliary != raw_auxiliary:
-        corrections.append(f"보조 {raw_auxiliary}→{auxiliary}")
-    if corrections:
-        lines.append("성급 최종 보정: " + " · ".join(corrections))
     return lines
 
 

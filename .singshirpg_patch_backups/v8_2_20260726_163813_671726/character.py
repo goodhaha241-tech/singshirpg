@@ -1,13 +1,10 @@
 # character.py
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
-# pve-gem-runtime-v8.2
 import hashlib
 import json
 import math
 import random
-
-from gem_effects import gem_final_aux_value, gem_final_main_value
 
 
 GEM_MAIN_STAT_LABELS = {
@@ -87,7 +84,7 @@ def ensure_gem_stat_affixes(gem):
 def gem_main_stat_text(gem):
     gem = ensure_gem_stat_affixes(gem)
     stat = GEM_MAIN_STAT_LABELS.get(gem.get("main_stat"), str(gem.get("main_stat", "능력치")))
-    value = gem_final_main_value(gem)
+    value = int(gem.get("main_stat_value", 0) or 0)
     mode = gem.get("main_stat_mode")
     if mode == "percent":
         return f"{stat} +{value}%"
@@ -126,7 +123,7 @@ def artifact_effective_stats(artifact):
     if primary is None:
         return effective
     auxiliary = sum(
-        gem_final_aux_value(ensure_gem_stat_affixes(gem))
+        int(ensure_gem_stat_affixes(gem).get("aux_stat_value", 0) or 0)
         for gem in artifact.get("gems", [])
         if isinstance(gem, dict)
     )
@@ -157,7 +154,7 @@ def gem_main_stat_bonuses(current_stats, artifacts):
             mode = gem.get("main_stat_mode")
             if stat not in totals or mode not in totals[stat]:
                 continue
-            totals[stat][mode] += gem_final_main_value(gem)
+            totals[stat][mode] += max(0, int(gem.get("main_stat_value", 0) or 0))
 
     result = {}
     for stat, values in totals.items():

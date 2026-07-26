@@ -1,5 +1,4 @@
 # rollback-guard-appraisal-gems-v8
-# pve-gem-runtime-v8.2
 import discord
 # cumulative-v2: one shared guild, automatic membership
 import random
@@ -17,12 +16,6 @@ from monsters import RAID_BOSS_DATA, Monster
 from character import Character
 from cards import get_card
 import battle_engine
-from gem_effects import (
-    battle_end_gem_heal,
-    escalation_roll,
-    process_gem_turn_start,
-    revive_gem_effects,
-)
 
 # guild-pvp-stability-v7.2
 
@@ -445,14 +438,6 @@ class RaidBattleView(discord.ui.View):
             char = self.participants[uid]['char']
             u_card_name = self.selected_cards[uid]
             u_card = get_card(u_card_name)
-
-            gem_log = process_gem_turn_start(
-                char, self.boss, self.turn, u_card_name
-            )
-            if gem_log:
-                self.logs.append(f"💎 **{char.name}** {gem_log}")
-            if self.boss.current_hp <= 0:
-                break
             
             boss_res = boss_card.use_card(self.boss.attack, self.boss.defense)
             boss_res = battle_engine.apply_stat_scaling(boss_res, self.boss)
@@ -462,23 +447,12 @@ class RaidBattleView(discord.ui.View):
             u_effs = []
             art = getattr(char, "equipped_artifact", None)
             if art: u_effs.append(art.get("special"))
-            engraved = getattr(char, "equipped_engraved_artifact", None)
-            if engraved:
-                u_effs.append(engraved.get("special"))
             
             art_log, next_trig = battle_engine.process_turn_start_artifacts(
                 char, self.boss, user_res, boss_res, self.turn, self.shayla_triggers.get(uid, False), u_card_name
             )
             self.shayla_triggers[uid] = next_trig
             if art_log: self.logs.append(art_log)
-
-            if "escalation" in u_effs and user_res:
-                last = char.runtime_cooldowns.get("escalation", -10)
-                if self.turn - last >= 2:
-                    bonus = escalation_roll(char)
-                    user_res[-1]["value"] += bonus
-                    char.runtime_cooldowns["escalation"] = self.turn
-                    self.logs.append(f"🔥 **{char.name}[고조된]** +{bonus}")
 
             is_target = (uid in targets)
             if is_target:
@@ -491,17 +465,8 @@ class RaidBattleView(discord.ui.View):
                 self.logs.append(f"🗡️ **{char.name}** 일방 공격!" + clash_log)
 
             if char.current_hp <= 0:
-                if "immortality" in u_effs and not self.participants[uid].get("revived"):
-                    self.participants[uid]["revived"] = True
-                    char.current_hp = char.max_hp
-                    revive_log = revive_gem_effects(char)
-                    self.logs.append(
-                        f"👼 **{char.name}** 부활!"
-                        + (f" ({revive_log})" if revive_log else "")
-                    )
-                else:
-                    char.current_hp = 0
-                    self.logs.append(f"💀 **{char.name}** 쓰러짐!")
+                char.current_hp = 0
+                self.logs.append(f"💀 **{char.name}** 쓰러짐!")
 
         if self.boss.current_hp <= 0: return await self.end_raid(interaction, True)
         
@@ -539,9 +504,6 @@ class RaidBattleView(discord.ui.View):
             for uid, p in self.participants.items():
                 p['data']['money'] += 5000
                 p['data']['pt'] += 1000
-                if hasattr(p['char'], "remove_battle_buffs"):
-                    p['char'].remove_battle_buffs()
-                battle_end_gem_heal(p['char'])
                 p['char'].current_hp = p['char'].max_hp
                 p['data']['characters'][p['char_idx']] = p['char'].to_dict()
                 await save_user_data(uid, p['data'])
@@ -552,8 +514,6 @@ class RaidBattleView(discord.ui.View):
         else:
             embed = discord.Embed(title="☠️ 토벌 실패", description="파티가 전멸했습니다...", color=discord.Color.dark_grey())
             for uid, p in self.participants.items():
-                if hasattr(p['char'], "remove_battle_buffs"):
-                    p['char'].remove_battle_buffs()
                 p['char'].current_hp = 1 
                 p['data']['characters'][p['char_idx']] = p['char'].to_dict()
                 await save_user_data(uid, p['data'])
@@ -571,9 +531,6 @@ class RaidBattleView(discord.ui.View):
         if self.finished:
             return
         self.finished = True
-        for p in self.participants.values():
-            if hasattr(p['char'], "remove_battle_buffs"):
-                p['char'].remove_battle_buffs()
         for child in self.children:
             child.disabled = True
         if self.public_message:
@@ -604,15 +561,7 @@ class RaidLobbyView(discord.ui.View):
             
             char.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
             char.runtime_cooldowns = {}
-            if hasattr(char, "apply_battle_start_buffs"):
-                char.apply_battle_start_buffs()
-            self.participants[user.id] = {
-                "user": user,
-                "char": char,
-                "char_idx": idx,
-                "data": user_data,
-                "revived": False,
-            }
+            self.participants[user.id] = {"user": user, "char": char, "char_idx": idx, "data": user_data}
             return True
 
     def get_embed(self):
