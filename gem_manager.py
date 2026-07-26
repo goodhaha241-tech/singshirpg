@@ -5,13 +5,87 @@ from typing import Any
 
 import discord
 
-from life_system import ensure_life_data
+from life_system import STONE_GEMS, ensure_life_data
+from navigation_v7 import attach_navigation
 
 
 CHARACTER_SPECIALS = {
     "youngsan_gold", "luude_imprint", "earthreg_faith",
     "sensho_star", "Sensho_star", "kaian_time", "shayla_light",
 }
+
+CATEGORY_LABELS = {
+    "combat_common": "전투 공용",
+    "dedicated": "아티팩트 전용",
+    "life": "생활",
+}
+
+TARGET_SPECIAL_LABELS = {
+    "reuse_last_dice": "꼼꼼한",
+    "fierce_attack": "맹렬한",
+    "sturdy_defense": "견고한",
+    "reflection": "앙심품은",
+    "escalation": "고조된",
+    "immortality": "불멸의",
+}
+
+
+def gem_definition(gem: dict[str, Any]) -> dict[str, Any] | None:
+    """Find the original definition for old gems that do not store a summary."""
+    for definitions in STONE_GEMS.values():
+        for definition in definitions:
+            if definition.get("name") != gem.get("name"):
+                continue
+            if gem.get("category") and definition.get("category") != gem.get("category"):
+                continue
+            if (
+                gem.get("target_special")
+                and definition.get("target_special") != gem.get("target_special")
+            ):
+                continue
+            return definition
+    return None
+
+
+def gem_summary(gem: dict[str, Any]) -> str:
+    definition = gem_definition(gem)
+    return str(gem.get("summary") or (definition or {}).get("summary") or "상세 효과가 기록되지 않은 젬입니다.")
+
+
+def gem_star_text(gem: dict[str, Any]) -> str:
+    star = max(0, min(5, int(gem.get("star", 0) or 0)))
+    return "★" * star + "☆" * (5 - star)
+
+
+def gem_detail_text(
+    gem: dict[str, Any],
+    artifact: dict[str, Any] | None = None,
+) -> str:
+    category = str(gem.get("category", "unknown"))
+    lines = [
+        f"**{gem_star_text(gem)} {gem.get('name', '젬')}**",
+        f"계열: {CATEGORY_LABELS.get(category, category)}",
+        f"고유능력: {gem_summary(gem)}",
+        (
+            f"현재 수치: 고유 효과 **{int(gem.get('effect_value', 0))}** · "
+            f"보조 수치 **{int(gem.get('stat_value', 0))}**"
+        ),
+    ]
+    target = gem.get("target_special")
+    if target:
+        lines.append(f"전용 대상: {TARGET_SPECIAL_LABELS.get(target, target)} 아티팩트")
+    star = max(0, min(5, int(gem.get("star", 0) or 0)))
+    if star >= 5:
+        lines.append("성급 특수 단계: 3성·5성 강화 활성")
+    elif star >= 3:
+        lines.append("성급 특수 단계: 3성 강화 활성 · 5성 강화 미해금")
+    else:
+        lines.append("성급 특수 단계: 기본 능력 · 3성/5성 강화 미해금")
+    if artifact is not None:
+        lines.append(f"현재 아티팩트: {'장착 가능' if gem_compatible(artifact, gem) else '장착 불가'}")
+    if gem.get("crafted_by"):
+        lines.append(f"세공 담당: {gem['crafted_by']}")
+    return "\n".join(lines)
 
 
 def artifact_socket_count(artifact: dict[str, Any]) -> int:
@@ -59,6 +133,8 @@ def unequip_gem(artifact, socket_index):
 
 
 class GemManagerView(discord.ui.View):
+    GEMS_PER_PAGE = 25
+
     def __init__(self, author, user_data, save_func, char_index=0):
         super().__init__(timeout=180)
         self.author, self.user_data, self.save_func = author, user_data, save_func
@@ -66,6 +142,7 @@ class GemManagerView(discord.ui.View):
         self.selected_artifact_id = None
         self.selected_socket = 0
         self.selected_gem_id = None
+        self.gem_page = 0
 
         equipped = self._character_artifact()
         artifacts = self.user_data.get("artifacts", [])
@@ -73,7 +150,19 @@ class GemManagerView(discord.ui.View):
             self.selected_artifact_id = equipped["id"]
         elif artifacts:
             self.selected_artifact_id = artifacts[0].get("id")
+        gems = ensure_life_data(self.user_data).get("gems", [])
+        if gems:
+            self.selected_gem_id = gems[0].get("id")
         self._rebuild_components()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "본인의 젬만 관리할 수 있습니다.",
+                ephemeral=True,
+            )
+            return False
+        return True
 
     def _character_artifact(self):
         chars = self.user_data.get("characters", [])
@@ -83,7 +172,22 @@ class GemManagerView(discord.ui.View):
 
     def _artifact(self):
         artifacts = self.user_data.get("artifacts", [])
-        return next((a for a in artifacts if a.get("id") == self.selected_artifact_id), None)
+        return next(
+            (artifact for artifact in artifacts
+             if str(artifact.get("id")) == str(self.selected_artifact_id)),
+            None,
+        )
+
+    def _selected_gem(self):
+        gems = ensure_life_data(self.user_data).get("gems", [])
+        return next(
+            (gem for gem in gems if str(gem.get("id")) == str(self.selected_gem_id)),
+            None,
+        )
+
+    def _life_hub_factory(self):
+        from life_overhaul_v5 import LifeHubView
+        return LifeHubView(self.author, self.user_data, self.save_func)
 
     async def _save(self):
         try:
@@ -94,92 +198,147 @@ class GemManagerView(discord.ui.View):
     def _rebuild_components(self):
         self.clear_items()
         artifacts = self.user_data.get("artifacts", [])
-        if not artifacts:
-            return
-
-        artifact_select = discord.ui.Select(
-            placeholder="아티팩트 선택",
-            row=0,
-            options=[
-                discord.SelectOption(
-                    label=str(art.get("name", "아티팩트"))[:100],
-                    value=str(art.get("id")),
-                    default=art.get("id") == self.selected_artifact_id,
-                    description=f"{artifact_socket_count(art)}소켓 · +{art.get('level', 0)}",
-                )
-                for art in artifacts[:25]
-                if art.get("id") is not None
-            ],
-        )
-        artifact_select.callback = self._select_artifact
-        self.add_item(artifact_select)
-
-        artifact = self._artifact()
-        if not artifact:
-            return
-        socket_count = artifact_socket_count(artifact)
-        self.selected_socket = min(self.selected_socket, socket_count - 1)
-        socket_select = discord.ui.Select(
-            placeholder="소켓 선택",
-            row=1,
-            options=[
-                discord.SelectOption(
-                    label=f"{index + 1}번 소켓",
-                    value=str(index),
-                    default=index == self.selected_socket,
-                )
-                for index in range(socket_count)
-            ],
-        )
-        socket_select.callback = self._select_socket
-        self.add_item(socket_select)
-
-        life = ensure_life_data(self.user_data)
-        compatible = [gem for gem in life.get("gems", []) if gem_compatible(artifact, gem)]
-        if compatible:
-            valid_ids = {str(gem.get("id")) for gem in compatible}
-            if str(self.selected_gem_id) not in valid_ids:
-                self.selected_gem_id = compatible[0].get("id")
-            gem_select = discord.ui.Select(
-                placeholder="장착할 젬 선택",
-                row=2,
+        if artifacts:
+            if not self._artifact():
+                self.selected_artifact_id = artifacts[0].get("id")
+            artifact_select = discord.ui.Select(
+                placeholder="아티팩트 선택",
+                row=0,
                 options=[
                     discord.SelectOption(
-                        label=str(gem.get("name", "젬"))[:100],
+                        label=str(art.get("name", "아티팩트"))[:100],
+                        value=str(art.get("id")),
+                        default=str(art.get("id")) == str(self.selected_artifact_id),
+                        description=f"{artifact_socket_count(art)}소켓 · +{art.get('level', 0)}",
+                    )
+                    for art in artifacts[:25]
+                    if art.get("id") is not None
+                ],
+            )
+            artifact_select.callback = self._select_artifact
+            self.add_item(artifact_select)
+
+        artifact = self._artifact()
+        life = ensure_life_data(self.user_data)
+        gems = list(life.get("gems", []))
+
+        if artifact:
+            socket_count = artifact_socket_count(artifact)
+            self.selected_socket = min(self.selected_socket, socket_count - 1)
+            sockets = artifact.setdefault("gems", [None] * socket_count)
+            sockets.extend([None] * (socket_count - len(sockets)))
+            socket_select = discord.ui.Select(
+                placeholder="소켓 선택",
+                row=1,
+                options=[
+                    discord.SelectOption(
+                        label=(
+                            f"{index + 1}번 · {sockets[index].get('name', '젬')}"
+                            if sockets[index] else f"{index + 1}번 소켓 · 비어 있음"
+                        )[:100],
+                        value=str(index),
+                        default=index == self.selected_socket,
+                    )
+                    for index in range(socket_count)
+                ],
+            )
+            socket_select.callback = self._select_socket
+            self.add_item(socket_select)
+
+        if gems:
+            valid_ids = {str(gem.get("id")) for gem in gems}
+            if str(self.selected_gem_id) not in valid_ids:
+                self.selected_gem_id = gems[0].get("id")
+                self.gem_page = 0
+
+            total_pages = max(1, (len(gems) + self.GEMS_PER_PAGE - 1) // self.GEMS_PER_PAGE)
+            self.gem_page = min(max(0, self.gem_page), total_pages - 1)
+            start = self.gem_page * self.GEMS_PER_PAGE
+            page_gems = gems[start:start + self.GEMS_PER_PAGE]
+            gem_select = discord.ui.Select(
+                placeholder="상세히 볼 젬 선택",
+                row=2 if artifact else 0,
+                options=[
+                    discord.SelectOption(
+                        label=(
+                            f"{gem_star_text(gem)} {gem.get('name', '젬')} "
+                            f"· 효과 {int(gem.get('effect_value', 0))}"
+                        )[:100],
                         value=str(gem.get("id")),
                         default=str(gem.get("id")) == str(self.selected_gem_id),
-                        description=f"{gem.get('star', 0)}성 · {gem.get('category', '일반')}",
+                        description=(
+                            f"{'장착 가능' if artifact and gem_compatible(artifact, gem) else '상세 보기'}"
+                            f" · {gem_summary(gem)}"
+                        )[:100],
                     )
-                    for gem in compatible[:25]
+                    for gem in page_gems
                 ],
             )
             gem_select.callback = self._select_gem
             self.add_item(gem_select)
 
+        selected_gem = self._selected_gem()
         equip_button = discord.ui.Button(
             label="선택 젬 장착",
             style=discord.ButtonStyle.success,
             row=3,
-            disabled=not compatible,
+            disabled=not bool(
+                artifact and selected_gem and gem_compatible(artifact, selected_gem)
+            ),
         )
         equip_button.callback = self._equip
         self.add_item(equip_button)
 
-        sockets = artifact.setdefault("gems", [None] * socket_count)
-        sockets.extend([None] * (socket_count - len(sockets)))
+        sockets = artifact.get("gems", []) if artifact else []
         unequip_button = discord.ui.Button(
             label="현재 소켓 해제",
             style=discord.ButtonStyle.danger,
             row=3,
-            disabled=not bool(sockets[self.selected_socket]),
+            disabled=not bool(
+                artifact
+                and 0 <= self.selected_socket < len(sockets)
+                and sockets[self.selected_socket]
+            ),
         )
         unequip_button.callback = self._unequip
         self.add_item(unequip_button)
 
+        if gems:
+            total_pages = max(1, (len(gems) + self.GEMS_PER_PAGE - 1) // self.GEMS_PER_PAGE)
+            previous = discord.ui.Button(
+                label="◀",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                disabled=self.gem_page == 0,
+            )
+            previous.callback = self._previous_gem_page
+            self.add_item(previous)
+            page_indicator = discord.ui.Button(
+                label=f"{self.gem_page + 1}/{total_pages}",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                disabled=True,
+            )
+            self.add_item(page_indicator)
+            following = discord.ui.Button(
+                label="▶",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                disabled=self.gem_page >= total_pages - 1,
+            )
+            following.callback = self._next_gem_page
+            self.add_item(following)
+
+        attach_navigation(
+            self,
+            self.author,
+            self._life_hub_factory,
+            back_label="생활 관리로",
+        )
+
     async def _select_artifact(self, interaction):
         self.selected_artifact_id = interaction.data["values"][0]
         self.selected_socket = 0
-        self.selected_gem_id = None
         self._rebuild_components()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
@@ -193,8 +352,30 @@ class GemManagerView(discord.ui.View):
         self._rebuild_components()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
+    async def _previous_gem_page(self, interaction):
+        self.gem_page = max(0, self.gem_page - 1)
+        gems = ensure_life_data(self.user_data).get("gems", [])
+        if gems:
+            self.selected_gem_id = gems[self.gem_page * self.GEMS_PER_PAGE].get("id")
+        self._rebuild_components()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    async def _next_gem_page(self, interaction):
+        gems = ensure_life_data(self.user_data).get("gems", [])
+        total_pages = max(1, (len(gems) + self.GEMS_PER_PAGE - 1) // self.GEMS_PER_PAGE)
+        self.gem_page = min(total_pages - 1, self.gem_page + 1)
+        if gems:
+            self.selected_gem_id = gems[self.gem_page * self.GEMS_PER_PAGE].get("id")
+        self._rebuild_components()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
     async def _equip(self, interaction):
         artifact = self._artifact()
+        if not artifact or not self._selected_gem():
+            return await interaction.response.send_message(
+                "아티팩트와 젬을 먼저 선택하세요.",
+                ephemeral=True,
+            )
         ok, message = equip_gem(
             self.user_data,
             artifact,
@@ -207,7 +388,13 @@ class GemManagerView(discord.ui.View):
         await interaction.response.edit_message(content=message, embed=self.get_embed(), view=self)
 
     async def _unequip(self, interaction):
-        ok, message = unequip_gem(self._artifact(), self.selected_socket)
+        artifact = self._artifact()
+        if not artifact:
+            return await interaction.response.send_message(
+                "아티팩트를 먼저 선택하세요.",
+                ephemeral=True,
+            )
+        ok, message = unequip_gem(artifact, self.selected_socket)
         if ok:
             await self._save()
         self._rebuild_components()
@@ -215,20 +402,58 @@ class GemManagerView(discord.ui.View):
 
     def get_embed(self):
         art = self._artifact()
-        e = discord.Embed(title="💎 젬 소켓", color=discord.Color.purple())
-        if not art:
-            e.description = "관리할 아티팩트가 없습니다."
-            return e
-        sockets = art.setdefault("gems", [None] * artifact_socket_count(art))
-        sockets.extend([None] * (artifact_socket_count(art) - len(sockets)))
-        lines = [
-            f"{'▶ ' if i == self.selected_socket else ''}{i+1}. "
-            + (f"{g['name']} · {g.get('star', 0)}성" if g else "비어 있음")
-            for i, g in enumerate(sockets[:artifact_socket_count(art)])
-        ]
-        e.description = (
-            f"**{art.get('name','아티팩트')}** · {artifact_socket_count(art)}소켓\n"
-            + "\n".join(lines)
+        gems = ensure_life_data(self.user_data).get("gems", [])
+        e = discord.Embed(title="💎 젬 상세·장착", color=discord.Color.purple())
+
+        if art:
+            sockets = art.setdefault("gems", [None] * artifact_socket_count(art))
+            sockets.extend([None] * (artifact_socket_count(art) - len(sockets)))
+            lines = [
+                f"{'▶ ' if i == self.selected_socket else ''}{i + 1}. "
+                + (
+                    f"{gem_star_text(gem)} {gem.get('name', '젬')}"
+                    if gem else "비어 있음"
+                )
+                for i, gem in enumerate(sockets[:artifact_socket_count(art)])
+            ]
+            e.description = (
+                f"**{art.get('name', '아티팩트')}** · {artifact_socket_count(art)}소켓\n"
+                + "\n".join(lines)
+            )
+            equipped = (
+                sockets[self.selected_socket]
+                if 0 <= self.selected_socket < len(sockets) else None
+            )
+            if equipped:
+                e.add_field(
+                    name=f"현재 {self.selected_socket + 1}번 소켓",
+                    value=gem_detail_text(equipped, art)[:1024],
+                    inline=False,
+                )
+        else:
+            e.description = (
+                "장착할 아티팩트가 없습니다. 보유 젬의 고유능력은 아래에서 확인할 수 있습니다."
+            )
+
+        selected_gem = self._selected_gem()
+        if selected_gem:
+            e.add_field(
+                name="선택한 보유 젬",
+                value=gem_detail_text(selected_gem, art)[:1024],
+                inline=False,
+            )
+        elif not gems:
+            e.add_field(
+                name="보유 젬",
+                value="완성한 젬이 없습니다.",
+                inline=False,
+            )
+
+        total_pages = max(1, (len(gems) + self.GEMS_PER_PAGE - 1) // self.GEMS_PER_PAGE)
+        e.set_footer(
+            text=(
+                f"보유 젬 {len(gems)}개 · 젬 목록 {self.gem_page + 1}/{total_pages}페이지 · "
+                "젬을 선택하면 고유능력과 현재 수치를 바로 확인합니다."
+            )
         )
-        e.set_footer(text="아티팩트·소켓·젬을 고른 뒤 장착하거나 해제하세요.")
         return e
