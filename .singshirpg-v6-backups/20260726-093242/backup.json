@@ -1,0 +1,93 @@
+{
+  "created_at": "2026-07-26T09:32:42.528267",
+  "files": [
+    {
+      "path": "battle.py",
+      "existed": true
+    },
+    {
+      "path": "battle_engine.py",
+      "existed": true
+    },
+    {
+      "path": "data_manager.py",
+      "existed": true
+    },
+    {
+      "path": "fishing.py",
+      "existed": true
+    },
+    {
+      "path": "garden.py",
+      "existed": true
+    },
+    {
+      "path": "guild.py",
+      "existed": true
+    },
+    {
+      "path": "investigation.py",
+      "existed": true
+    },
+    {
+      "path": "main.py",
+      "existed": true
+    },
+    {
+      "path": "rpg_commands.py",
+      "existed": true
+    },
+    {
+      "path": "schema.sql",
+      "existed": true
+    },
+    {
+      "path": "subjugation.py",
+      "existed": true
+    },
+    {
+      "path": "workshop.py",
+      "existed": true
+    },
+    {
+      "path": "artifact_events_v5.py",
+      "existed": false
+    },
+    {
+      "path": "artifact_overhaul_v5.py",
+      "existed": false
+    },
+    {
+      "path": "balance_config_v6.py",
+      "existed": false
+    },
+    {
+      "path": "cooking_system_v6.py",
+      "existed": false
+    },
+    {
+      "path": "gem_effects.py",
+      "existed": false
+    },
+    {
+      "path": "gem_manager.py",
+      "existed": false
+    },
+    {
+      "path": "life_overhaul_v5.py",
+      "existed": false
+    },
+    {
+      "path": "life_system.py",
+      "existed": false
+    },
+    {
+      "path": "progression_system_v6.py",
+      "existed": false
+    },
+    {
+      "path": "v6_schema_migration.sql",
+      "existed": false
+    }
+  ]
+}

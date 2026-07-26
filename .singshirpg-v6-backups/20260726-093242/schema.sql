@@ -26,23 +26,11 @@ CREATE TABLE IF NOT EXISTS users (
     fishing_level INT DEFAULT 1,
     total_investigations BIGINT DEFAULT 0,
     total_subjugations BIGINT DEFAULT 0,
-    total_turns BIGINT DEFAULT 0,
-    fishing_max_slots INT DEFAULT 3,
-    max_subjugation_depth INT DEFAULT 0,
-    max_subjugation_char VARCHAR(100),
-    max_subjugation_region VARCHAR(100),
-    construction_step INT DEFAULT 0,
 
     -- JSON 형태로 저장할 가벼운 데이터들
     cards JSON,           -- 보유 카드 리스트
     buffs JSON,           -- 적용 중인 버프
     main_quest_progress JSON, -- 퀘스트 진행 상세
-    daily_quests JSON,
-    last_quest_date DATE,
-    current_dungeon JSON,
-    guild_rank VARCHAR(20),
-    guild_data JSON,
-    characters JSON,
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -51,7 +39,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS inventory (
     user_id VARCHAR(50),
     item_name VARCHAR(100),
-    quantity BIGINT DEFAULT 0,
+    count INT DEFAULT 0,
     PRIMARY KEY (user_id, item_name),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
@@ -92,8 +80,7 @@ CREATE TABLE IF NOT EXISTS workshop_slots (
     user_id VARCHAR(50),
     slot_index INT,
     craft_item VARCHAR(100),
-    start_count BIGINT DEFAULT 0,
-    required_count BIGINT DEFAULT 0,
+    progress INT DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
@@ -107,8 +94,6 @@ CREATE TABLE IF NOT EXISTS guilds (
     name VARCHAR(50) NOT NULL UNIQUE,
     level INT DEFAULT 1,
     exp BIGINT DEFAULT 0,
-    owner_id VARCHAR(50),
-    member_count INT DEFAULT 0,
     
     -- 길드 공용 재화 (토큰)
     token_wood BIGINT DEFAULT 0,
@@ -121,12 +106,10 @@ CREATE TABLE IF NOT EXISTS guilds (
 
 -- 8. 길드 멤버 목록
 CREATE TABLE IF NOT EXISTS guild_members (
+    user_id VARCHAR(50) PRIMARY KEY,
     guild_id INT,
-    user_id VARCHAR(50),
     role VARCHAR(20) DEFAULT 'member', -- master, officer, member
-    contribution INT DEFAULT 0,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (guild_id, user_id),
     FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
@@ -160,7 +143,7 @@ CREATE TABLE IF NOT EXISTS guild_stored_artifacts (
     guild_id INT,
     artifact_id VARCHAR(100), -- 원본 UUID
     name VARCHAR(100),
-    rank_level INT,
+    rank INT,
     level INT,
     data JSON, -- 전체 데이터 저장
     stored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -178,60 +161,4 @@ CREATE TABLE IF NOT EXISTS guild_log (
     count INT,
     logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS characters (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(50),
-    name VARCHAR(100),
-    hp INT DEFAULT 100,
-    current_hp INT DEFAULT 100,
-    max_mental INT DEFAULT 50,
-    current_mental INT DEFAULT 50,
-    attack INT DEFAULT 5,
-    defense INT DEFAULT 0,
-    defense_rate INT DEFAULT 0,
-    card_slots INT DEFAULT 4,
-    equipped_cards JSON,
-    equipped_engraved_artifact JSON,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS artifacts (
-    id VARCHAR(36) PRIMARY KEY,
-    user_id VARCHAR(50),
-    name VARCHAR(100),
-    rank_level INT DEFAULT 1,
-    grade INT DEFAULT 1,
-    level INT DEFAULT 0,
-    prefix VARCHAR(50),
-    stats JSON,
-    special VARCHAR(100),
-    description TEXT,
-    equipped_char_index INT DEFAULT -1,
-    gems JSON,
-    metadata JSON,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS fishing_slots (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(50),
-    fish_name VARCHAR(100),
-    start_count BIGINT DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS unlocked_regions (
-    user_id VARCHAR(50),
-    region_name VARCHAR(100),
-    PRIMARY KEY (user_id, region_name),
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS user_life_data (
-    user_id VARCHAR(50) PRIMARY KEY,
-    data JSON NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );

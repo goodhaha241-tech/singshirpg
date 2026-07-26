@@ -391,16 +391,6 @@ class TurnInvestigationView(discord.ui.View):
             
             # [수정] 성공한 조사 턴 횟수 증가 및 퀘스트 업데이트
             self.user_data.setdefault("myhome", {})["total_investigations"] = self.user_data["myhome"].get("total_investigations", 0) + 1
-            self.user_data["myhome"]["total_turns"] = self.user_data["myhome"].get("total_turns", 0) + 1
-            try:
-                from progression_system_v6 import ensure_progression, weekly_progress
-                weekly_progress(self.user_data, "investigation_turns", 1)
-                if is_great:
-                    progression = ensure_progression(self.user_data)
-                    if "first_great_investigation" not in progression["achievements"]:
-                        progression["achievements"].append("first_great_investigation")
-            except ImportError:
-                pass
             char_idx = self.user_data.get("investigator_index", 0)
             chars = self.user_data.get("characters", [])
             char_name = chars[char_idx]["name"] if chars and char_idx < len(chars) else None

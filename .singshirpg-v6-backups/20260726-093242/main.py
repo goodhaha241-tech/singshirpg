@@ -109,14 +109,8 @@ class MyBot(commands.Bot):
         except Exception as e:
             logger.error(f"❌ 지속성 뷰 등록 실패: {e}")
         
-        # 4. v6에서 추가된 /마이홈·/생활 등의 진입점을 Discord에 반영한다.
-        # 서버가 비정기적으로 실행되므로 시작할 때 한 번 동기화하는 편이
-        # 수동 !sync 누락보다 안전하다.
-        try:
-            synced = await self.tree.sync()
-            logger.info("Slash commands synced: %s", len(synced))
-        except Exception as e:
-            logger.error("Slash command sync failed: %s", e)
+        # 4. 커맨드 동기화 (개발 중에는 생략 가능, 배포 시 주석 해제 권장)
+        # await self.tree.sync() 
 
 bot = MyBot()
 

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>웹 RPG - 조사 및 전투</title>
+    <style>
+        body { background-color: #1a1a1a; color: #ffffff; font-family: 'Malgun Gothic', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .game-container { width: 900px; background-color: #2d2d2d; border: 2px solid #555; border-radius: 10px; padding: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
+        
+        /* 화면 전환용 클래스 */
+        .screen { display: none; }
+        .screen.active { display: flex; flex-direction: column; }
+
+        /* 공통 로그 창 */
+        #log-box { margin: 15px 0; min-height: 60px; padding: 15px; background-color: #111; border: 1px solid #444; border-radius: 5px; color: #a5d8ff; font-size: 1rem; line-height: 1.5; white-space: pre-wrap; }
+
+        /* 로비(조사) 화면 */
+        .lobby-content { display: flex; gap: 30px; }
+        .character-art { width: 300px; height: 450px; background-color: #222; border: 2px dashed #888; display: flex; justify-content: center; align-items: center; text-align: center; line-height: 1.6; }
+        .info-panel { flex-grow: 1; font-size: 1.1rem; }
+        .stat-bar { background-color: #333; margin-bottom: 10px; padding: 10px; border-radius: 5px; }
+        .btn { background-color: #4dabf7; color: #111; border: none; padding: 12px 20px; font-size: 1.1rem; font-weight: bold; border-radius: 5px; cursor: pointer; width: 100%; margin-top: 10px;}
+        .btn:hover { background-color: #3bc9db; }
+
+        /* 전투 화면 */
+        .battle-arena { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .combatant { width: 45%; background-color: #222; padding: 15px; border-radius: 10px; border: 1px solid #555; text-align: center; }
+        .health-bar { font-size: 1.2rem; font-weight: bold; margin: 10px 0; }
+        .hp { color: #ff6b6b; } .mental { color: #cc5de8; }
+        .panic-text { color: red; font-weight: bold; font-size: 0.9rem; display: none; }
+        
+        .card-deck { display: flex; gap: 10px; justify-content: center; }
+        .card-btn { background-color: #51cf66; color: #111; border: none; padding: 15px; font-size: 1.1rem; font-weight: bold; border-radius: 5px; cursor: pointer; flex-grow: 1;}
+        .card-btn:hover { background-color: #40c057; }
+    </style>
+</head>
+<body>
+
+<div class="game-container">
+    <div id="log-box">게임에 접속했습니다.</div>
+
+    <div id="screen-lobby" class="screen active">
+        <div class="lobby-content">
+            <div class="character-art">
+                <p>푸른 눈<br>흑분홍 투톤 머리<br>보라색 왕관<br>흑분홍 고딕 스타일 의상<br>거대한 낫</p>
+            </div>
+            <div class="info-panel">
+                <h2>나의 상태</h2>
+                <div class="stat-bar hp">❤️ 체력: <span id="lobby-hp">0</span></div>
+                <div class="stat-bar mental">🔮 정신력: <span id="lobby-mental">0</span></div>
+                <div class="stat-bar">⚡ 포인트: <span id="lobby-pt">0</span> pt</div>
+                <button class="btn" onclick="investigate()">🔍 포인트 100 소모하여 조사하기</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="screen-battle" class="screen">
+        <div class="battle-arena">
+            <div class="combatant">
+                <h3>플레이어</h3>
+                <div class="health-bar hp">❤️ <span id="battle-p-hp">0 / 0</span></div>
+                <div class="health-bar mental">🔮 <span id="battle-p-mental">0 / 0</span></div>
+                <div id="p-panic" class="panic-text">⚠️ 패닉 상태! (피해 2배)</div>
+            </div>
+            <h2>VS</h2>
+            <div class="combatant">
+                <h3 id="monster-name">몬스터</h3>
+                <div class="health-bar hp">❤️ <span id="battle-m-hp">0 / 0</span></div>
+                <div class="health-bar mental">🔮 <span id="battle-m-mental">0 / 0</span></div>
+                <div id="m-panic" class="panic-text">⚠️ 패닉 상태! (피해 2배)</div>
+            </div>
+        </div>
+        
+        <div class="card-deck" id="card-container">
+            </div>
+    </div>
+</div>
+
+<script>
+    // 화면 전환 함수
+    function showScreen(screenId) {
+        document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+        document.getElementById(screenId).classList.add('active');
+    }
+
+    function log(msg) {
+        document.getElementById('log-box').innerText = msg;
+    }
+
+    // UI 숫자 갱신
+    function updateLobbyUI(p) {
+        document.getElementById('lobby-hp').innerText = `${p.current_hp} / ${p.max_hp}`;
+        document.getElementById('lobby-mental').innerText = `${p.current_mental} / ${p.max_mental}`;
+        document.getElementById('lobby-pt').innerText = p.pt;
+    }
+
+    function updateBattleUI(p, m) {
+        document.getElementById('battle-p-hp').innerText = `${p.current_hp} / ${p.max_hp}`;
+        document.getElementById('battle-p-mental').innerText = `${p.current_mental} / ${p.max_mental}`;
+        document.getElementById('p-panic').style.display = p.current_mental <= 0 ? 'block' : 'none';
+
+        if(m) {
+            document.getElementById('monster-name').innerText = m.name;
+            document.getElementById('battle-m-hp').innerText = `${m.current_hp} / ${m.max_hp}`;
+            document.getElementById('battle-m-mental').innerText = `${m.current_mental} / ${m.max_mental}`;
+            document.getElementById('m-panic').style.display = m.current_mental <= 0 ? 'block' : 'none';
+        }
+    }
+
+    // 서버에서 데이터 불러오기
+    async function loadData() {
+        const res = await fetch('http://localhost:8000/api/myinfo');
+        const data = await res.json();
+        
+        updateLobbyUI(data.player);
+        
+        // 카드 버튼 생성
+        const deck = document.getElementById('card-container');
+        deck.innerHTML = '';
+        data.player.cards.forEach(cardName => {
+            const btn = document.createElement('button');
+            btn.className = 'card-btn';
+            btn.innerText = `🎴 ${cardName}`;
+            btn.onclick = () => playCard(cardName);
+            deck.appendChild(btn);
+        });
+
+        if(data.battle) {
+            showScreen('screen-battle');
+            updateBattleUI(data.player, data.battle);
+        }
+    }
+
+    // 조사하기 버튼 클릭
+    async function investigate() {
+        const res = await fetch('http://localhost:8000/api/action/investigate', { method: 'POST' });
+        const result = await res.json();
+        
+        log(result.message);
+        if(result.success) updateLobbyUI(result.data);
+
+        if(result.event === 'battle_start') {
+            showScreen('screen-battle');
+            loadData(); // 전투 데이터 동기화
+        }
+    }
+
+    // 전투 중 카드 내기
+    async function playCard(cardName) {
+        const res = await fetch('http://localhost:8000/api/battle/clash', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card_name: cardName })
+        });
+        const result = await res.json();
+        
+        log(result.log);
+        updateBattleUI(result.player, result.monster);
+        updateLobbyUI(result.player); // 패배 후 로비 복귀 시 체력 동기화용
+
+        if(result.battle_status === 'win' || result.battle_status === 'lose') {
+            setTimeout(() => {
+                showScreen('screen-lobby');
+                log("전투가 종료되어 로비로 돌아왔습니다.");
+            }, 2000);
+        }
+    }
+
+    loadData();
+</script>
+
+</body>
+</html>

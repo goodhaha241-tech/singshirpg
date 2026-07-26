@@ -1,13 +1,5 @@
 # battle_engine.py
 import random
-from gem_effects import (
-    artifact_modifier,
-    low_mental_bonus,
-    multi_attack_bonus,
-    reduce_turn_first_damage,
-    single_dice_bonus,
-    turn_first_dice_bonus,
-)
 
 def get_emoji(action_type):
     return {"attack": "⚔️", "defense": "🛡️", "counter": "⚡", "heal": "💚", "mental_heal": "🔮", "none": "💨"}.get(action_type, "🎲")
@@ -204,13 +196,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
     # 어즈렉 각인용 변수
     total_def1, total_def2 = 0, 0
     first_type1, first_type2 = None, None
-    art1 = getattr(char1, "equipped_artifact", None)
-    art2 = getattr(char2, "equipped_artifact", None)
-    art1 = art1 if isinstance(art1, dict) else {}
-    art2 = art2 if isinstance(art2, dict) else {}
-    valid1 = [d for d in res1 if d.get("type") != "none"]
-    valid2 = [d for d in res2 if d.get("type") != "none"]
-    attack_index1 = attack_index2 = 0
 
     # 이펙트 안전 로딩
     if not effs1 and char1:
@@ -279,24 +264,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         t1, v1 = d1["type"], d1["value"]
         t2, v2 = d2["type"], d2["value"]
-        if t1 == "attack":
-            attack_index1 += 1
-        if t2 == "attack":
-            attack_index2 += 1
-        if t1 != "none":
-            if i == 0:
-                v1 += turn_first_dice_bonus(art1)
-            if len(valid1) == 1:
-                v1 += single_dice_bonus(art1)
-            v1 += multi_attack_bonus(art1, attack_index1)
-            v1 += low_mental_bonus(art1, char1.current_mental, char1.max_mental)
-        if t2 != "none":
-            if i == 0:
-                v2 += turn_first_dice_bonus(art2)
-            if len(valid2) == 1:
-                v2 += single_dice_bonus(art2)
-            v2 += multi_attack_bonus(art2, attack_index2)
-            v2 += low_mental_bonus(art2, char2.current_mental, char2.max_mental)
         
         if i == 0: first_type1, first_type2 = t1, t2
         if t1 == "defense": total_def1 += v1
@@ -316,26 +283,24 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if "fierce_attack" in effs1 and t1 == "attack":
             last = char1.runtime_cooldowns.get("fierce_attack", -10)
             if turn_count - last >= 2:
-                fierce = artifact_modifier(art1, "damage", char1.attack)
-                v1 += fierce; char1.runtime_cooldowns["fierce_attack"] = turn_count
+                v1 += char1.attack; char1.runtime_cooldowns["fierce_attack"] = turn_count
                 clash_log += f"🔥 **{char1.name}[맹렬한]** "
         if "fierce_attack" in effs2 and t2 == "attack":
             last = char2.runtime_cooldowns.get("fierce_attack", -10)
             if turn_count - last >= 2:
-                fierce = artifact_modifier(art2, "damage", char2.attack)
-                v2 += fierce; char2.runtime_cooldowns["fierce_attack"] = turn_count
+                v2 += char2.attack; char2.runtime_cooldowns["fierce_attack"] = turn_count
                 clash_log += f"🔥 **{char2.name}[맹렬한]** "
 
         if "sturdy_defense" in effs1 and t1 == "defense":
             last = char1.runtime_cooldowns.get("sturdy_defense", -10)
             if turn_count - last >= 2:
-                heal = artifact_modifier(art1, "heal", (v1 * 2) // 3); char1.current_hp = min(char1.max_hp, char1.current_hp + heal)
+                heal = (v1 * 2) // 3; char1.current_hp = min(char1.max_hp, char1.current_hp + heal)
                 char1.runtime_cooldowns["sturdy_defense"] = turn_count
                 clash_log += f"🛡️ **{char1.name}[견고한]**(+{heal}) "
         if "sturdy_defense" in effs2 and t2 == "defense":
             last = char2.runtime_cooldowns.get("sturdy_defense", -10)
             if turn_count - last >= 2:
-                heal = artifact_modifier(art2, "heal", (v2 * 2) // 3); char2.current_hp = min(char2.max_hp, char2.current_hp + heal)
+                heal = (v2 * 2) // 3; char2.current_hp = min(char2.max_hp, char2.current_hp + heal)
                 char2.runtime_cooldowns["sturdy_defense"] = turn_count
                 clash_log += f"🛡️ **{char2.name}[견고한]**(+{heal}) "
 
@@ -437,17 +402,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if is_stunned1 and dmg1 > 0: dmg1 *= 2; mental_dmg1 *= 2; clash_log += " (⚠️패닉 2배)"
         if is_stunned2 and dmg2 > 0: dmg2 *= 2; mental_dmg2 *= 2; clash_log += " (⚠️패닉 2배)"
 
-        state1 = char1.runtime_cooldowns.setdefault("gem_state", {})
-        state2 = char2.runtime_cooldowns.setdefault("gem_state", {})
-        if state1.get("guardian_turn") != turn_count:
-            state1["guardian_turn"] = turn_count
-            state1["guardian_turn_used"] = False
-        if state2.get("guardian_turn") != turn_count:
-            state2["guardian_turn"] = turn_count
-            state2["guardian_turn_used"] = False
-        dmg1 = reduce_turn_first_damage(art1, dmg1, state1)
-        dmg2 = reduce_turn_first_damage(art2, dmg2, state2)
-
         # 출혈 추가 피해
         bleed1 = char1.status_effects.get("bleed", 0)
         if bleed1 > 0 and dmg2 > 0:
@@ -461,10 +415,10 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         # 반사 / 흡혈
         if "reflection" in effs1 and dmg1 > 0:
-            refl = artifact_modifier(art1, "reflect", (dmg1 * 3) // 4)
+            refl = (dmg1 * 3) // 4
             if refl > 0: char2.current_hp = max(0, char2.current_hp - refl); clash_log += f" 💢반사(-{refl})"
         if "reflection" in effs2 and dmg2 > 0:
-            refl = artifact_modifier(art2, "reflect", (dmg2 * 3) // 4)
+            refl = (dmg2 * 3) // 4
             if refl > 0: char1.current_hp = max(0, char1.current_hp - refl); clash_log += f" 💢반사(-{refl})"
 
         if val_win1 and d1.get("effect") == "absorb_hp":

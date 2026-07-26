@@ -34,7 +34,7 @@ class WorkshopView(discord.ui.View):
         embed.add_field(name="자원", value=f"📦 제작키트: {kit}개", inline=False)
         
         slots_desc = ""
-        total_sub = self.user_data["myhome"].get("total_turns", 0)
+        total_sub = self.user_data["myhome"].get("total_subjugations", 0)
         
         for i, slot in enumerate(self.workshop_slots):
             req = slot.get("required_count", 10)
@@ -112,14 +112,14 @@ class WorkshopView(discord.ui.View):
         inv["아티팩트 제작키트"] -= 1
         self.workshop_slots.append({
             "craft_item": "random_3star", 
-            "start_count": self.myhome.get("total_turns", 0),
+            "start_count": self.myhome.get("total_subjugations", 0),
             "required_count": 10
         })
         await self.save_func(self.author.id, self.user_data)
         await i.response.edit_message(embed=self.get_embed(), view=self)
 
     async def claim_craft(self, i):
-        total_sub = self.user_data["myhome"].get("total_turns", 0)
+        total_sub = self.user_data["myhome"].get("total_subjugations", 0)
         completed = [idx for idx, s in enumerate(self.workshop_slots) if total_sub - s.get("start_count", 0) >= s.get("required_count", 10)]
         
         if not completed: return await i.response.send_message("❌ 완료된 아이템 없음", ephemeral=True)

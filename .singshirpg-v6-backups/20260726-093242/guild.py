@@ -1,5 +1,4 @@
 import discord
-# cumulative-v2: one shared guild, automatic membership
 import random
 import json
 import asyncio
@@ -99,7 +98,9 @@ class InventoryManageView(discord.ui.View):
         btn_dep.callback = self.switch_to_deposit
         self.add_item(btn_dep)
         
-        # 공용 길드의 자원은 개인 인벤토리로 출고하지 않는다.
+        btn_wd = Button(label="📤 출고(수령)", style=discord.ButtonStyle.primary if self.mode=="withdraw" else discord.ButtonStyle.secondary)
+        btn_wd.callback = self.switch_to_withdraw
+        self.add_item(btn_wd)
 
         # 아이템 선택 메뉴
         if self.mode == "deposit":
@@ -129,10 +130,11 @@ class InventoryManageView(discord.ui.View):
         await interaction.response.edit_message(content="📥 **자재 납품** 모드입니다.", view=self)
 
     async def switch_to_withdraw(self, interaction):
-        await interaction.response.send_message(
-            "📦 공용 자원은 개인 인벤토리로 출고할 수 없습니다.",
-            ephemeral=True,
-        )
+        # 권한 체크 (예: master, officer만 가능하게 하려면 여기서 체크)
+        # if self.guild_info['role'] == 'member': return await interaction.response.send_message("권한이 없습니다.", ephemeral=True)
+        self.mode = "withdraw"
+        await self.setup_view()
+        await interaction.response.edit_message(content="📤 **자재 수령** 모드입니다.", view=self)
 
     async def on_select(self, interaction):
         if interaction.user.id != self.author.id: return
@@ -549,32 +551,28 @@ class GuildMainView(discord.ui.View):
 
     async def get_embed(self, user_id, user_name):
         guild_info = await get_user_guild_info(user_id)
+        
+        # [동적 버튼] 길드 가입 여부에 따라 버튼 보이기/숨기기
         self.clear_items()
-        self.add_item(self.btn_mission)
-        self.add_item(self.btn_warehouse)
-        self.add_item(self.btn_raid)
-        self.add_item(self.btn_manage)
-
-        g = guild_info
-        embed = discord.Embed(
-            title=f"🛡️ {g['name']}",
-            description=(
-                "모든 조사원이 함께 성장시키는 공용 길드입니다.\n"
-                f"등급: {RANK_NAMES.get(g['level'], 'Bronze')}\n"
-                f"개인 공헌도: {g.get('contribution', 0):,}"
-            ),
-            color=discord.Color.gold(),
-        )
-        embed.add_field(
-            name="🏗️ 공용 자원",
-            value=(
-                f"🌲 {g['token_wood']:,} | ⛓️ {g['token_iron']:,} | "
-                f"🔮 {g['token_magic']:,} | 🧿 {g['token_sorcery']:,}"
-            ),
-            inline=False,
-        )
-        embed.set_footer(text="생성·검색·탈퇴 없이 모든 이용자가 자동 소속됩니다.")
-        return embed
+        
+        if not guild_info:
+            # 길드가 없으면: 가입/생성 버튼만 표시
+            self.add_item(self.btn_join_create)
+            self.add_item(self.btn_create)
+            
+            return discord.Embed(title="🛡️ 길드 시스템", description="가입된 길드가 없습니다.\n목록에서 길드를 찾아 가입하거나 직접 창설하세요!", color=discord.Color.light_gray())
+        
+        else:
+            # 길드가 있으면: 기능 버튼들만 표시 (가입/생성 버튼 제거)
+            self.add_item(self.btn_mission)   # [신규] 미션
+            self.add_item(self.btn_warehouse)
+            self.add_item(self.btn_raid)
+            self.add_item(self.btn_manage)    # [수정] 자재 납품 -> 물자 관리
+            
+            g = guild_info
+            embed = discord.Embed(title=f"🛡️ {g['name']}", description=f"🆔 **ID: {g['guild_id']}**\n등급: {RANK_NAMES.get(g['level'], 'Bronze')}\n직위: {g['role']}", color=discord.Color.gold())
+            embed.add_field(name="💰 자금", value=f"🌲{g['token_wood']} ⛓️{g['token_iron']} 🔮{g['token_magic']}", inline=False)
+            return embed
 
     # --- 버튼 정의 (초기엔 모두 정의해두고 get_embed에서 add_item으로 선택적 추가) ---
     

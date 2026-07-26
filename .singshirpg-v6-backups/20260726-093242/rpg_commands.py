@@ -1,5 +1,4 @@
 import discord
-# completion-v6 command routes
 from discord import app_commands
 from discord.ext import commands
 from datetime import date
@@ -26,10 +25,6 @@ from pvp import PVPInviteView
 from info import InfoView
 from story import MainStoryView
 from monsters import get_raid_boss
-from life_overhaul_v5 import LifeHubView
-from artifact_overhaul_v5 import ArtifactHubView
-from gem_manager import GemManagerView
-from progression_system_v6 import claim_attendance
 
 # ==============================================================================
 # 1. 상태 메뉴 View (정보, 사용, 카드, 정비)
@@ -74,11 +69,7 @@ class StatusMenuView(discord.ui.View):
     @discord.ui.button(label="정비(마이홈)", style=discord.ButtonStyle.success, emoji="🏡")
     @auto_defer(reload_data=True)
     async def myhome_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = LifeHubView(self.author, self.user_data, self.save_func)
-        try:
-            await self.save_func(self.user_data)
-        except TypeError:
-            await self.save_func(self.author.id, self.user_data)
+        view = MyHomeView(self.author, self.user_data, self.save_func)
         await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
 # ==============================================================================
@@ -234,11 +225,20 @@ class RPGCommands(commands.Cog):
     async def checkin_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-        ok, message = claim_attendance(user_data)
-        if not ok:
-            return await interaction.followup.send(message, ephemeral=True)
+        last_date_str = user_data.get("last_checkin")
+        today_str = str(date.today())
+        if last_date_str == today_str:
+            embed = discord.Embed(title="✅ 출석 완료", description="오늘은 이미 출석을 완료했습니다.", color=discord.Color.red())
+            return await interaction.followup.send(embed=embed, ephemeral=True)
+        reward_money = 3000
+        reward_pt = 10
+        user_data["money"] += reward_money
+        user_data["pt"] += reward_pt
+        user_data["last_checkin"] = today_str
         await save_user_data(interaction.user.id, user_data)
-        embed = discord.Embed(title="📅 출석 완료!", description=message, color=discord.Color.green())
+        embed = discord.Embed(title="📅 출석 완료!", description=f"오늘의 보상을 수령했습니다.", color=discord.Color.green())
+        embed.add_field(name="💰 머니", value=f"+{reward_money:,}원", inline=True)
+        embed.add_field(name="⚡ 포인트", value=f"+{reward_pt:,}pt", inline=True)
         await interaction.followup.send(embed=embed)
 
     # ---------------------------------------------------------------------
@@ -252,22 +252,11 @@ class RPGCommands(commands.Cog):
             if data is None: await self.save_wrapper(interaction.user.id, user_data)
             else: await self.save_wrapper(uid_or_all, data)
         view = view_class(interaction.user, user_data, bound_save)
-        if view_class is LifeHubView:
-            # 최초 생활 허브 진입 보급과 v6 기본값을 즉시 영구 저장한다.
-            await bound_save(interaction.user.id, user_data)
         embed = None
         if hasattr(view, 'get_embed'): embed = view.get_embed()
         elif hasattr(view, 'create_shop_embed'): embed = view.create_shop_embed()
         if not embed and title: embed = discord.Embed(title=title, description=desc, color=color)
         await interaction.followup.send(embed=embed, view=view)
-
-    @app_commands.command(name="마이홈", description="생활 관리 허브를 엽니다.")
-    async def shortcut_myhome(self, interaction: discord.Interaction):
-        await self._open_feature(interaction, LifeHubView)
-
-    @app_commands.command(name="생활", description="생활 관리 허브를 엽니다.")
-    async def shortcut_life(self, interaction: discord.Interaction):
-        await self._open_feature(interaction, LifeHubView)
 
     @app_commands.command(name="조사", description="[단축] 조사 지역 선택 화면으로 이동합니다.")
     async def shortcut_invest(self, interaction: discord.Interaction):

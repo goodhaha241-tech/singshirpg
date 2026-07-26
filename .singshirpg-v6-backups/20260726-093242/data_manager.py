@@ -10,8 +10,6 @@ from character import DEFAULT_PLAYER_DATA
 
 logger = logging.getLogger(__name__)
 
-# stability-v1 + cumulative-v2 + cumulative-v3 integrated baseline
-
 _pool = None
 
 async def get_db_pool():
@@ -92,69 +90,10 @@ async def check_schema(pool):
             # 컬럼 추가
             await cur.execute("DESCRIBE users")
             u_cols = [r[0] for r in await cur.fetchall()]
-            required_user_columns = [
-                ("guild_rank", "VARCHAR(20)"),
-                ("guild_data", "JSON"),
-                ("characters", "JSON"),
-                ("fishing_max_slots", "INT NOT NULL DEFAULT 3"),
-                ("max_subjugation_depth", "INT NOT NULL DEFAULT 0"),
-                ("daily_quests", "JSON"),
-                ("last_quest_date", "DATE"),
-                ("construction_step", "INT NOT NULL DEFAULT 0"),
-                ("current_dungeon", "JSON"),
-                ("max_subjugation_char", "VARCHAR(100)"),
-                ("max_subjugation_region", "VARCHAR(100)"),
-            ]
-            for col, typ in required_user_columns:
+            for col, typ in [("guild_rank", "VARCHAR(20)"), ("guild_data", "JSON"), ("characters", "JSON")]:
                 if col not in u_cols:
-                    try:
-                        await cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
-                    except Exception as e:
-                        logger.warning("users.%s migration skipped: %s", col, e)
-            if "total_turns" not in u_cols:
-                try:
-                    await cur.execute("ALTER TABLE users ADD COLUMN total_turns BIGINT NOT NULL DEFAULT 0")
-                    await cur.execute(
-                        "UPDATE users SET total_turns=GREATEST(COALESCE(total_investigations,0),"
-                        " COALESCE(total_subjugations,0)) WHERE total_turns=0"
-                    )
-                except Exception as e:
-                    logger.warning("total_turns migration skipped: %s", e)
-
-            await cur.execute("""CREATE TABLE IF NOT EXISTS user_life_data (
-                user_id VARCHAR(50) PRIMARY KEY,
-                data JSON NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    ON UPDATE CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )""")
-            try:
-                await cur.execute("DESCRIBE workshop_slots")
-                workshop_cols = [r[0] for r in await cur.fetchall()]
-                if "start_count" not in workshop_cols:
-                    await cur.execute(
-                        "ALTER TABLE workshop_slots ADD COLUMN start_count BIGINT NOT NULL DEFAULT 0"
-                    )
-                if "required_count" not in workshop_cols:
-                    await cur.execute(
-                        "ALTER TABLE workshop_slots ADD COLUMN required_count BIGINT NOT NULL DEFAULT 0"
-                    )
-            except Exception as e:
-                logger.warning("Workshop schema migration skipped: %s", e)
-            try:
-                await cur.execute("DESCRIBE artifacts")
-                art_cols = [r[0] for r in await cur.fetchall()]
-                if "gems" not in art_cols:
-                    await cur.execute("ALTER TABLE artifacts ADD COLUMN gems JSON")
-                if "metadata" not in art_cols:
-                    await cur.execute("ALTER TABLE artifacts ADD COLUMN metadata JSON")
-            except Exception as e:
-                logger.warning("Artifact v5 schema migration skipped: %s", e)
-
-            await cur.execute("""INSERT INTO guilds
-                (guild_id, name, owner_id, level, exp, member_count)
-                VALUES (1, '공용 길드', NULL, 1, 0, 0)
-                ON DUPLICATE KEY UPDATE name='공용 길드'""")
+                    try: await cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
+                    except: pass
 
 async def _get_new_user_data(user_name=None):
     new_char = copy.deepcopy(DEFAULT_PLAYER_DATA)
@@ -165,9 +104,9 @@ async def _get_new_user_data(user_name=None):
         "cards": ["기본공격", "기본방어", "기본반격"], "buffs": {}, "main_quest_progress": {},
         "inventory": {}, "characters": [new_char], "artifacts": [],
         "current_dungeon": {}, "unlocked_regions": ["기원의 쌍성"], "recruit_progress": {},
-        "myhome": {"garden": {"level": 1, "slots": [], "water_can": 0}, "workshop_level": 1, "workshop_slots": [], "fishing_level": 1, "fishing": {"dismantle_slots": [], "rod": 0, "spot_level": 0, "max_dismantle_slots": 3}, "total_investigations": 0, "total_subjugations": 0, "total_turns": 0, "construction_step": 0},
+        "myhome": {"garden": {"level": 1, "slots": [], "water_can": 0}, "workshop_level": 1, "workshop_slots": [], "fishing_level": 1, "fishing": {"dismantle_slots": [], "rod": 0, "spot_level": 0, "max_dismantle_slots": 3}, "total_investigations": 0, "total_subjugations": 0, "construction_step": 0},
         "daily_quests": [], "last_quest_date": None, "fertilizers": [],
-        "guild_rank": None, "guild_data": {}, "life_data": {}
+        "guild_rank": None, "guild_data": {}
     }
 
 async def _get_inventory(cur, user_id):
@@ -198,9 +137,7 @@ async def _get_characters_and_artifacts(cur, user_id):
             "id": row['id'], "name": row['name'], "rank": row['rank_level'], "grade": row['grade'],
             "level": row['level'], "prefix": row['prefix'], "stats": json.loads(row['stats']) if row['stats'] else {},
             "special": row['special'], "description": row['description'],
-            "equipped_char_index": row.get('equipped_char_index', -1),
-            "gems": json.loads(row["gems"]) if row.get("gems") else [],
-            "metadata": json.loads(row["metadata"]) if row.get("metadata") else {},
+            "equipped_char_index": row.get('equipped_char_index', -1)
         }
         artifacts.append(art)
         eq_idx = row.get('equipped_char_index', -1)
@@ -224,10 +161,6 @@ async def _get_myhome_data(cur, user_id, user_row):
         "workshop_slots": w_slots,
         "fishing_level": user_row['fishing_level'] or 1,
         "total_investigations": user_row['total_investigations'] or 0,
-        "total_turns": user_row.get('total_turns') or max(
-            user_row['total_investigations'] or 0,
-            user_row['total_subjugations'] or 0,
-        ),
         "fishing": {"dismantle_slots": f_slots, "rod": user_row['fishing_rod'] or 0, "spot_level": user_row['fishing_spot_level'] or 0, "max_dismantle_slots": user_row['fishing_max_slots'] or 3},
         "total_subjugations": user_row['total_subjugations'] or 0,
         "max_subjugation_depth": user_row.get('max_subjugation_depth') or 0,
@@ -266,14 +199,6 @@ async def get_user_data(user_id, user_name=None):
             recruit_progress = {r['char_key']: r['progress'] for r in await cur.fetchall()}
 
             myhome_data = await _get_myhome_data(cur, user_id, user_row)
-            await cur.execute("SELECT data FROM user_life_data WHERE user_id=%s", (str(user_id),))
-            life_row = await cur.fetchone()
-            life_data = {}
-            if life_row and life_row.get("data"):
-                try:
-                    life_data = json.loads(life_row["data"]) if isinstance(life_row["data"], str) else life_row["data"]
-                except (TypeError, ValueError):
-                    logger.warning("Invalid life_data JSON for user %s", user_id)
 
             await cur.execute("SELECT target FROM user_fertilizers WHERE user_id = %s", (str(user_id),))
             fertilizers = [{"target": r['target']} for r in await cur.fetchall()]
@@ -295,8 +220,7 @@ async def get_user_data(user_id, user_name=None):
                 "last_quest_date": str(user_row['last_quest_date']) if user_row.get('last_quest_date') else None,
                 "current_dungeon": json.loads(user_row['current_dungeon']) if user_row.get('current_dungeon') else {},
                 "guild_rank": user_row.get('guild_rank'),
-                "guild_data": json.loads(user_row['guild_data']) if user_row.get('guild_data') else {},
-                "life_data": life_data,
+                "guild_data": json.loads(user_row['guild_data']) if user_row.get('guild_data') else {}
             }
 
 async def save_user_data(user_id, data):
@@ -325,8 +249,8 @@ async def save_user_data(user_id, data):
                     INSERT INTO users 
                     (user_id, pt, money, last_checkin, investigator_index, 
                      main_quest_id, main_quest_current, main_quest_index,
-                     garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations, cards, buffs, main_quest_progress, total_investigations, total_turns, fishing_max_slots, max_subjugation_depth, daily_quests, last_quest_date, construction_step, current_dungeon, max_subjugation_char, max_subjugation_region, guild_rank, guild_data, characters)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
+                     garden_level, water_can, workshop_level, fishing_level, fishing_rod, fishing_spot_level, total_subjugations, cards, buffs, main_quest_progress, total_investigations, fishing_max_slots, max_subjugation_depth, daily_quests, last_quest_date, construction_step, current_dungeon, max_subjugation_char, max_subjugation_region, guild_rank, guild_data, characters)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) AS new
                     ON DUPLICATE KEY UPDATE
                     pt=new.pt, money=new.money, last_checkin=new.last_checkin,
                     investigator_index=new.investigator_index,
@@ -335,7 +259,6 @@ async def save_user_data(user_id, data):
                     fishing_level=new.fishing_level, fishing_rod=new.fishing_rod, fishing_spot_level=new.fishing_spot_level,
                     total_subjugations=new.total_subjugations, cards=new.cards, buffs=new.buffs, 
                     main_quest_progress=new.main_quest_progress, total_investigations=new.total_investigations,
-                    total_turns=new.total_turns,
                     fishing_max_slots=new.fishing_max_slots, max_subjugation_depth=new.max_subjugation_depth,
                     daily_quests=new.daily_quests, last_quest_date=new.last_quest_date,
                     construction_step=new.construction_step, current_dungeon=new.current_dungeon,
@@ -350,19 +273,12 @@ async def save_user_data(user_id, data):
                     myhome.get("fishing", {}).get("rod", 0), myhome.get("fishing", {}).get("spot_level", 0),
                     myhome.get("total_subjugations", 0),
                     json_cols['cards'], json_cols['buffs'], json_cols['main_quest_progress'],
-                    myhome.get("total_investigations", 0), myhome.get("total_turns", 0),
-                    myhome.get("fishing", {}).get("max_dismantle_slots", 3),
+                    myhome.get("total_investigations", 0), myhome.get("fishing", {}).get("max_dismantle_slots", 3),
                     myhome.get("max_subjugation_depth", 0), json_cols['daily_quests'], data.get("last_quest_date"),
                     myhome.get("construction_step", 0), json_cols['current_dungeon'],
                     myhome.get("max_subjugation_char", ""), myhome.get("max_subjugation_region", ""),
                     data.get("guild_rank"), json_cols['guild_data'], json_cols['characters']
                 ))
-
-                await cur.execute(
-                    """INSERT INTO user_life_data (user_id, data) VALUES (%s, %s)
-                       ON DUPLICATE KEY UPDATE data=VALUES(data)""",
-                    (str(user_id), json.dumps(data.get("life_data", {}), ensure_ascii=False)),
-                )
 
                 await cur.execute("DELETE FROM inventory WHERE user_id = %s", (user_id,))
                 if data.get("inventory"):
@@ -389,14 +305,9 @@ async def save_user_data(user_id, data):
                         art_rows.append((
                             a.get("id"), user_id, a.get("name"), a.get("rank", 1), a.get("grade", 1),
                             a.get("level", 0), a.get("prefix", ""), json.dumps(a.get("stats", {})),
-                            a.get("special"), a.get("description"), owner_idx,
-                            json.dumps(a.get("gems", []), ensure_ascii=False),
-                            json.dumps(a.get("metadata", {}), ensure_ascii=False),
+                            a.get("special"), a.get("description"), owner_idx
                         ))
-                    await cur.executemany("""INSERT INTO artifacts
-                        (id,user_id,name,rank_level,grade,level,prefix,stats,special,
-                         description,equipped_char_index,gems,metadata)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", art_rows)
+                    await cur.executemany("""INSERT INTO artifacts (id, user_id, name, rank_level, grade, level, prefix, stats, special, description, equipped_char_index) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", art_rows)
 
                 await cur.execute("DELETE FROM unlocked_regions WHERE user_id = %s", (user_id,))
                 if data.get("unlocked_regions"):
@@ -440,83 +351,55 @@ async def update_user_resources(user_id, money_change=0, pt_change=0):
             await cur.execute("SELECT money, pt FROM users WHERE user_id = %s", (str(user_id),))
             return await cur.fetchone()
 
-GLOBAL_GUILD_ID = 1
-GLOBAL_GUILD_NAME = "공용 길드"
-
-
-def advance_world_turn(user_data, amount=1):
-    """Advance automatic jobs without coupling life content to investigation."""
-    amount = max(0, int(amount or 0))
-    myhome = user_data.setdefault("myhome", {})
-    myhome["total_turns"] = max(0, int(myhome.get("total_turns", 0) or 0)) + amount
-    return myhome["total_turns"]
-
-
-async def ensure_global_guild_membership(user_id):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            try:
-                await conn.begin()
-                await cur.execute(
-                    """INSERT INTO guilds
-                       (guild_id,name,owner_id,level,exp,member_count)
-                       VALUES (%s,%s,NULL,1,0,0)
-                       ON DUPLICATE KEY UPDATE name=VALUES(name)""",
-                    (GLOBAL_GUILD_ID, GLOBAL_GUILD_NAME),
-                )
-                await cur.execute(
-                    "SELECT COALESCE(SUM(contribution),0) FROM guild_members "
-                    "WHERE user_id=%s FOR UPDATE",
-                    (str(user_id),),
-                )
-                contribution = int((await cur.fetchone() or (0,))[0] or 0)
-                await cur.execute("DELETE FROM guild_members WHERE user_id=%s", (str(user_id),))
-                await cur.execute(
-                    """INSERT INTO guild_members
-                       (guild_id,user_id,role,contribution)
-                       VALUES (%s,%s,'member',%s)""",
-                    (GLOBAL_GUILD_ID, str(user_id), contribution),
-                )
-                await cur.execute(
-                    """UPDATE guilds SET member_count=(
-                       SELECT COUNT(*) FROM guild_members WHERE guild_id=%s)
-                       WHERE guild_id=%s""",
-                    (GLOBAL_GUILD_ID, GLOBAL_GUILD_ID),
-                )
-                await conn.commit()
-            except Exception:
-                await conn.rollback()
-                raise
-
-
 async def get_user_guild_info(user_id):
-    await ensure_global_guild_membership(user_id)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute("""
                 SELECT g.*, m.role, m.contribution 
                 FROM guild_members m JOIN guilds g ON m.guild_id = g.guild_id
-                WHERE m.user_id = %s AND m.guild_id = %s
-            """, (str(user_id), GLOBAL_GUILD_ID))
+                WHERE m.user_id = %s
+            """, (str(user_id),))
             return await cur.fetchone()
 
 async def create_guild(user_id, guild_name):
-    await ensure_global_guild_membership(user_id)
-    return False, f"모든 이용자는 **{GLOBAL_GUILD_NAME}**에 자동 소속됩니다."
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT 1 FROM guild_members WHERE user_id = %s", (str(user_id),))
+            if await cur.fetchone(): return False, "이미 길드에 소속되어 있습니다."
+            await cur.execute("SELECT 1 FROM guilds WHERE name = %s", (guild_name,))
+            if await cur.fetchone(): return False, "이미 존재하는 길드 이름입니다."
+            try:
+                await cur.execute("INSERT INTO guilds (name, owner_id) VALUES (%s, %s)", (guild_name, str(user_id)))
+                guild_id = cur.lastrowid
+                await cur.execute("INSERT INTO guild_members (guild_id, user_id, role) VALUES (%s, %s, 'master')", (guild_id, str(user_id)))
+                await conn.commit()
+                return True, f"길드 **{guild_name}** 창설 완료!"
+            except Exception as e:
+                await conn.rollback()
+                return False, f"오류: {e}"
 
 async def join_guild_by_id(user_id, guild_id):
-    await ensure_global_guild_membership(user_id)
-    return True, f"**{GLOBAL_GUILD_NAME}** 소속을 확인했습니다."
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT 1 FROM guild_members WHERE user_id = %s", (str(user_id),))
+            if await cur.fetchone(): return False, "이미 길드 소속입니다."
+            try:
+                await cur.execute("INSERT INTO guild_members (guild_id, user_id, role) VALUES (%s, %s, 'member')", (guild_id, str(user_id)))
+                await cur.execute("UPDATE guilds SET member_count = member_count + 1 WHERE guild_id = %s", (guild_id,))
+                await conn.commit()
+                return True, "가입 완료!"
+            except Exception as e:
+                return False, f"가입 실패: {e}"
 
 async def get_guild_list(limit=5, offset=0):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
-            await cur.execute("SELECT * FROM guilds WHERE guild_id=%s", (GLOBAL_GUILD_ID,))
-            row = await cur.fetchone()
-            return [row] if row and int(offset or 0) == 0 else []
+            await cur.execute("SELECT * FROM guilds ORDER BY level DESC, member_count DESC LIMIT %s OFFSET %s", (limit, offset))
+            return await cur.fetchall()
 
 async def get_guild_items(guild_id, category=None):
     pool = await get_db_pool()
@@ -530,25 +413,12 @@ async def get_guild_items(guild_id, category=None):
                 await cur.execute(sql, params)
             return await cur.fetchall()
 
-async def deposit_guild_item(user_id, guild_id, item_name, count, category, token_rewards, user_name=None):
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
-        return False, "수량이 올바르지 않습니다."
-    if count <= 0 or int(guild_id) != GLOBAL_GUILD_ID:
-        return False, "공용 길드에 양수 수량만 납품할 수 있습니다."
+async def deposit_guild_item(user_id, guild_id, item_name, count, category, token_rewards):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             try:
-                await conn.begin()
-                await cur.execute(
-                    "SELECT 1 FROM guild_members WHERE guild_id=%s AND user_id=%s FOR UPDATE",
-                    (GLOBAL_GUILD_ID, str(user_id)),
-                )
-                if not await cur.fetchone():
-                    return False, "공용 길드 소속이 아닙니다."
-                await cur.execute("SELECT quantity FROM inventory WHERE user_id=%s AND item_name=%s FOR UPDATE", (str(user_id), item_name))
+                await cur.execute("SELECT quantity FROM inventory WHERE user_id=%s AND item_name=%s", (str(user_id), item_name))
                 row = await cur.fetchone()
                 if not row or row[0] < count: return False, "보유량 부족"
                 
@@ -560,12 +430,7 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
                 set_c = [f"token_{k} = token_{k} + {v}" for k,v in token_rewards.items()]
                 if set_c: await cur.execute(f"UPDATE guilds SET {', '.join(set_c)} WHERE guild_id=%s", (guild_id,))
                 
-                await cur.execute(
-                    """INSERT INTO guild_log
-                       (guild_id,user_id,user_name,action_type,item_name,count)
-                       VALUES (%s,%s,%s,'deposit',%s,%s)""",
-                    (guild_id, str(user_id), user_name, item_name, count),
-                )
+                await cur.execute("INSERT INTO guild_log (guild_id, user_id, action_type, item_name, count) VALUES (%s, %s, 'deposit', %s, %s)", (guild_id, str(user_id), item_name, count))
                 await conn.commit()
                 return True, f"{item_name} {count}개 납품 완료"
             except Exception as e:
@@ -574,7 +439,28 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
 
 # [신규] 길드 아이템 출고 (Withdraw)
 async def withdraw_guild_item(user_id, guild_id, item_name, count):
-    return False, "공용 길드 자원은 개인 인벤토리로 출고할 수 없습니다."
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                # 길드 인벤 체크
+                await cur.execute("SELECT count FROM guild_inventory WHERE guild_id=%s AND item_name=%s", (guild_id, item_name))
+                row = await cur.fetchone()
+                if not row or row[0] < count: return False, "길드 보유량 부족"
+                
+                if row[0] == count: await cur.execute("DELETE FROM guild_inventory WHERE guild_id=%s AND item_name=%s", (guild_id, item_name))
+                else: await cur.execute("UPDATE guild_inventory SET count=count-%s WHERE guild_id=%s AND item_name=%s", (count, guild_id, item_name))
+                
+                # 유저 인벤 추가
+                await cur.execute("""INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)""", (str(user_id), item_name, count))
+                
+                # 로그
+                await cur.execute("INSERT INTO guild_log (guild_id, user_id, action_type, item_name, count) VALUES (%s, %s, 'withdraw', %s, %s)", (guild_id, str(user_id), item_name, count))
+                await conn.commit()
+                return True, f"{item_name} {count}개 수령 완료"
+            except Exception as e:
+                await conn.rollback()
+                return False, f"오류: {e}"
 
 async def deposit_guild_artifact(user_id, guild_id, artifact_data):
     pool = await get_db_pool()

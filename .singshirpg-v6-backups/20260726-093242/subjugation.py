@@ -811,7 +811,6 @@ class DungeonMainView(discord.ui.View):
 
         myhome = self.user_data.setdefault("myhome", {})
         myhome["total_subjugations"] = myhome.get("total_subjugations", 0) + self.depth
-        myhome["total_turns"] = myhome.get("total_turns", 0) + self.depth
         if self.depth > myhome.get("max_subjugation_depth", 0):
             myhome["max_subjugation_depth"] = self.depth
             myhome["max_subjugation_char"] = self.player.name

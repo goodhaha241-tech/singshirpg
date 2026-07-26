@@ -93,7 +93,7 @@ class FishingView(discord.ui.View):
                         inline=False)
         
         slots = self.fishing_data["dismantle_slots"]
-        total_invest = self.user_data["myhome"].get("total_turns", 0)
+        total_invest = self.user_data["myhome"].get("total_investigations", 0)
         
         slots_desc = ""
         for i, slot in enumerate(slots):
@@ -184,7 +184,7 @@ class FishingView(discord.ui.View):
 
     async def claim_rewards(self, i):
         slots = self.fishing_data["dismantle_slots"]
-        total_invest = self.user_data["myhome"].get("total_turns", 0)
+        total_invest = self.user_data["myhome"].get("total_investigations", 0)
         
         completed_idx = [idx for idx, s in enumerate(slots) if total_invest - s["start_count"] >= 50]
         
@@ -499,7 +499,7 @@ class FishSelectView(discord.ui.View):
         
         slots.append({
             "fish": val,
-            "start_count": self.user_data["myhome"].get("total_turns", 0)
+            "start_count": self.user_data["myhome"].get("total_investigations", 0)
         })
         # [수정] await 추가 및 인자 전달 수정
         await self.save_func(self.author.id, self.user_data)

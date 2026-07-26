@@ -428,18 +428,7 @@ class BattleView(discord.ui.View):
             if self.region_name and not self.is_dungeon_run:
                 if not isinstance(self.user_data.get("myhome"), dict): self.user_data["myhome"] = {}
                 self.user_data["myhome"]["total_subjugations"] = self.user_data["myhome"].get("total_subjugations", 0) + 1
-                self.user_data["myhome"]["total_turns"] = self.user_data["myhome"].get("total_turns", 0) + 1
                 await update_quest_progress(self.author.id, self.user_data, self.save_func, "kill_region", len(self.killed_monsters), self.region_name)
-            try:
-                from progression_system_v6 import ensure_progression, weekly_progress
-                weekly_progress(self.user_data, "battle_wins", 1)
-                progression = ensure_progression(self.user_data)
-                if "first_battle" not in progression["achievements"]:
-                    progression["achievements"].append("first_battle")
-                if self.player.current_hp == 1 and "one_hp_victory" not in progression["secret_achievements"]:
-                    progression["secret_achievements"].append("one_hp_victory")
-            except ImportError:
-                pass
 
             self.user_data["money"] += total_money
             self.user_data["pt"] += total_pt

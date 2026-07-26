@@ -50,7 +50,7 @@ class GardenView(discord.ui.View):
         embed.add_field(name="상태 정보", value=info_text, inline=False)
         
         slots_desc = ""
-        total_invest = self.user_data["myhome"].get("total_turns", 0)
+        total_invest = self.user_data["myhome"].get("total_investigations", 0)
         
         for i, slot in enumerate(self.garden["slots"]):
             state = "🟫 비어있음"
@@ -161,7 +161,7 @@ class GardenView(discord.ui.View):
         inv["이상한 씨앗"] -= 1
         self.garden["slots"][target] = {
             "planted": True, "stage": 0, 
-            "last_invest_count": self.user_data["myhome"].get("total_turns", 0),
+            "last_invest_count": self.user_data["myhome"].get("total_investigations", 0),
             "fertilizer": None 
         }
         await self.save_func(self.author.id, self.user_data)
@@ -171,7 +171,7 @@ class GardenView(discord.ui.View):
         water = self.garden.get("water_can", 0)
         if water <= 0: return await i.edit_original_response(content="❌ 물뿌리개가 비었습니다.", embed=self.get_embed(), view=self)
         
-        total_invest = self.user_data["myhome"].get("total_turns", 0)
+        total_invest = self.user_data["myhome"].get("total_investigations", 0)
         count = 0
         for slot in self.garden["slots"]:
             if water <= 0: break
