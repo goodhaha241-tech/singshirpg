@@ -1,0 +1,9 @@
+{
+  "version": "8.6",
+  "backup": "H:\\디코봇\\.singshirpg_v8_6_backup_20260727_013313",
+  "files": [
+    "data_manager.py",
+    "guild.py",
+    "subjugation.py"
+  ]
+}

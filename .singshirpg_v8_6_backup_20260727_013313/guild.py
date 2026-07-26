@@ -14,8 +14,7 @@ from data_manager import (
     deposit_guild_item, deposit_guild_artifact, get_guild_logs, get_guild_list,
     get_guild_items, withdraw_guild_item, craft_guild_item,
     consume_guild_raid_supplies, add_guild_contribution,
-    get_or_create_daily_guild_shop, buy_guild_shop_item,
-    advance_world_turn
+    get_or_create_daily_guild_shop, buy_guild_shop_item
 )
 from items import ITEM_CATEGORIES
 from monsters import RAID_BOSS_DATA, Monster
@@ -178,14 +177,6 @@ async def advance_guild_mission(user, key, amount=1):
         activity["progress"][key] = int(activity["progress"].get(key, 0)) + int(amount)
 
     await mutate_user_data(user.id, merge, user.display_name)
-
-
-async def advance_guild_world_turn(user, amount=1):
-    """Advance shared life jobs from a valid guild combat action."""
-    def merge(data):
-        advance_world_turn(data, amount)
-
-    return await mutate_user_data(user.id, merge, user.display_name)
 
 # ==================================================================================
 # 1. 물자 관리 (입/출고 통합)
@@ -1086,9 +1077,6 @@ class RaidBattleView(discord.ui.View):
         self.logs.append(f"--- Turn {self.turn} ---")
         alive = [u for u, p in self.participants.items() if p['char'].current_hp > 0]
         if not alive: return await self.end_raid(interaction, False)
-        # A resolved raid round advances one shared activity turn for every participant.
-        for participant in self.participants.values():
-            participant["data"] = await advance_guild_world_turn(participant["user"], 1)
 
         boss_card = self.boss_intent
         targets = alive if boss_card.is_aoe else [random.choice(alive)]
@@ -1464,8 +1452,7 @@ class GuildTrainingView(discord.ui.View):
             title="🥋 길드 수련장",
             description=(
                 "공격하는 무한 체력 샌드백을 상대로 **최대 10턴** 동안 수련합니다.\n"
-                "내 캐릭터가 쓰러지면 즉시 종료되며, 실제 체력이나 아이템은 소모되지 않습니다.\n"
-                "유효한 수련 행동 1회마다 **공용 활동 턴도 1** 진행됩니다."
+                "내 캐릭터가 쓰러지면 즉시 종료되며, 실제 체력이나 아이템은 소모되지 않습니다."
             ),
             color=discord.Color.orange(),
         )
@@ -1746,8 +1733,6 @@ class TrainingBattleView(discord.ui.View):
         user_card = get_card(card_name)
         if not user_card:
             return await interaction.response.send_message("카드 정보를 찾지 못했습니다.", ephemeral=True)
-        # Every valid sandbag command is one shared activity turn.
-        await advance_guild_world_turn(self.author, 1)
 
         bag_card = self.sandbag.decide_action() or get_card("기본공격")
         gem_log = process_gem_turn_start(self.character, self.sandbag, self.turn, card_name)

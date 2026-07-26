@@ -7,13 +7,12 @@ from items import REGIONS, RARE_ITEMS, STAT_UP_ITEMS, ITEM_CATEGORIES
 from monsters import spawn_monster, get_dungeon_boss
 from battle import BattleView
 from character import Character
-from data_manager import get_user_data, get_subjugation_ranking, advance_world_turn
+from data_manager import get_user_data, get_subjugation_ranking
 from trade import update_cafe_quest_progress
 from decorators import auto_defer
 
 SUBJUGATION_COST = 2000
 _DUNGEON_LOCKS = {}
-# guild-shared-turns-v8.6
 
 
 def _dungeon_lock(user_id):
@@ -402,7 +401,6 @@ class DungeonMainView(discord.ui.View):
             # 기존 진행 데이터가 있다면 로드, 없으면 초기화
             state = user_data.get("current_dungeon", {})
             self.depth = state.get("depth", 0)
-            self.world_turns_counted = int(state.get("world_turns_counted", 0) or 0)
             self.accumulated_loot = state.get("loot", {"items": {}, "money": 0, "pt": 0})
             self.choices = state.get("choices", [])
             self.dungeon_item = state.get("dungeon_item")
@@ -423,7 +421,6 @@ class DungeonMainView(discord.ui.View):
                 self.apply_stat_item_effect()
         else:
             self.depth = 0
-            self.world_turns_counted = 0
             self.accumulated_loot = {"items": {}, "money": 0, "pt": 0}
             self.player = None
             
@@ -453,7 +450,6 @@ class DungeonMainView(discord.ui.View):
                 player_state["current_mental"] = max(0, int(player_state.get("current_mental", 0)) - value)
         self.user_data["current_dungeon"] = {
             "depth": self.depth, "loot": self.accumulated_loot,
-            "world_turns_counted": self.world_turns_counted,
             "choices": self.choices, "dungeon_item": self.dungeon_item,
             "region": self.region_name, "char_index": self.char_index,
             "forced_next_room": self.forced_next_room,
@@ -601,12 +597,7 @@ class DungeonMainView(discord.ui.View):
 
         choice_type = self.choices[choice_idx]
         is_forced_item = len(self.choices) == 1 and choice_type == "item"
-        # Old active runs did not store per-room shared turns. Credit any rooms
-        # already traversed once, then count this newly selected room.
-        uncounted_rooms = max(0, int(self.depth) - int(self.world_turns_counted))
-        advance_world_turn(self.user_data, uncounted_rooms + 1)
         self.depth += 1
-        self.world_turns_counted = self.depth
         self.choices = []
         self.choice_token = uuid.uuid4().hex
         
@@ -876,12 +867,7 @@ class DungeonMainView(discord.ui.View):
 
         myhome = self.user_data.setdefault("myhome", {})
         myhome["total_subjugations"] = myhome.get("total_subjugations", 0) + self.depth
-        # Per-room turns are normally credited immediately. This fallback
-        # covers an old active dungeon that is ended before another choice.
-        uncounted_rooms = max(0, int(self.depth) - int(self.world_turns_counted))
-        if uncounted_rooms:
-            advance_world_turn(self.user_data, uncounted_rooms)
-            self.world_turns_counted = self.depth
+        myhome["total_turns"] = myhome.get("total_turns", 0) + self.depth
         if self.depth > myhome.get("max_subjugation_depth", 0):
             myhome["max_subjugation_depth"] = self.depth
             myhome["max_subjugation_char"] = self.player.name
