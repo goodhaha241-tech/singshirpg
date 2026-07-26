@@ -1,0 +1,37 @@
+{
+  "patch": "singshirpg-ui-v7",
+  "applied_at": "2026-07-26T10:15:58",
+  "backup_dir": "H:\\디코봇\\.patch_backups\\ui_v7_20260726_101558",
+  "records": [
+    {
+      "name": "myhome.py",
+      "existed": true,
+      "backup": "H:\\디코봇\\.patch_backups\\ui_v7_20260726_101558\\myhome.py"
+    },
+    {
+      "name": "rpg_commands.py",
+      "existed": true,
+      "backup": "H:\\디코봇\\.patch_backups\\ui_v7_20260726_101558\\rpg_commands.py"
+    },
+    {
+      "name": "life_overhaul_v5.py",
+      "existed": true,
+      "backup": "H:\\디코봇\\.patch_backups\\ui_v7_20260726_101558\\life_overhaul_v5.py"
+    },
+    {
+      "name": "life_system.py",
+      "existed": true,
+      "backup": "H:\\디코봇\\.patch_backups\\ui_v7_20260726_101558\\life_system.py"
+    },
+    {
+      "name": "cooking_system_v6.py",
+      "existed": true,
+      "backup": "H:\\디코봇\\.patch_backups\\ui_v7_20260726_101558\\cooking_system_v6.py"
+    },
+    {
+      "name": "navigation_v7.py",
+      "existed": false,
+      "backup": "H:\\디코봇\\.patch_backups\\ui_v7_20260726_101558\\navigation_v7.py"
+    }
+  ]
+}

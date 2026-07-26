@@ -74,7 +74,11 @@ class StatusMenuView(discord.ui.View):
     @discord.ui.button(label="정비(마이홈)", style=discord.ButtonStyle.success, emoji="🏡")
     @auto_defer(reload_data=True)
     async def myhome_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = MyHomeView(self.author, self.user_data, self.save_func)
+        view = LifeHubView(self.author, self.user_data, self.save_func)
+        try:
+            await self.save_func(self.user_data)
+        except TypeError:
+            await self.save_func(self.author.id, self.user_data)
         await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)
 
 # ==============================================================================
@@ -257,9 +261,9 @@ class RPGCommands(commands.Cog):
         if not embed and title: embed = discord.Embed(title=title, description=desc, color=color)
         await interaction.followup.send(embed=embed, view=view)
 
-    @app_commands.command(name="마이홈", description="마이홈 관리 화면을 엽니다.")
+    @app_commands.command(name="마이홈", description="생활 관리 허브를 엽니다.")
     async def shortcut_myhome(self, interaction: discord.Interaction):
-        await self._open_feature(interaction, MyHomeView)
+        await self._open_feature(interaction, LifeHubView)
 
     @app_commands.command(name="생활", description="생활 관리 허브를 엽니다.")
     async def shortcut_life(self, interaction: discord.Interaction):

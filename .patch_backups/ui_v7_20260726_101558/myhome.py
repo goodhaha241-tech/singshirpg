@@ -13,7 +13,6 @@ from fishing import FishingView
 from recruitment import RecruitSelectView
 from use_item import ItemUseView
 from card_manager import CardManageView
-from navigation_v7 import attach_navigation
 try:
     from artifact_manager import ArtifactManageView
 except ImportError:
@@ -76,7 +75,6 @@ class MyHomeView(discord.ui.View):
 
         # 캐릭터 정비 버튼 (항상 표시)
         all_buttons.append({"label": "🔧 캐릭터 정비", "style": discord.ButtonStyle.secondary, "callback": self.maintenance_callback})
-        all_buttons.append({"label": "🌿 생활 관리", "style": discord.ButtonStyle.success, "callback": self.life_callback})
 
         if level < 5:
             label = "🏠 마이홈 건설" if level == 0 else f"🏗️ 마이홈 증축 ({level}lv -> {level+1}lv)"
@@ -125,15 +123,6 @@ class MyHomeView(discord.ui.View):
             next_btn = discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, row=row, disabled=(self.page >= total_pages - 1))
             next_btn.callback = self.next_page
             self.add_item(next_btn)
-
-        exit_btn = discord.ui.Button(
-            label="마이홈 나가기",
-            emoji="🚪",
-            style=discord.ButtonStyle.danger,
-            row=4,
-        )
-        exit_btn.callback = self.exit_callback
-        self.add_item(exit_btn)
 
     async def prev_page(self, interaction: discord.Interaction):
         self.page -= 1
@@ -185,48 +174,17 @@ class MyHomeView(discord.ui.View):
         view = CharacterMaintenanceView(self.author, self.user_data, self.save_func, self)
         await interaction.edit_original_response(content="캐릭터 정비 메뉴입니다.", embed=None, view=view)
 
-    async def life_callback(self, interaction: discord.Interaction):
-        from life_overhaul_v5 import LifeHubView
-        view = LifeHubView(self.author, self.user_data, self.save_func)
-        try:
-            await self.save_func(self.author.id, self.user_data)
-        except TypeError:
-            await self.save_func(self.user_data)
-        await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)
-
     async def garden_callback(self, interaction: discord.Interaction):
         view = GardenView(self.author, self.user_data, self.save_func)
-        attach_navigation(
-            view,
-            self.author,
-            lambda: MyHomeView(self.author, self.user_data, self.save_func),
-        )
         await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
     async def workshop_callback(self, interaction: discord.Interaction):
         view = WorkshopView(self.author, self.user_data, self.save_func)
-        attach_navigation(
-            view,
-            self.author,
-            lambda: MyHomeView(self.author, self.user_data, self.save_func),
-        )
         await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
     async def fishing_callback(self, interaction: discord.Interaction):
         view = FishingView(self.author, self.user_data, self.save_func)
-        attach_navigation(
-            view,
-            self.author,
-            lambda: MyHomeView(self.author, self.user_data, self.save_func),
-        )
         await interaction.edit_original_response(embed=view.get_embed(), view=view)
-
-    async def exit_callback(self, interaction: discord.Interaction):
-        await interaction.edit_original_response(
-            content="🏠 마이홈을 나왔습니다.",
-            embed=None,
-            view=None,
-        )
 
     async def recruit_callback(self, interaction: discord.Interaction):
         async def back_cb(i):

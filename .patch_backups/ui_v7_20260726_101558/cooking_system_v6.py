@@ -33,11 +33,6 @@ RECIPES = {
 }
 
 STARTER_RECIPES = {"감자 수프", "토마토 샐러드", "빵잉어 구이", "버들치 조림"}
-RESEARCH_POOLS = {
-    "작물": list(RECIPES)[:6],
-    "수산": list(RECIPES)[6:],
-    "특수": ["별비늘돔 만찬", "등불오징어 볶음", "호박 스튜"],
-}
 INGREDIENT_QUALITY_BONUS = {
     "시든": -8,
     "보통": 0,
@@ -57,66 +52,6 @@ def ensure_cooking_data(user_data: dict[str, Any]) -> dict[str, Any]:
     cooking.setdefault("delivery", {})
     cooking.setdefault("normal_quality_streak", 0)
     return cooking
-
-
-def recipe_material_status(
-    user_data: dict[str, Any],
-    recipe_name: str,
-    count: int = 1,
-) -> list[tuple[str, int, int]]:
-    """Return (material, current stock, required stock) rows for a recipe."""
-    inventory = user_data.setdefault("inventory", {})
-    count = max(1, int(count))
-    return [
-        (item, int(inventory.get(item, 0)), int(need) * count)
-        for item, need in RECIPES[recipe_name]["ingredients"].items()
-    ]
-
-
-def can_cook_recipe(user_data: dict[str, Any], recipe_name: str, count: int = 1) -> bool:
-    if recipe_name not in RECIPES:
-        return False
-    return all(have >= need for _, have, need in recipe_material_status(user_data, recipe_name, count))
-
-
-def craftable_recipes(user_data: dict[str, Any], count: int = 1) -> list[str]:
-    unlocked = ensure_cooking_data(user_data)["unlocked_recipes"]
-    return [
-        recipe_name
-        for recipe_name in unlocked
-        if recipe_name in RECIPES and can_cook_recipe(user_data, recipe_name, count)
-    ]
-
-
-def format_recipe_materials(user_data: dict[str, Any], recipe_name: str, count: int = 1) -> str:
-    return " · ".join(
-        f"{item} {have}/{need}"
-        for item, have, need in recipe_material_status(user_data, recipe_name, count)
-    )
-
-
-def research_materials(category: str) -> list[str]:
-    materials = []
-    for recipe_name in RESEARCH_POOLS.get(category, []):
-        for item in RECIPES[recipe_name]["ingredients"]:
-            if item not in materials:
-                materials.append(item)
-    return materials
-
-
-def research_available(user_data: dict[str, Any], category: str) -> bool:
-    cooking = ensure_cooking_data(user_data)
-    locked = [
-        name for name in RESEARCH_POOLS.get(category, [])
-        if name not in cooking["unlocked_recipes"]
-    ]
-    if not locked or int(user_data.get("money", 0)) < RECIPE_RESEARCH_MONEY:
-        return False
-    inventory = user_data.setdefault("inventory", {})
-    return any(
-        int(inventory.get(item, 0)) >= RECIPE_RESEARCH_MATERIALS
-        for item in research_materials(category)
-    )
 
 
 def _roll_quality(bonus: int = 0) -> str:
@@ -324,12 +259,21 @@ def deliver_food(user_data: dict[str, Any], food_key: str, count: int, day_key: 
 
 def research_recipe(user_data: dict[str, Any], category: str):
     cooking = ensure_cooking_data(user_data)
-    locked = [r for r in RESEARCH_POOLS.get(category, []) if r not in cooking["unlocked_recipes"]]
+    pools = {
+        "작물": list(RECIPES)[:6],
+        "수산": list(RECIPES)[6:],
+        "특수": ["별비늘돔 만찬", "등불오징어 볶음", "호박 스튜"],
+    }
+    locked = [r for r in pools.get(category, []) if r not in cooking["unlocked_recipes"]]
     if not locked:
         return False, "이 계열의 모든 레시피를 연구했습니다."
     if int(user_data.get("money", 0)) < RECIPE_RESEARCH_MONEY:
         return False, f"연구비 {RECIPE_RESEARCH_MONEY:,}원이 필요합니다."
-    candidate_materials = research_materials(category)
+    candidate_materials = []
+    for recipe_name in pools.get(category, []):
+        for item in RECIPES[recipe_name]["ingredients"]:
+            if item not in candidate_materials:
+                candidate_materials.append(item)
     inventory = user_data.setdefault("inventory", {})
     material = next(
         (item for item in candidate_materials if int(inventory.get(item, 0)) >= RECIPE_RESEARCH_MATERIALS),
@@ -379,62 +323,26 @@ class CookingView(discord.ui.View):
 
     def get_embed(self, message=None):
         c = ensure_cooking_data(self.user_data)
-        available = craftable_recipes(self.user_data, 1)
-        available_lines = [
-            f"• **{name}** — {format_recipe_materials(self.user_data, name)}"
-            for name in available
-        ]
-        recipe_lines = []
-        for name in c["unlocked_recipes"]:
-            if name not in RECIPES:
-                continue
-            marker = "✅" if can_cook_recipe(self.user_data, name) else "❌"
-            recipe_lines.append(
-                f"{marker} **{name}** — {format_recipe_materials(self.user_data, name)}"
-            )
+        recipes = "\n".join(f"• {r}" for r in c["unlocked_recipes"]) or "없음"
         foods = "\n".join(f"• {k} ×{v}" for k, v in c["foods"].items() if v) or "없음"
-        e = discord.Embed(
-            title="🍳 요리",
-            description=message or "현재 재고로 만들 수 있는 요리만 조리 선택지에 표시됩니다.",
-            color=discord.Color.orange(),
-        )
-        e.add_field(
-            name="지금 만들 수 있는 요리",
-            value=("\n".join(available_lines) or "현재 재료로 만들 수 있는 요리가 없습니다.")[:1024],
-            inline=False,
-        )
-        e.add_field(
-            name="필요 재료 / 현재 재고",
-            value=("\n".join(recipe_lines) or "해금된 레시피가 없습니다.")[:1024],
-            inline=False,
-        )
+        e = discord.Embed(title="🍳 요리", description=message or "재료 등급을 살려 즉시 요리합니다.", color=discord.Color.orange())
+        e.add_field(name="해금 레시피", value=recipes[:1024], inline=False)
         e.add_field(name="완성 요리", value=foods[:1024], inline=False)
         return e
 
     @discord.ui.button(label="레시피 1개 조리", style=discord.ButtonStyle.success)
     async def cook_one(self, interaction, button):
-        recipes = craftable_recipes(self.user_data, 1)
-        if not recipes:
-            return await interaction.response.send_message(
-                "현재 재료로 만들 수 있는 요리가 없습니다.",
-                ephemeral=True,
-            )
+        recipes = ensure_cooking_data(self.user_data)["unlocked_recipes"]
         await interaction.response.send_message("조리할 레시피를 선택하세요.", view=RecipeSelectView(self, recipes, 1), ephemeral=True)
 
     @discord.ui.button(label="레시피 10개 조리", style=discord.ButtonStyle.primary)
     async def cook_ten(self, interaction, button):
-        recipes = craftable_recipes(self.user_data, 10)
-        if not recipes:
-            return await interaction.response.send_message(
-                "현재 재료로 10개 만들 수 있는 요리가 없습니다.",
-                ephemeral=True,
-            )
+        recipes = ensure_cooking_data(self.user_data)["unlocked_recipes"]
         await interaction.response.send_message("조리할 레시피를 선택하세요.", view=RecipeSelectView(self, recipes, 10), ephemeral=True)
 
     @discord.ui.button(label="레시피 연구", style=discord.ButtonStyle.secondary)
     async def research(self, interaction, button):
-        view = ResearchView(self)
-        await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
+        await interaction.response.send_message("연구 계열을 선택하세요.", view=ResearchView(self), ephemeral=True)
 
     @discord.ui.button(label="완성 요리 판매", style=discord.ButtonStyle.secondary)
     async def sell(self, interaction, button):
@@ -515,14 +423,7 @@ class RecipeSelectView(discord.ui.View):
         self.parent, self.count = parent, count
         select = discord.ui.Select(
             placeholder="레시피 선택",
-            options=[
-                discord.SelectOption(
-                    label=r,
-                    value=r,
-                    description=format_recipe_materials(parent.user_data, r, count)[:100],
-                )
-                for r in recipes[:25]
-            ],
+            options=[discord.SelectOption(label=r, value=r, description=RECIPES[r]["effect"]) for r in recipes[:25]],
         )
         select.callback = self.selected
         self.add_item(select)
@@ -541,49 +442,11 @@ class ResearchView(discord.ui.View):
     def __init__(self, parent):
         super().__init__(timeout=90)
         self.parent = parent
-        for item in self.children:
-            if isinstance(item, discord.ui.Button) and item.label in RESEARCH_POOLS:
-                item.disabled = not research_available(parent.user_data, item.label)
-
-    def get_embed(self, message=None):
-        cooking = ensure_cooking_data(self.parent.user_data)
-        inventory = self.parent.user_data.setdefault("inventory", {})
-        embed = discord.Embed(
-            title="🔬 레시피 연구",
-            description=message or (
-                f"연구비 {RECIPE_RESEARCH_MONEY:,}원과 같은 계열 재료 "
-                f"{RECIPE_RESEARCH_MATERIALS}개가 필요합니다."
-            ),
-            color=discord.Color.purple(),
-        )
-        for category in RESEARCH_POOLS:
-            locked = [
-                name for name in RESEARCH_POOLS[category]
-                if name not in cooking["unlocked_recipes"]
-            ]
-            stocks = " · ".join(
-                f"{item} {int(inventory.get(item, 0))}개"
-                for item in research_materials(category)
-            ) or "사용 가능한 재료 없음"
-            state = "연구 가능" if research_available(self.parent.user_data, category) else "연구 불가"
-            if not locked:
-                state = "연구 완료"
-            embed.add_field(
-                name=f"{category} — {state}",
-                value=(
-                    f"미발견 {len(locked)}종 · 기록 "
-                    f"{int(cooking['research_failures'].get(category, 0))}/{RECIPE_RESEARCH_PITY}\n"
-                    f"{stocks}"
-                )[:1024],
-                inline=False,
-            )
-        return embed
 
     async def run(self, interaction, category):
         ok, msg = research_recipe(self.parent.user_data, category)
         await _save(self.parent.save_func, self.parent.author, self.parent.user_data)
-        refreshed = ResearchView(self.parent)
-        await interaction.response.edit_message(content=None, embed=refreshed.get_embed(msg), view=refreshed)
+        await interaction.response.edit_message(content=msg, view=None)
 
     @discord.ui.button(label="작물", style=discord.ButtonStyle.success)
     async def crop(self, i, b): await self.run(i, "작물")

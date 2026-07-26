@@ -8,7 +8,6 @@ from typing import Any
 import discord
 
 from data_manager import advance_world_turn
-from navigation_v7 import attach_navigation
 
 
 PURE_HOPE_ITEM = "순수한 희망"
@@ -1161,20 +1160,10 @@ class _LifeChildView(discord.ui.View):
         self.user_data = user_data
         self.save_func = save_func
         ensure_life_data(self.user_data)
-        attach_navigation(
-            self,
-            self.author,
-            self._life_hub_factory,
-            back_label="생활 관리로",
-        )
-
-    def _life_hub_factory(self):
-        from life_overhaul_v5 import LifeHubView
-        return LifeHubView(self.author, self.user_data, self.save_func)
 
     async def go_back(self, interaction):
         await _defer(interaction)
-        view = self._life_hub_factory()
+        view = LifeSystemView(self.author, self.user_data, self.save_func)
         await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
 
@@ -1334,77 +1323,34 @@ class CropSetupView(_LifeChildView):
         super().__init__(author, user_data, save_func)
         self.crop_name = None
         self.worker_index = None
-        inventory = _inventory(user_data)
-        stocked = [
-            (name, data, int(inventory.get(SEED_ITEMS[name], 0)))
-            for name, data in CROPS.items()
-            if int(inventory.get(SEED_ITEMS[name], 0)) > 0
-        ]
-        characters = list(user_data.get("characters", []))
-
-        if stocked:
-            crop_select = discord.ui.Select(
-                placeholder="보유 씨앗에서 재배할 작물 선택",
-                options=[
-                    discord.SelectOption(
-                        label=name,
-                        value=name,
-                        description=f"재고 {stock}개 · 재배 {data['turns']}턴",
-                    )
-                    for name, data, stock in stocked[:25]
-                ],
-            )
-
-            async def crop_cb(interaction):
-                await _defer(interaction)
-                self.crop_name = crop_select.values[0]
-                await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-            crop_select.callback = crop_cb
-            self.add_item(crop_select)
-
-        if characters:
-            worker_select = discord.ui.Select(
-                placeholder="담당 캐릭터",
-                options=[
-                    discord.SelectOption(label=c.get("name", f"캐릭터 {i + 1}"), value=str(i))
-                    for i, c in enumerate(characters)
-                ][:25],
-            )
-
-            async def worker_cb(interaction):
-                await _defer(interaction)
-                self.worker_index = int(worker_select.values[0])
-                await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-            worker_select.callback = worker_cb
-            self.add_item(worker_select)
-
-        if not stocked or not characters:
-            for item in self.children:
-                if isinstance(item, discord.ui.Button) and item.label == "재배 시작":
-                    item.disabled = True
+        crop_select = discord.ui.Select(
+            placeholder="재배할 작물",
+            options=[discord.SelectOption(label=name, value=name, description=f"{data['turns']}턴") for name, data in CROPS.items()],
+        )
+        worker_select = discord.ui.Select(
+            placeholder="담당 캐릭터",
+            options=[
+                discord.SelectOption(label=c.get("name", f"캐릭터 {i + 1}"), value=str(i))
+                for i, c in enumerate(user_data.get("characters", []))
+            ][:25],
+        )
+        async def crop_cb(interaction):
+            await _defer(interaction)
+            self.crop_name = crop_select.values[0]
+            await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        async def worker_cb(interaction):
+            await _defer(interaction)
+            self.worker_index = int(worker_select.values[0])
+            await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        crop_select.callback = crop_cb
+        worker_select.callback = worker_cb
+        self.add_item(crop_select)
+        self.add_item(worker_select)
 
     def get_embed(self):
-        inventory = _inventory(self.user_data)
-        stocks = [
-            f"• {name}: {int(inventory.get(SEED_ITEMS[name], 0))}개"
-            for name in CROPS
-            if int(inventory.get(SEED_ITEMS[name], 0)) > 0
-        ]
-        worker_name = "미선택"
-        if self.worker_index is not None:
-            characters = self.user_data.get("characters", [])
-            if 0 <= self.worker_index < len(characters):
-                worker_name = characters[self.worker_index].get("name", f"캐릭터 {self.worker_index + 1}")
         return discord.Embed(
             title="🥕 파종 준비",
-            description=(
-                f"작물: **{self.crop_name or '미선택'}**\n"
-                f"담당: **{worker_name}**\n\n"
-                f"**현재 보유 씨앗·종균**\n"
-                f"{chr(10).join(stocks) if stocks else '보유 재고가 없습니다. 생활 상점에서 먼저 구매하세요.'}"
-            ),
+            description=f"작물: **{self.crop_name or '미선택'}**\n담당: **{self.worker_index if self.worker_index is not None else '미선택'}**",
             color=discord.Color.green(),
         )
 
@@ -1433,6 +1379,9 @@ class FishFarmView(_LifeChildView):
             embed.add_field(name="품질", value=f"{tank['quality']} · {'출하 가능' if tank['complete'] else tank['last_log']}", inline=False)
         else:
             embed.add_field(name="양식 상태", value="비어 있음", inline=False)
+        produce = farm.get("produce", {})
+        if produce:
+            embed.add_field(name="생산품", value="\n".join(f"{k} ×{v}" for k, v in produce.items()), inline=False)
         return embed
 
     @discord.ui.button(label="입식", style=discord.ButtonStyle.success)
@@ -1483,77 +1432,34 @@ class FishSetupView(_LifeChildView):
         super().__init__(author, user_data, save_func)
         self.species = None
         self.worker_index = None
-        inventory = _inventory(user_data)
-        stocked = [
-            (name, data, int(inventory.get(FINGERLING_ITEMS[name], 0)))
-            for name, data in FISH_SPECIES.items()
-            if int(inventory.get(FINGERLING_ITEMS[name], 0)) > 0
-        ]
-        characters = list(user_data.get("characters", []))
-
-        if stocked:
-            species_select = discord.ui.Select(
-                placeholder="보유 치어에서 양식할 어종 선택",
-                options=[
-                    discord.SelectOption(
-                        label=name,
-                        value=name,
-                        description=f"재고 {stock}개 · 양식 {data['turns']}턴",
-                    )
-                    for name, data, stock in stocked[:25]
-                ],
-            )
-
-            async def species_cb(interaction):
-                await _defer(interaction)
-                self.species = species_select.values[0]
-                await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-            species_select.callback = species_cb
-            self.add_item(species_select)
-
-        if characters:
-            worker_select = discord.ui.Select(
-                placeholder="담당 캐릭터",
-                options=[
-                    discord.SelectOption(label=c.get("name", f"캐릭터 {i + 1}"), value=str(i))
-                    for i, c in enumerate(characters)
-                ][:25],
-            )
-
-            async def worker_cb(interaction):
-                await _defer(interaction)
-                self.worker_index = int(worker_select.values[0])
-                await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-            worker_select.callback = worker_cb
-            self.add_item(worker_select)
-
-        if not stocked or not characters:
-            for item in self.children:
-                if isinstance(item, discord.ui.Button) and item.label == "양식 시작":
-                    item.disabled = True
+        species_select = discord.ui.Select(
+            placeholder="양식할 어종",
+            options=[discord.SelectOption(label=name, value=name, description=f"{data['turns']}턴") for name, data in FISH_SPECIES.items()],
+        )
+        worker_select = discord.ui.Select(
+            placeholder="담당 캐릭터",
+            options=[
+                discord.SelectOption(label=c.get("name", f"캐릭터 {i + 1}"), value=str(i))
+                for i, c in enumerate(user_data.get("characters", []))
+            ][:25],
+        )
+        async def species_cb(interaction):
+            await _defer(interaction)
+            self.species = species_select.values[0]
+            await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        async def worker_cb(interaction):
+            await _defer(interaction)
+            self.worker_index = int(worker_select.values[0])
+            await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        species_select.callback = species_cb
+        worker_select.callback = worker_cb
+        self.add_item(species_select)
+        self.add_item(worker_select)
 
     def get_embed(self):
-        inventory = _inventory(self.user_data)
-        stocks = [
-            f"• {name}: {int(inventory.get(FINGERLING_ITEMS[name], 0))}개"
-            for name in FISH_SPECIES
-            if int(inventory.get(FINGERLING_ITEMS[name], 0)) > 0
-        ]
-        worker_name = "미선택"
-        if self.worker_index is not None:
-            characters = self.user_data.get("characters", [])
-            if 0 <= self.worker_index < len(characters):
-                worker_name = characters[self.worker_index].get("name", f"캐릭터 {self.worker_index + 1}")
         return discord.Embed(
             title="🐟 입식 준비",
-            description=(
-                f"어종: **{self.species or '미선택'}**\n"
-                f"담당: **{worker_name}**\n\n"
-                f"**현재 보유 치어·유생**\n"
-                f"{chr(10).join(stocks) if stocks else '보유 재고가 없습니다. 생활 상점에서 먼저 구매하세요.'}"
-            ),
+            description=f"어종: **{self.species or '미선택'}**\n담당: **{self.worker_index if self.worker_index is not None else '미선택'}**",
             color=discord.Color.blue(),
         )
 
