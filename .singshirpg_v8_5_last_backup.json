@@ -1,0 +1,12 @@
+{
+  "version": "8.5",
+  "backup": "H:\\디코봇\\.singshirpg_v8_5_backup_20260726_190247",
+  "files": [
+    "battle.py",
+    "cards.py",
+    "gem_manager.py",
+    "info.py",
+    "life_system.py",
+    "progression_system_v6.py"
+  ]
+}

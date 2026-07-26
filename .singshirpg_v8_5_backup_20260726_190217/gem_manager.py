@@ -215,17 +215,7 @@ def gem_applied_effect_summary(gem: dict[str, Any]) -> str:
 
 
 def artifact_socket_count(artifact: dict[str, Any]) -> int:
-    # 캐릭터 전용/각인 아티팩트는 오래된 저장 데이터에 rank가 없더라도
-    # 설계상 항상 3성이다. 이름 표기나 마이그레이션 여부에 의존하지 않는다.
-    if (
-        artifact.get("special") in CHARACTER_SPECIALS
-        or artifact.get("effect_scope") == "character"
-        or artifact.get("compatible_character")
-        or artifact.get("is_engraved") is True
-    ):
-        return 3
-    rank = artifact.get("rank", artifact.get("rank_level", artifact.get("grade", 1)))
-    return max(1, min(3, int(rank or 1)))
+    return max(1, min(3, int(artifact.get("rank", artifact.get("rank_level", 1)) or 1)))
 
 
 def artifact_entry_key(artifact: dict[str, Any], char_index: int | None = None, slot: str = "") -> str:

@@ -168,14 +168,7 @@ class BattleView(discord.ui.View):
         active_monsters = [m for m in self.monsters if m.current_hp > 0]
         if not active_monsters: return 
         
-        # 광역 카드는 별도의 단일 대상 선택 없이 첫 생존 적을 주 대상으로 삼는다.
-        # 주 대상과는 정상적으로 합을 진행하고, 나머지 적에게 광역 피해를 전파한다.
-        if (
-            self.selected_card
-            and getattr(self.selected_card, "is_aoe", False)
-        ):
-            await self.process_battle_round(interaction, active_monsters[0])
-        elif len(active_monsters) == 1:
+        if len(active_monsters) == 1:
             await self.process_battle_round(interaction, active_monsters[0])
         else:
             options = []
@@ -202,77 +195,6 @@ class BattleView(discord.ui.View):
             view = discord.ui.View()
             view.add_item(select)
             await interaction.edit_original_response(content=f"⚔️ **[제 {self.turn_count}턴]** 타겟을 선택하세요.", view=view)
-
-    def _apply_player_aoe(self, primary_target, dice_results):
-        """Apply the attack dice of an AOE card to every secondary living monster."""
-        if not (
-            self.selected_card
-            and getattr(self.selected_card, "is_aoe", False)
-        ):
-            return "", []
-
-        secondary_targets = [
-            monster
-            for monster in self.monsters
-            if monster is not primary_target and monster.current_hp > 0
-        ]
-        if not secondary_targets:
-            return "", []
-
-        attack_dice = [
-            dict(dice)
-            for dice in dice_results
-            if dice.get("type") == "attack" and int(dice.get("value", 0)) > 0
-        ]
-        if not attack_dice:
-            return (
-                f"\n📢 **[{self.selected_card.name}]** 광역 범위가 펼쳐졌지만 "
-                "적에게 적용할 공격 주사위는 없었습니다.\n",
-                [],
-            )
-
-        attacker_runtime = getattr(self.player, "runtime_cooldowns", {}) or {}
-        outgoing_state = attacker_runtime.get("change_state")
-        logs = [f"\n📢 **[{self.selected_card.name}] 광역 공격**"]
-        defeated = []
-
-        for monster in secondary_targets:
-            total_damage = 0
-            effect_logs = []
-            target_runtime = getattr(monster, "runtime_cooldowns", {}) or {}
-            incoming_state = target_runtime.get("change_state")
-
-            for dice in attack_dice:
-                damage = int(dice.get("value", 0))
-                defense_rate = max(0, min(100, int(getattr(monster, "defense_rate", 0) or 0)))
-                if defense_rate:
-                    damage = int(damage * (1 - defense_rate / 100))
-                damage = max(0, damage - int(getattr(monster, "defense", 0) or 0) // 3)
-
-                if damage > 0:
-                    if outgoing_state == "major":
-                        damage = max(1, round(damage * 1.25))
-                    elif outgoing_state == "minor":
-                        damage = max(0, round(damage * 0.75))
-                    if incoming_state == "major":
-                        damage = max(1, round(damage * 1.25))
-                    elif incoming_state == "minor":
-                        damage = max(0, round(damage * 0.75))
-
-                total_damage += damage
-                effect_log = battle_engine.apply_dice_effect(
-                    dice, self.player, monster, True
-                )
-                if effect_log:
-                    effect_logs.append(effect_log.strip())
-
-            monster.current_hp = max(0, monster.current_hp - total_damage)
-            suffix = f" · {' '.join(effect_logs)}" if effect_logs else ""
-            logs.append(f"• **{monster.name}**에게 {total_damage} 피해{suffix}")
-            if monster.current_hp <= 0:
-                defeated.append(monster)
-
-        return "\n".join(logs) + "\n", defeated
 
     async def process_battle_round(self, interaction, target):
         if self._finished:
@@ -417,10 +339,6 @@ class BattleView(discord.ui.View):
 
         log += clash_log
         self.damage_taken_last_turn = dmg_p
-
-        aoe_log, aoe_defeated = self._apply_player_aoe(target, p_res)
-        if aoe_log:
-            log += aoe_log
         
         # [던전 아이템] 흡혈 (지속성)
         if self.dungeon_item and self.dungeon_item["type"] == "passive" and self.dungeon_item.get("effect") == "lifesteal":
@@ -436,13 +354,9 @@ class BattleView(discord.ui.View):
             target.current_hp -= fix_dmg
             log += f" 🗡️ **{self.dungeon_item['name']}** 추가 피해 {fix_dmg}!"
 
-        defeated_monsters = list(aoe_defeated)
         if target.current_hp <= 0:
-            defeated_monsters.append(target)
-        for defeated in defeated_monsters:
-            if defeated in self.monsters:
-                self.killed_monsters.append(defeated)
-                self.monsters.remove(defeated)
+            self.killed_monsters.append(target)
+            self.monsters.remove(target)
 
         # [던전 아이템] 턴 종료 체력 회복 (지속성)
         if self.dungeon_item and self.dungeon_item["type"] == "passive" and self.dungeon_item.get("effect") == "hp_regen":

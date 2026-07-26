@@ -141,15 +141,12 @@ class InfoMainView(discord.ui.View):
 
 class InfoView(discord.ui.View):
     """캐릭터 상세 정보 및 상태창 복귀를 위한 뷰"""
-    INFO_PAGE_LABELS = ("개요", "일반 장비", "전용 장비", "버프")
-
     def __init__(self, author=None, user_data=None, save_func=None, char_index=0, timeout=600):
         super().__init__(timeout=timeout)
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
         self.char_index = char_index
-        self.info_page = 0
         self.update_buttons()
 
     def update_buttons(self):
@@ -166,34 +163,6 @@ class InfoView(discord.ui.View):
             next_char_btn = discord.ui.Button(label="다음 ▶️", style=discord.ButtonStyle.secondary, row=0, disabled=(self.char_index >= len(char_list) - 1), custom_id="info:char_next")
             next_char_btn.callback = self.next_char
             self.add_item(next_char_btn)
-
-        prev_info_btn = discord.ui.Button(
-            label="◀ 정보",
-            style=discord.ButtonStyle.secondary,
-            row=0,
-            disabled=self.info_page == 0,
-            custom_id="info:detail_prev",
-        )
-        prev_info_btn.callback = self.prev_info_page
-        self.add_item(prev_info_btn)
-
-        self.add_item(discord.ui.Button(
-            label=f"{self.info_page + 1}/{len(self.INFO_PAGE_LABELS)} {self.INFO_PAGE_LABELS[self.info_page]}",
-            style=discord.ButtonStyle.secondary,
-            row=0,
-            disabled=True,
-            custom_id="info:detail_counter",
-        ))
-
-        next_info_btn = discord.ui.Button(
-            label="정보 ▶",
-            style=discord.ButtonStyle.secondary,
-            row=0,
-            disabled=self.info_page >= len(self.INFO_PAGE_LABELS) - 1,
-            custom_id="info:detail_next",
-        )
-        next_info_btn.callback = self.next_info_page
-        self.add_item(next_info_btn)
 
         # 기능 버튼들 (StatusMenuView 기능 통합)
         btn_inv = discord.ui.Button(label="🎒 가방", style=discord.ButtonStyle.secondary, row=1, custom_id="info:inventory")
@@ -234,26 +203,12 @@ class InfoView(discord.ui.View):
     @auto_defer(reload_data=True)
     async def prev_char(self, interaction: discord.Interaction):
         self.char_index -= 1
-        self.info_page = 0
         self.update_buttons()
         await interaction.edit_original_response(embed=self.create_status_embed(), view=self)
 
     @auto_defer(reload_data=True)
     async def next_char(self, interaction: discord.Interaction):
         self.char_index += 1
-        self.info_page = 0
-        self.update_buttons()
-        await interaction.edit_original_response(embed=self.create_status_embed(), view=self)
-
-    @auto_defer(reload_data=True)
-    async def prev_info_page(self, interaction: discord.Interaction):
-        self.info_page = max(0, self.info_page - 1)
-        self.update_buttons()
-        await interaction.edit_original_response(embed=self.create_status_embed(), view=self)
-
-    @auto_defer(reload_data=True)
-    async def next_info_page(self, interaction: discord.Interaction):
-        self.info_page = min(len(self.INFO_PAGE_LABELS) - 1, self.info_page + 1)
         self.update_buttons()
         await interaction.edit_original_response(embed=self.create_status_embed(), view=self)
 
@@ -326,12 +281,7 @@ class InfoView(discord.ui.View):
         if self.char_index >= len(chars): self.char_index = 0
         char_data = chars[self.char_index]
         
-        self.info_page = max(0, min(self.info_page, len(self.INFO_PAGE_LABELS) - 1))
-        page_label = self.INFO_PAGE_LABELS[self.info_page]
-        embed = discord.Embed(
-            title=f"📊 {char_data['name']} · {page_label}",
-            color=discord.Color.blue(),
-        )
+        embed = discord.Embed(title=f"📊 {char_data['name']} 상태 정보", color=discord.Color.blue())
         
         # 1. 아티팩트 스탯 계산
         art_stats = {"max_hp": 0, "max_mental": 0, "attack": 0, "defense": 0, "defense_rate": 0}
@@ -398,8 +348,7 @@ class InfoView(discord.ui.View):
         mental_val_str = format_stat(char_data.get('max_mental', 90), art_stats["max_mental"], engraved_stats["max_mental"], gem_stats["max_mental"], buff_stats["max_mental"])
         mental_str = f"{char_data.get('current_mental')}/{mental_val_str}"
         
-        if self.info_page == 0:
-            embed.add_field(name="상태", value=f"❤️ HP: {hp_str}\n🔮 멘탈: {mental_str}", inline=True)
+        embed.add_field(name="상태", value=f"❤️ HP: {hp_str}\n🔮 멘탈: {mental_str}", inline=True)
         
         # 전투 능력치 표시
         atk_str = format_stat(char_data.get('attack', 0), art_stats["attack"], engraved_stats["attack"], gem_stats["attack"], buff_stats["attack"])
@@ -408,22 +357,19 @@ class InfoView(discord.ui.View):
         sr_str = f"+{buff_stats['success_rate']}%" if buff_stats['success_rate'] > 0 else "0%"
 
         ability_value = f"⚔️ 공격력: {atk_str}\n🛡️ 방어력: {dfs_str}\n✨ 피해감소: {dr_str}\n🍀 조사보정: {sr_str}"
-        if self.info_page == 0:
-            embed.add_field(name="능력치", value=ability_value, inline=True)
+        embed.add_field(name="능력치", value=ability_value, inline=True)
         
         # 장비 정보
         cards = char_data.get("equipped_cards", [])
         card_str = ", ".join(cards) if cards else "없음"
-        if self.info_page == 0:
-            embed.add_field(name="🎴 장착 카드", value=card_str, inline=False)
+        embed.add_field(name="🎴 장착 카드", value=card_str, inline=False)
         
         art_str = "없음"
         if art:
             art_name = f"{art.get('name')} (+{art.get('level', 0)})"
             art_desc = art.get('description', '설명 없음')
             art_str = f"**{art_name}**\n{art_desc}"
-        if self.info_page == 1:
-            embed.add_field(name="💍 일반 아티팩트", value=art_str, inline=False)
+        embed.add_field(name="💍 아티팩트", value=art_str, inline=False)
 
         # [신규] 각인 아티팩트 표시
         engraved_str = "없음"
@@ -431,20 +377,10 @@ class InfoView(discord.ui.View):
             e_name = f"{engraved_art.get('name')} (+{engraved_art.get('level', 0)})"
             e_desc = engraved_art.get('description', '설명 없음')
             engraved_str = f"**{e_name}**\n{e_desc}"
-        if self.info_page == 2:
-            embed.add_field(
-                name="🔮 전용 아티팩트 · 고정 3성/3소켓",
-                value=engraved_str,
-                inline=False,
-            )
+        embed.add_field(name="🔮 각인 아티팩트", value=engraved_str, inline=False)
 
         # 장착한 모든 젬의 실제 수치와 3성·5성 해금 내용을 상태창에서도 확인한다.
-        visible_artifacts = ()
-        if self.info_page == 1:
-            visible_artifacts = (("일반", art),)
-        elif self.info_page == 2:
-            visible_artifacts = (("전용", engraved_art),)
-        for artifact_label, artifact in visible_artifacts:
+        for artifact_label, artifact in (("일반", art), ("각인", engraved_art)):
             if not isinstance(artifact, dict):
                 continue
             for socket_index, gem in enumerate(artifact.get("gems", [])):
@@ -457,7 +393,7 @@ class InfoView(discord.ui.View):
                 )
         
         # 활성화된 버프 목록 표시
-        if self.info_page == 3 and buffs:
+        if buffs:
             buff_lines = []
             for b_name, b_info in buffs.items():
                 # 표시할 때도 해당 캐릭터의 버프만 필터링
@@ -466,14 +402,5 @@ class InfoView(discord.ui.View):
                 buff_lines.append(f"• **{b_name}**: {b_info.get('duration')}회 남음")
             if buff_lines:
                 embed.add_field(name="☕ 활성화된 버프", value="\n".join(buff_lines), inline=False)
-        if self.info_page == 3 and not embed.fields:
-            embed.add_field(name="☕ 활성화된 버프", value="현재 적용 중인 버프가 없습니다.", inline=False)
-
-        embed.set_footer(
-            text=(
-                f"캐릭터 {self.char_index + 1}/{len(chars)} · "
-                f"정보 {self.info_page + 1}/{len(self.INFO_PAGE_LABELS)}"
-            )
-        )
 
         return embed

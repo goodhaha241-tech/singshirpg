@@ -3,7 +3,6 @@
 # appraisal-gem-affixes-v8.1
 # pve-gem-runtime-v8.2
 # gem-visibility-tools-v8.3
-# life-button-ui-v8.5
 from __future__ import annotations
 
 import asyncio
@@ -1638,95 +1637,6 @@ class _LifeChildView(discord.ui.View):
         await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
 
-class _PagedButtonMixin:
-    """Render long life-system choices as four buttons per page."""
-
-    BUTTON_PAGE_SIZE = 4
-    _DYNAMIC_PREFIX = "life_page:"
-
-    def _clear_paged_buttons(self):
-        for item in list(self.children):
-            custom_id = getattr(item, "custom_id", "") or ""
-            if custom_id.startswith(self._DYNAMIC_PREFIX):
-                self.remove_item(item)
-
-    def _add_paged_buttons(
-        self,
-        entries,
-        *,
-        page_attr,
-        label_func,
-        select_callback,
-        namespace,
-        selected_func=None,
-    ):
-        self._clear_paged_buttons()
-        entries = list(entries)
-        total_pages = max(1, (len(entries) + self.BUTTON_PAGE_SIZE - 1) // self.BUTTON_PAGE_SIZE)
-        page = max(0, min(int(getattr(self, page_attr, 0)), total_pages - 1))
-        setattr(self, page_attr, page)
-        start = page * self.BUTTON_PAGE_SIZE
-
-        for offset, entry in enumerate(entries[start:start + self.BUTTON_PAGE_SIZE]):
-            absolute_index = start + offset
-            selected = bool(selected_func(entry)) if selected_func else False
-            button = discord.ui.Button(
-                label=str(label_func(entry))[:80],
-                style=discord.ButtonStyle.success if selected else discord.ButtonStyle.primary,
-                row=0,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:pick:{absolute_index}",
-            )
-
-            async def choose(interaction, value=entry):
-                await select_callback(interaction, value)
-
-            button.callback = choose
-            self.add_item(button)
-
-        if total_pages > 1:
-            previous = discord.ui.Button(
-                label="이전",
-                emoji="◀️",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=page <= 0,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:previous",
-            )
-            counter = discord.ui.Button(
-                label=f"{page + 1}/{total_pages}",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=True,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:counter",
-            )
-            following = discord.ui.Button(
-                label="다음",
-                emoji="▶️",
-                style=discord.ButtonStyle.secondary,
-                row=1,
-                disabled=page >= total_pages - 1,
-                custom_id=f"{self._DYNAMIC_PREFIX}{namespace}:next",
-            )
-
-            async def move(interaction, delta):
-                await _defer(interaction)
-                setattr(self, page_attr, max(0, min(page + delta, total_pages - 1)))
-                self._render_buttons()
-                await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-            async def previous_callback(interaction):
-                await move(interaction, -1)
-
-            async def next_callback(interaction):
-                await move(interaction, 1)
-
-            previous.callback = previous_callback
-            following.callback = next_callback
-            self.add_item(previous)
-            self.add_item(counter)
-            self.add_item(following)
-
-
 class ToolGachaView(_LifeChildView):
     """Crafting-tool collection and gacha, categorized with eight tools per page."""
 
@@ -2055,21 +1965,29 @@ class VegetableGardenView(_LifeChildView):
         for item in list(self.children):
             if isinstance(item, discord.ui.Button) and item.label in self._ACTION_LABELS:
                 self.remove_item(item)
+            if isinstance(item, discord.ui.Select) and item.custom_id == "garden_action":
+                self.remove_item(item)
         plot = ensure_life_data(self.user_data)["vegetable_garden"].get("plot")
         if not plot:
             self.add_item(self.start)
         elif plot.get("complete"):
             self.add_item(self.claim)
         else:
-            for action_button in (
-                self.water,
-                self.fertilize,
-                self.soil,
-                self.prune,
-                self.sunlight,
-                self.wait,
-            ):
-                self.add_item(action_button)
+            select = discord.ui.Select(
+                placeholder="재배 행동 선택",
+                custom_id="garden_action",
+                options=[
+                    discord.SelectOption(label=label, value=value)
+                    for label, value in (
+                        ("물주기", "water"), ("비료", "fertilize"), ("흙 고르기", "soil"),
+                        ("가지치기", "prune"), ("햇빛", "sunlight"), ("방치", "wait"),
+                    )
+                ],
+            )
+            async def act(interaction):
+                await self._act(interaction, interaction.data["values"][0])
+            select.callback = act
+            self.add_item(select)
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         garden = ensure_life_data(self.user_data)["vegetable_garden"]
@@ -2133,84 +2051,61 @@ class VegetableGardenView(_LifeChildView):
     async def back(self, interaction, button): await self.go_back(interaction)
 
 
-class CropSetupView(_PagedButtonMixin, _LifeChildView):
+class CropSetupView(_LifeChildView):
     def __init__(self, author, user_data, save_func):
         super().__init__(author, user_data, save_func)
         self.crop_name = None
         self.worker_index = None
-        self.stage = "crop"
-        self.choice_page = 0
         inventory = _inventory(user_data)
-        self.stocked = [
+        stocked = [
             (name, data, int(inventory.get(SEED_ITEMS[name], 0)))
             for name, data in CROPS.items()
             if int(inventory.get(SEED_ITEMS[name], 0)) > 0
         ]
-        self.characters = list(user_data.get("characters", []))
-        self._render_buttons()
+        characters = list(user_data.get("characters", []))
 
-    def _render_buttons(self):
-        self._clear_paged_buttons()
-        if self.confirm in self.children:
-            self.remove_item(self.confirm)
-
-        if self.stage == "crop":
-            self._add_paged_buttons(
-                self.stocked,
-                page_attr="choice_page",
-                label_func=lambda entry: f"{entry[0]} ×{entry[2]}",
-                select_callback=self._select_crop,
-                namespace="crop",
+        if stocked:
+            crop_select = discord.ui.Select(
+                placeholder="보유 씨앗에서 재배할 작물 선택",
+                options=[
+                    discord.SelectOption(
+                        label=name,
+                        value=name,
+                        description=f"재고 {stock}개 · 재배 {data['turns']}턴",
+                    )
+                    for name, data, stock in stocked[:25]
+                ],
             )
-        elif self.stage == "worker":
-            indexed_characters = list(enumerate(self.characters))
-            self._add_paged_buttons(
-                indexed_characters,
-                page_attr="choice_page",
-                label_func=lambda entry: entry[1].get("name", f"캐릭터 {entry[0] + 1}"),
-                select_callback=self._select_worker,
-                namespace="crop_worker",
+
+            async def crop_cb(interaction):
+                await _defer(interaction)
+                self.crop_name = crop_select.values[0]
+                await interaction.edit_original_response(embed=self.get_embed(), view=self)
+
+            crop_select.callback = crop_cb
+            self.add_item(crop_select)
+
+        if characters:
+            worker_select = discord.ui.Select(
+                placeholder="담당 캐릭터",
+                options=[
+                    discord.SelectOption(label=c.get("name", f"캐릭터 {i + 1}"), value=str(i))
+                    for i, c in enumerate(characters)
+                ][:25],
             )
-            self._add_step_back_button("작물 다시 선택", "crop")
-        else:
-            self._add_step_back_button("담당 다시 선택", "worker")
-            if self.crop_name is not None and self.worker_index is not None:
-                self.add_item(self.confirm)
 
-    def _add_step_back_button(self, label, target_stage):
-        button = discord.ui.Button(
-            label=label,
-            emoji="↩️",
-            style=discord.ButtonStyle.secondary,
-            row=2,
-            custom_id=f"{self._DYNAMIC_PREFIX}crop:step_back",
-        )
+            async def worker_cb(interaction):
+                await _defer(interaction)
+                self.worker_index = int(worker_select.values[0])
+                await interaction.edit_original_response(embed=self.get_embed(), view=self)
 
-        async def callback(interaction):
-            await _defer(interaction)
-            self.stage = target_stage
-            self.choice_page = 0
-            self._render_buttons()
-            await interaction.edit_original_response(embed=self.get_embed(), view=self)
+            worker_select.callback = worker_cb
+            self.add_item(worker_select)
 
-        button.callback = callback
-        self.add_item(button)
-
-    async def _select_crop(self, interaction, entry):
-        await _defer(interaction)
-        self.crop_name = entry[0]
-        self.stage = "worker"
-        self.choice_page = 0
-        self._render_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _select_worker(self, interaction, entry):
-        await _defer(interaction)
-        self.worker_index = int(entry[0])
-        self.stage = "confirm"
-        self.choice_page = 0
-        self._render_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        if not stocked or not characters:
+            for item in self.children:
+                if isinstance(item, discord.ui.Button) and item.label == "재배 시작":
+                    item.disabled = True
 
     def get_embed(self):
         inventory = _inventory(self.user_data)
@@ -2229,7 +2124,6 @@ class CropSetupView(_PagedButtonMixin, _LifeChildView):
             description=(
                 f"작물: **{self.crop_name or '미선택'}**\n"
                 f"담당: **{worker_name}**\n\n"
-                f"현재 단계: **{'작물 선택' if self.stage == 'crop' else '담당 선택' if self.stage == 'worker' else '시작 확인'}**\n\n"
                 f"**현재 보유 씨앗·종균**\n"
                 f"{chr(10).join(stocks) if stocks else '보유 재고가 없습니다. 생활 상점에서 먼저 구매하세요.'}"
             ),
@@ -2259,21 +2153,29 @@ class FishFarmView(_LifeChildView):
         for item in list(self.children):
             if isinstance(item, discord.ui.Button) and item.label in self._ACTION_LABELS:
                 self.remove_item(item)
+            if isinstance(item, discord.ui.Select) and item.custom_id == "fish_action":
+                self.remove_item(item)
         tank = ensure_life_data(self.user_data)["fish_farm"].get("tank")
         if not tank:
             self.add_item(self.start)
         elif tank.get("complete"):
             self.add_item(self.claim)
         else:
-            for action_button in (
-                self.feed,
-                self.water,
-                self.oxygen,
-                self.clean,
-                self.observe,
-                self.wait,
-            ):
-                self.add_item(action_button)
+            select = discord.ui.Select(
+                placeholder="양식 행동 선택",
+                custom_id="fish_action",
+                options=[
+                    discord.SelectOption(label=label, value=value)
+                    for label, value in (
+                        ("먹이", "feed"), ("물갈이", "water"), ("산소", "oxygen"),
+                        ("청소", "clean"), ("관찰", "observe"), ("방치", "wait"),
+                    )
+                ],
+            )
+            async def act(interaction):
+                await self._act(interaction, interaction.data["values"][0])
+            select.callback = act
+            self.add_item(select)
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         farm = ensure_life_data(self.user_data)["fish_farm"]
@@ -2334,84 +2236,61 @@ class FishFarmView(_LifeChildView):
     async def back(self, interaction, button): await self.go_back(interaction)
 
 
-class FishSetupView(_PagedButtonMixin, _LifeChildView):
+class FishSetupView(_LifeChildView):
     def __init__(self, author, user_data, save_func):
         super().__init__(author, user_data, save_func)
         self.species = None
         self.worker_index = None
-        self.stage = "species"
-        self.choice_page = 0
         inventory = _inventory(user_data)
-        self.stocked = [
+        stocked = [
             (name, data, int(inventory.get(FINGERLING_ITEMS[name], 0)))
             for name, data in FISH_SPECIES.items()
             if int(inventory.get(FINGERLING_ITEMS[name], 0)) > 0
         ]
-        self.characters = list(user_data.get("characters", []))
-        self._render_buttons()
+        characters = list(user_data.get("characters", []))
 
-    def _render_buttons(self):
-        self._clear_paged_buttons()
-        if self.confirm in self.children:
-            self.remove_item(self.confirm)
-
-        if self.stage == "species":
-            self._add_paged_buttons(
-                self.stocked,
-                page_attr="choice_page",
-                label_func=lambda entry: f"{entry[0]} ×{entry[2]}",
-                select_callback=self._select_species,
-                namespace="species",
+        if stocked:
+            species_select = discord.ui.Select(
+                placeholder="보유 치어에서 양식할 어종 선택",
+                options=[
+                    discord.SelectOption(
+                        label=name,
+                        value=name,
+                        description=f"재고 {stock}개 · 양식 {data['turns']}턴",
+                    )
+                    for name, data, stock in stocked[:25]
+                ],
             )
-        elif self.stage == "worker":
-            indexed_characters = list(enumerate(self.characters))
-            self._add_paged_buttons(
-                indexed_characters,
-                page_attr="choice_page",
-                label_func=lambda entry: entry[1].get("name", f"캐릭터 {entry[0] + 1}"),
-                select_callback=self._select_worker,
-                namespace="fish_worker",
+
+            async def species_cb(interaction):
+                await _defer(interaction)
+                self.species = species_select.values[0]
+                await interaction.edit_original_response(embed=self.get_embed(), view=self)
+
+            species_select.callback = species_cb
+            self.add_item(species_select)
+
+        if characters:
+            worker_select = discord.ui.Select(
+                placeholder="담당 캐릭터",
+                options=[
+                    discord.SelectOption(label=c.get("name", f"캐릭터 {i + 1}"), value=str(i))
+                    for i, c in enumerate(characters)
+                ][:25],
             )
-            self._add_step_back_button("어종 다시 선택", "species")
-        else:
-            self._add_step_back_button("담당 다시 선택", "worker")
-            if self.species is not None and self.worker_index is not None:
-                self.add_item(self.confirm)
 
-    def _add_step_back_button(self, label, target_stage):
-        button = discord.ui.Button(
-            label=label,
-            emoji="↩️",
-            style=discord.ButtonStyle.secondary,
-            row=2,
-            custom_id=f"{self._DYNAMIC_PREFIX}fish:step_back",
-        )
+            async def worker_cb(interaction):
+                await _defer(interaction)
+                self.worker_index = int(worker_select.values[0])
+                await interaction.edit_original_response(embed=self.get_embed(), view=self)
 
-        async def callback(interaction):
-            await _defer(interaction)
-            self.stage = target_stage
-            self.choice_page = 0
-            self._render_buttons()
-            await interaction.edit_original_response(embed=self.get_embed(), view=self)
+            worker_select.callback = worker_cb
+            self.add_item(worker_select)
 
-        button.callback = callback
-        self.add_item(button)
-
-    async def _select_species(self, interaction, entry):
-        await _defer(interaction)
-        self.species = entry[0]
-        self.stage = "worker"
-        self.choice_page = 0
-        self._render_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _select_worker(self, interaction, entry):
-        await _defer(interaction)
-        self.worker_index = int(entry[0])
-        self.stage = "confirm"
-        self.choice_page = 0
-        self._render_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        if not stocked or not characters:
+            for item in self.children:
+                if isinstance(item, discord.ui.Button) and item.label == "양식 시작":
+                    item.disabled = True
 
     def get_embed(self):
         inventory = _inventory(self.user_data)
@@ -2430,7 +2309,6 @@ class FishSetupView(_PagedButtonMixin, _LifeChildView):
             description=(
                 f"어종: **{self.species or '미선택'}**\n"
                 f"담당: **{worker_name}**\n\n"
-                f"현재 단계: **{'어종 선택' if self.stage == 'species' else '담당 선택' if self.stage == 'worker' else '시작 확인'}**\n\n"
                 f"**현재 보유 치어·유생**\n"
                 f"{chr(10).join(stocks) if stocks else '보유 재고가 없습니다. 생활 상점에서 먼저 구매하세요.'}"
             ),
@@ -2460,18 +2338,27 @@ class GemCraftingView(_LifeChildView):
         for item in list(self.children):
             if isinstance(item, discord.ui.Button) and item.label in self._ACTION_LABELS:
                 self.remove_item(item)
+            if isinstance(item, discord.ui.Select) and item.custom_id == "gem_craft_action":
+                self.remove_item(item)
         craft = ensure_life_data(self.user_data).get("gem_crafting")
         if not craft:
             self.add_item(self.start)
         else:
-            for action_button in (
-                self.heat,
-                self.cool,
-                self.enchant,
-                self.shape,
-                self.purify,
-            ):
-                self.add_item(action_button)
+            select = discord.ui.Select(
+                placeholder="세공 행동 선택",
+                custom_id="gem_craft_action",
+                options=[
+                    discord.SelectOption(label=label, value=value)
+                    for label, value in (
+                        ("달구기", "heat"), ("식히기", "cool"), ("마법부여", "enchant"),
+                        ("모양 내기", "shape"), ("불순물 제거", "purify"),
+                    )
+                ],
+            )
+            async def act(interaction):
+                await self._act(interaction, interaction.data["values"][0])
+            select.callback = act
+            self.add_item(select)
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         life = ensure_life_data(self.user_data)
@@ -2568,164 +2455,81 @@ class GemCraftingView(_LifeChildView):
     async def back(self, interaction, button): await self.go_back(interaction)
 
 
-class StoneChoiceView(_PagedButtonMixin, _LifeChildView):
+class StoneChoiceView(_LifeChildView):
     def __init__(self, author, user_data, save_func, stones):
         super().__init__(author, user_data, save_func)
-        self.stones = list(stones)
-        self.choice_page = 0
-        self._render_buttons()
-
-    def _render_buttons(self):
-        self._add_paged_buttons(
-            self.stones,
-            page_attr="choice_page",
-            label_func=lambda stone: stone,
-            select_callback=self._select_stone,
-            namespace="stone",
+        self.stone = None
+        select = discord.ui.Select(
+            placeholder="세공할 원석",
+            options=[discord.SelectOption(label=s, value=s, description=f"{len(STONE_GEMS[s])}종의 젬") for s in stones],
         )
-
-    async def _select_stone(self, interaction, stone):
-        await _defer(interaction)
-        view = GemSetupView(self.author, self.user_data, self.save_func, stone)
-        await interaction.edit_original_response(embed=view.get_embed(), view=view)
+        async def cb(interaction):
+            await _defer(interaction)
+            self.stone = select.values[0]
+            view = GemSetupView(self.author, self.user_data, self.save_func, self.stone)
+            await interaction.edit_original_response(embed=view.get_embed(), view=view)
+        select.callback = cb
+        self.add_item(select)
 
     def get_embed(self):
-        stocks = [
-            f"• {stone}: {int(ensure_life_data(self.user_data)['stones'].get(stone, 0))}개"
-            for stone in self.stones
-        ]
-        return discord.Embed(
-            title="💎 원석 선택",
-            description=(
-                "사용할 감정된 원석을 버튼으로 선택하세요.\n\n"
-                + ("\n".join(stocks) if stocks else "사용 가능한 원석이 없습니다.")
-            ),
-            color=discord.Color.magenta(),
-        )
+        return discord.Embed(title="💎 원석 선택", description="사용할 감정된 원석을 선택하세요.", color=discord.Color.magenta())
 
 
-class GemSetupView(_PagedButtonMixin, _LifeChildView):
+class GemSetupView(_LifeChildView):
     def __init__(self, author, user_data, save_func, stone):
         super().__init__(author, user_data, save_func)
         self.stone = stone
         self.gem_index = None
         self.worker_index = None
         self.tool_names = []
-        self.stage = "gem"
-        self.choice_page = 0
-        self.characters = list(user_data.get("characters", []))
-        self.tools = sorted(ensure_life_data(user_data)["tools"].items())
-        self._render_buttons()
 
-    def _render_buttons(self):
-        self._clear_paged_buttons()
-        if self.confirm in self.children:
-            self.remove_item(self.confirm)
-
-        if self.stage == "gem":
-            gem_entries = list(enumerate(STONE_GEMS[self.stone]))
-            self._add_paged_buttons(
-                gem_entries,
-                page_attr="choice_page",
-                label_func=lambda entry: entry[1]["name"],
-                select_callback=self._select_gem,
-                namespace="gem",
-            )
-        elif self.stage == "worker":
-            indexed_characters = list(enumerate(self.characters))
-            self._add_paged_buttons(
-                indexed_characters,
-                page_attr="choice_page",
-                label_func=lambda entry: entry[1].get("name", f"캐릭터 {entry[0] + 1}"),
-                select_callback=self._select_worker,
-                namespace="gem_worker",
-            )
-            self._add_step_back_button("젬 다시 선택", "gem")
-        elif self.stage == "tools":
-            self._add_paged_buttons(
-                self.tools,
-                page_attr="choice_page",
-                label_func=lambda entry: f"{entry[0]} · {entry[1]}돌파",
-                select_callback=self._toggle_tool,
-                namespace="gem_tools",
-                selected_func=lambda entry: entry[0] in self.tool_names,
-            )
-            self._add_step_back_button("담당 다시 선택", "worker")
-            done = discord.ui.Button(
-                label="도구 선택 완료",
-                emoji="✅",
-                style=discord.ButtonStyle.success,
-                row=2,
-                custom_id=f"{self._DYNAMIC_PREFIX}gem_tools:done",
-            )
-
-            async def finish_tools(interaction):
-                await _defer(interaction)
-                self.stage = "confirm"
-                self.choice_page = 0
-                self._render_buttons()
-                await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-            done.callback = finish_tools
-            self.add_item(done)
-        else:
-            self._add_step_back_button(
-                "도구 다시 선택" if self.tools else "담당 다시 선택",
-                "tools" if self.tools else "worker",
-            )
-            if self.gem_index is not None and self.worker_index is not None:
-                self.add_item(self.confirm)
-
-    def _add_step_back_button(self, label, target_stage):
-        button = discord.ui.Button(
-            label=label,
-            emoji="↩️",
-            style=discord.ButtonStyle.secondary,
-            row=2,
-            custom_id=f"{self._DYNAMIC_PREFIX}gem_setup:step_back",
+        gem_select = discord.ui.Select(
+            placeholder="만들 젬",
+            options=[
+                discord.SelectOption(label=g["name"], value=str(i), description=g["summary"][:100])
+                for i, g in enumerate(STONE_GEMS[stone])
+            ],
+        )
+        worker_select = discord.ui.Select(
+            placeholder="담당 캐릭터",
+            options=[
+                discord.SelectOption(label=c.get("name", f"캐릭터 {i + 1}"), value=str(i))
+                for i, c in enumerate(user_data.get("characters", []))
+            ][:25],
         )
 
-        async def callback(interaction):
+        async def gem_cb(interaction):
             await _defer(interaction)
-            self.stage = target_stage
-            self.choice_page = 0
-            self._render_buttons()
+            self.gem_index = int(gem_select.values[0])
             await interaction.edit_original_response(embed=self.get_embed(), view=self)
 
-        button.callback = callback
-        self.add_item(button)
+        async def worker_cb(interaction):
+            await _defer(interaction)
+            self.worker_index = int(worker_select.values[0])
+            await interaction.edit_original_response(embed=self.get_embed(), view=self)
 
-    async def _select_gem(self, interaction, entry):
-        await _defer(interaction)
-        self.gem_index = int(entry[0])
-        self.stage = "worker"
-        self.choice_page = 0
-        self._render_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        gem_select.callback = gem_cb
+        worker_select.callback = worker_cb
+        self.add_item(gem_select)
+        self.add_item(worker_select)
 
-    async def _select_worker(self, interaction, entry):
-        await _defer(interaction)
-        self.worker_index = int(entry[0])
-        self.stage = "tools" if self.tools else "confirm"
-        self.choice_page = 0
-        self._render_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _toggle_tool(self, interaction, entry):
-        await _defer(interaction)
-        name = entry[0]
-        if name in self.tool_names:
-            self.tool_names.remove(name)
-        elif len(self.tool_names) >= MAX_EQUIPPED_TOOLS:
-            await interaction.followup.send(
-                f"세공 도구는 최대 {MAX_EQUIPPED_TOOLS}종까지 선택할 수 있습니다.",
-                ephemeral=True,
+        tools = ensure_life_data(user_data)["tools"]
+        if tools:
+            tool_select = discord.ui.Select(
+                placeholder="세공 도구 최대 3종",
+                min_values=0,
+                max_values=min(3, len(tools)),
+                options=[
+                    discord.SelectOption(label=f"{name} · {level}돌파", value=name, description=TOOL_DEFS[name]["effects"][int(level)][:100])
+                    for name, level in sorted(tools.items())
+                ][:25],
             )
-            return
-        else:
-            self.tool_names.append(name)
-        self._render_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+            async def tool_cb(interaction):
+                await _defer(interaction)
+                self.tool_names = list(tool_select.values)
+                await interaction.edit_original_response(embed=self.get_embed(), view=self)
+            tool_select.callback = tool_cb
+            self.add_item(tool_select)
 
     def get_embed(self):
         gem_name = "미선택" if self.gem_index is None else STONE_GEMS[self.stone][self.gem_index]["name"]
@@ -2733,24 +2537,9 @@ class GemSetupView(_PagedButtonMixin, _LifeChildView):
         if self.worker_index is not None:
             worker = self.user_data["characters"][self.worker_index].get("name", str(self.worker_index))
         tools = ", ".join(self.tool_names) or "미사용"
-        stage_label = {
-            "gem": "젬 선택",
-            "worker": "담당 캐릭터 선택",
-            "tools": f"세공 도구 선택 ({len(self.tool_names)}/{MAX_EQUIPPED_TOOLS})",
-            "confirm": "세공 시작 확인",
-        }[self.stage]
-        gem_summary = ""
-        if self.gem_index is not None:
-            gem_summary = f"\n효과: {STONE_GEMS[self.stone][self.gem_index]['summary']}"
         return discord.Embed(
             title="💎 세공 준비",
-            description=(
-                f"현재 단계: **{stage_label}**\n\n"
-                f"원석: **{self.stone}**\n"
-                f"젬: **{gem_name}**{gem_summary}\n"
-                f"담당: **{worker}**\n"
-                f"도구: **{tools}**"
-            ),
+            description=f"원석: **{self.stone}**\n젬: **{gem_name}**\n담당: **{worker}**\n도구: **{tools}**",
             color=discord.Color.magenta(),
         )
 

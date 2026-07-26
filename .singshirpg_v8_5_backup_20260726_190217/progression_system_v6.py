@@ -253,42 +253,6 @@ WIKI_CATEGORY_LABELS = {
     "tools": "세공 도구", "titles": "업적·칭호",
 }
 
-ITEM_TYPE_LABELS = {
-    "material": "일반 재료",
-    "rare_mat": "희귀 재료",
-    "mythic": "신화 재료",
-    "fish": "물고기",
-    "consumable": "소비품",
-    "crafted": "제작품",
-    "box": "보물상자",
-    "box_key": "열쇠",
-    "special": "특수 아이템",
-}
-
-ARTIFACT_EFFECT_WIKI = {
-    "reuse_last_dice": ("꼼꼼한", "비어 있는 행동에서 직전의 유효 주사위를 다시 활용하는 공용 효과입니다."),
-    "fierce_attack": ("맹렬한", "일정 주기마다 공격 주사위의 위력을 크게 높이는 공용 효과입니다."),
-    "sturdy_defense": ("견고한", "방어 주사위가 유효할 때 체력을 회복하는 공용 효과입니다."),
-    "reflection": ("앙심품은", "실제로 받은 피해의 일부를 공격자에게 되돌리는 공용 효과입니다."),
-    "escalation": ("고조된", "주기적으로 주사위에 무작위 추가 위력을 부여하는 공용 효과입니다."),
-    "immortality": ("불멸의", "전투 불능에 이르렀을 때 전투당 한 번 부활하는 공용 효과입니다."),
-    "youngsan_gold": ("황금의", "영산의 금전 소비 기술을 강화하는 캐릭터 전용 효과입니다."),
-    "luude_imprint": ("악몽의", "루우데가 주사위를 파괴할 때 회복 또는 누적 피해 효과를 일으킵니다."),
-    "earthreg_faith": ("믿음어린", "어즈렉의 방어 운용을 강화하는 캐릭터 전용 효과입니다."),
-    "sensho_star": ("별똥별의", "센쇼의 별의 은총에 특별한 강화 판정을 추가합니다."),
-    "Sensho_star": ("별똥별의", "센쇼의 별의 은총에 특별한 강화 판정을 추가합니다."),
-    "kaian_time": ("시간의", "카이안의 시간가속과 시간술식 효과를 강화합니다."),
-    "shayla_light": ("빛나는", "샤일라의 밀키워킹에 적 행동 파괴 효과를 추가합니다."),
-}
-
-
-def _wiki_display_name(category, name):
-    if category == "titles":
-        return ACHIEVEMENTS.get(name) or SECRET_ACHIEVEMENTS.get(name) or name
-    if category == "artifact_effects":
-        return ARTIFACT_EFFECT_WIKI.get(name, (name, ""))[0]
-    return name
-
 
 def _wiki_detail(category, name):
     """획득 기록을 기반으로 출처·용도·운용 힌트를 만든다."""
@@ -297,29 +261,11 @@ def _wiki_detail(category, name):
         if category == "seeds":
             crop = next((key for key, item in SEED_ITEMS.items() if item == name), None)
             info = CROPS.get(crop, {})
-            water = info.get("water", ("?", "?"))
-            return (
-                f"**재배 대상:** {crop or '알 수 없음'}\n"
-                f"**기본 기간:** {info.get('turns', '?')}턴\n"
-                f"**알맞은 수분:** {water[0]}~{water[1]}\n"
-                "**고품질 힌트:** 수분을 알맞은 범위에 두고 영양 25 이상, "
-                "건강 80 이상을 유지하세요. 건강할 때 가지치기를 하면 품질이 크게 오르고, "
-                "햇빛 조절도 품질을 조금 높입니다. 스트레스 70 이상은 피하는 편이 좋습니다.\n"
-                "생활 관리 → 채소밭에서 파종합니다."
-            )
+            return f"**재배 대상:** {crop or '알 수 없음'}\n**기본 기간:** {info.get('turns', '?')}턴\n생활 관리 → 채소밭에서 파종합니다."
         if category == "fingerlings":
             fish = next((key for key, item in FINGERLING_ITEMS.items() if item == name), None)
             info = FISH_SPECIES.get(fish, {})
-            water = info.get("water", ("?", "?"))
-            return (
-                f"**양식 대상:** {fish or '알 수 없음'}\n"
-                f"**기본 기간:** {info.get('turns', '?')}턴\n"
-                f"**알맞은 수질:** {water[0]}~{water[1]}\n"
-                "**고품질 힌트:** 포만도를 30~85로 유지하면서 알맞은 수질을 맞추세요. "
-                "관찰은 품질을 직접 높이며, 산소 공급은 스트레스를 낮춥니다. "
-                "스트레스 70 이상과 질병 누적은 피하고 먹이 뒤에는 수질을 확인하세요.\n"
-                "생활 관리 → 양어장에서 입식합니다."
-            )
+            return f"**양식 대상:** {fish or '알 수 없음'}\n**기본 기간:** {info.get('turns', '?')}턴\n생활 관리 → 양어장에서 입식합니다."
         if category == "crops":
             return f"채소밭 생산물입니다. 요리·납품에 사용합니다.\n기본 재배 기간: {CROPS.get(name, {}).get('turns', '?')}턴"
         if category == "fish":
@@ -336,7 +282,7 @@ def _wiki_detail(category, name):
             return "아티팩트 소켓에 장착합니다. 정비 화면에서 실제 보정 수치를 확인하세요."
         if category == "tools":
             info = TOOL_DEFS.get(name, {})
-            return info.get("description") or "젬 세공 전에 편성하는 영구 도구입니다."
+            return info.get("description") or str(info.get("effects") or "젬 세공 전에 편성하는 영구 도구입니다.")
     if category == "foods":
         from cooking_system_v6 import RECIPES
         info = RECIPES.get(name, {})
@@ -345,16 +291,11 @@ def _wiki_detail(category, name):
     if category == "titles":
         return f"달성한 업적 기록입니다.\n**{ACHIEVEMENTS.get(name) or SECRET_ACHIEVEMENTS.get(name) or name}**"
     if category == "artifact_effects":
-        label, detail = ARTIFACT_EFFECT_WIKI.get(
-            name,
-            (name, "아티팩트에 기록된 고유 효과입니다."),
-        )
-        return f"**{label}**\n{detail}\n아티팩트 정비에서 현재 적용값을 확인하세요."
+        return f"아티팩트에서 발견한 고유 효과 **{name}**입니다. 아티팩트 정비에서 현재 적용값을 확인하세요."
     if category == "items":
         from items import ITEM_CATEGORIES, REGIONS
         item_info = ITEM_CATEGORIES.get(name, {})
-        raw_type = item_info.get("type", "기타")
-        item_type = ITEM_TYPE_LABELS.get(raw_type, "기타")
+        item_type = item_info.get("type", "기타")
         sources = [
             region for region, info in REGIONS.items()
             if name in info.get("common", []) or name in info.get("rare", [])
@@ -392,13 +333,7 @@ class ObtainedWikiView(discord.ui.View):
         if visible:
             entries = discord.ui.Select(
                 placeholder="설명을 볼 항목 선택",
-                options=[
-                    discord.SelectOption(
-                        label=str(_wiki_display_name(self.category, name))[:100],
-                        value=name,
-                    )
-                    for name in visible
-                ],
+                options=[discord.SelectOption(label=name[:100], value=name) for name in visible],
                 row=1,
             )
             entries.callback = self.select_entry
@@ -418,21 +353,11 @@ class ObtainedWikiView(discord.ui.View):
         visible = names[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
         embed = discord.Embed(
             title=f"📖 획득 위키 — {WIKI_CATEGORY_LABELS[self.category]}",
-            description=(
-                "\n".join(
-                    f"• {_wiki_display_name(self.category, name)}"
-                    for name in visible
-                )
-                or "아직 획득한 항목이 없습니다."
-            ),
+            description="\n".join(f"• {name}" for name in visible) or "아직 획득한 항목이 없습니다.",
             color=discord.Color.teal(),
         )
         if self.selected in names:
-            embed.add_field(
-                name=_wiki_display_name(self.category, self.selected),
-                value=_wiki_detail(self.category, self.selected)[:1024],
-                inline=False,
-            )
+            embed.add_field(name=self.selected, value=_wiki_detail(self.category, self.selected)[:1024], inline=False)
         embed.set_footer(text=f"{self.page + 1}/{pages}페이지 · 획득 기록은 소비 후에도 유지됩니다.")
         return embed
 

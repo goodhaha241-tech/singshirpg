@@ -192,7 +192,6 @@ class InFightCard(SkillCard):
 class LuudeCard(SkillCard):
     def __init__(self, name):
         self.name = name
-        self.is_aoe = name == "사우전드웨이브"
         if name == "사우전드웨이브":
             self.dice_list = [
                 Dice("attack", 1, 13, effect="destroy_next_on_hit"), 
@@ -207,7 +206,7 @@ class LuudeCard(SkillCard):
     @property
     def description(self):
         if self.name == "사우전드웨이브":
-            return "📢 [광역] ⚔️(1~13, 적중시 파괴) ➔ ⚔️(3~10) ➔ 💚(20~30)"
+            return "⚔️(1~13, 적중시 파괴) ➔ ⚔️(3~10) ➔ 💚(20~30)"
         elif self.name == "잠금":
             return "🔮(10, 적 후속 주사위 전체 파괴)"
         return super().description
@@ -337,7 +336,7 @@ SKILL_CARDS = {
     "연속내치기": SkillCard("연속내치기", [Dice("counter", 7, 9, effect="bleed_3_on_win"), Dice("counter", 7, 9, effect="bleed_3_on_win"), Dice("defense", 7, 9, effect="bleed_2_on_win")]),
 
     # [아르카워드 제도 신규]
-    "폭풍": SkillCard("폭풍", [Dice("attack", 10, 12), Dice("attack", 7, 12), Dice("attack", 3, 10)], is_aoe=True),
+    "폭풍": SkillCard("폭풍", [Dice("attack", 10, 12), Dice("attack", 7, 12), Dice("attack", 3, 10)]),
     "사이클론": SkillCard("사이클론", [Dice("counter", 10, 12), Dice("defense", 3, 10), Dice("counter", 10, 12)]),
     "산들바람": SkillCard("산들바람", [Dice("heal", 30, 35), Dice("mental_heal", 30, 35)]),
 
@@ -367,7 +366,7 @@ SKILL_CARDS = {
         Dice("heal", 30, 50, effect="paralysis_1_self"), 
         Dice("heal", 30, 50, effect="paralysis_2_self"), 
         Dice("heal", 10, 12, effect="self_dmg_by_para_30")
-    ], is_aoe=True),
+    ]),
     
     # [루트렌 뉴마 전용]
     "변수제거": SkillCard("변수제거", [Dice("attack", 5, 8), Dice("defense", 3, 4)]),
