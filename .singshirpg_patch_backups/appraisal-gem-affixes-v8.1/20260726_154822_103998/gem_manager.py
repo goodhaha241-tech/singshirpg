@@ -1,21 +1,12 @@
 # gem-link-v7.3-manager
 # rollback-guard-appraisal-gems-v8
-# appraisal-gem-affixes-v8.1
 from __future__ import annotations
 
-import copy
 from typing import Any
 import uuid
 
 import discord
 
-from character import (
-    GEM_MAIN_STAT_LABELS,
-    artifact_effective_stats,
-    artifact_primary_stat_key,
-    ensure_gem_stat_affixes,
-    gem_main_stat_text,
-)
 from life_system import STONE_GEMS, ensure_life_data
 from navigation_v7 import attach_navigation
 
@@ -94,10 +85,9 @@ def gem_star_text(gem: dict[str, Any]) -> str:
 
 def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
     """Describe the numeric effect that the current runtime actually applies."""
-    gem = ensure_gem_stat_affixes(gem)
     name = str(gem.get("name", ""))
     effect = max(0, int(gem.get("effect_value", 0) or 0))
-    auxiliary = max(0, int(gem.get("aux_stat_value", 0) or 0))
+    stat = max(0, int(gem.get("stat_value", 0) or 0))
     star = max(0, min(5, int(gem.get("star", 0) or 0)))
 
     lines_by_name = {
@@ -186,11 +176,10 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
     elif not lines:
         lines.append("현재 수치 보정이 실제 전투·생활 계산에 아직 연결되지 않음")
 
-    lines.append(f"주 능력 보정: **{gem_main_stat_text(gem)}**")
-    if auxiliary:
+    if stat:
         lines.append(
-            f"보조 능력 **+{auxiliary}**: 장착한 아티팩트의 "
-            "주 능력치에 상수로 먼저 적용"
+            f"보조 수치 **+{stat}%**: 이 젬을 장착한 아티팩트의 "
+            "모든 기본 스탯을 강화"
         )
     return lines
 
@@ -858,35 +847,6 @@ class GemEquipArtifactView(_OwnedView):
                     f"등급/소켓: {artifact_socket_count(artifact)}성 · {artifact_socket_count(artifact)}소켓\n"
                     + "\n".join(socket_lines)
                 ),
-                inline=False,
-            )
-            preview_artifact = copy.deepcopy(artifact)
-            preview_sockets = preview_artifact.setdefault(
-                "gems", [None] * artifact_socket_count(preview_artifact)
-            )
-            preview_sockets.extend(
-                [None] * (artifact_socket_count(preview_artifact) - len(preview_sockets))
-            )
-            if gem and gem_compatible(preview_artifact, gem):
-                preview_sockets[self.selected_socket] = gem
-            base_stats = artifact.get("stats", {})
-            preview_stats = artifact_effective_stats(preview_artifact)
-            primary = artifact_primary_stat_key(preview_artifact)
-            stat_lines = []
-            for key, base in base_stats.items():
-                if not isinstance(base, (int, float)) or base <= 0:
-                    continue
-                label_name = GEM_MAIN_STAT_LABELS.get(key, key)
-                value = preview_stats.get(key, base)
-                unit = "%" if key == "defense_rate" else ""
-                marker = " (주 능력)" if key == primary else ""
-                stat_lines.append(
-                    f"{label_name}{marker}: {base}{unit}"
-                    + (f" → **{value}{unit}**" if value != base else "")
-                )
-            embed.add_field(
-                name="장착 후 아티팩트 예상 수치",
-                value="\n".join(stat_lines) or "표시할 기본 스탯이 없습니다.",
                 inline=False,
             )
             if gem:

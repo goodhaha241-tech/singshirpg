@@ -1,6 +1,5 @@
 # life-artifact-v7.3-manager
 # rollback-guard-appraisal-gems-v8
-# appraisal-gem-affixes-v8.1
 from __future__ import annotations
 
 import random
@@ -9,13 +8,7 @@ from typing import Any
 import discord
 
 from artifact_events_v5 import CHARACTER_ARTIFACT_EFFECTS, COMMON_ARTIFACT_EFFECTS
-from character import (
-    GEM_MAIN_STAT_LABELS,
-    artifact_effective_stats,
-    artifact_primary_stat_key,
-    ensure_gem_stat_affixes,
-    gem_main_stat_text,
-)
+from character import artifact_effective_stats
 from gem_manager import (
     CHARACTER_SPECIALS,
     GemManagerView,
@@ -400,25 +393,14 @@ class ArtifactHubView(discord.ui.View):
             ]
             base_stats = selected.get("stats", {})
             effective_stats = artifact_effective_stats(selected)
-            primary_stat = artifact_primary_stat_key(selected)
             stat_parts = []
             for key, base_value in base_stats.items():
-                if not isinstance(base_value, (int, float)) or base_value <= 0:
-                    continue
                 actual_value = effective_stats.get(key, base_value)
-                unit = "%" if key == "defense_rate" else ""
-                label_name = GEM_MAIN_STAT_LABELS.get(key, key)
-                primary_marker = " (주)" if key == primary_stat else ""
                 stat_parts.append(
-                    f"{label_name}{primary_marker} +{base_value}{unit}"
-                    + (f" → **+{actual_value}{unit}**" if actual_value != base_value else "")
+                    f"{key} +{base_value}"
+                    + (f" → **+{actual_value}**" if actual_value != base_value else "")
                 )
             stat_text = ", ".join(stat_parts) or "없음"
-            main_effects = [
-                gem_main_stat_text(ensure_gem_stat_affixes(gem))
-                for gem in sockets
-                if isinstance(gem, dict)
-            ]
             embed.add_field(
                 name=f"{'🔒 ' if selected['metadata']['locked'] else ''}{selected.get('name', '아티팩트')} +{selected.get('level', 0)}",
                 value=(
@@ -426,7 +408,6 @@ class ArtifactHubView(discord.ui.View):
                     f"등급/소켓: {artifact_socket_count(selected)}성 · {artifact_socket_count(selected)}소켓\n"
                     f"고유 효과: {special}\n"
                     f"스탯: {stat_text}\n"
-                    f"젬 주 능력: {', '.join(main_effects) or '없음'}\n"
                     f"분해 예상: 유물 가루 {artifact_dust_value(selected)}개\n"
                     f"젬: {' / '.join(gem_lines)}"
                 ),

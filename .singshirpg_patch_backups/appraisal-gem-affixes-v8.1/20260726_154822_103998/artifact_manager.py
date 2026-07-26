@@ -1,16 +1,11 @@
 # artifact_manager.py
 # rollback-guard-appraisal-gems-v8
-# appraisal-gem-affixes-v8.1
 import discord
 import random
 import re
 import json
 import os
-from character import (
-    Character,
-    artifact_effective_stats,
-    artifact_primary_stat_key,
-)
+from character import Character, artifact_effective_stats
 from items import RARE_ITEMS, GUILD_ITEMS
 from artifacts import _make_description, apply_upgrade_bonus
 from fishing import FISH_TIERS
@@ -727,17 +722,13 @@ class ArtifactManageView(discord.ui.View):
         
         stats = art.get("stats", {})
         effective_stats = artifact_effective_stats(art)
-        primary_stat = artifact_primary_stat_key(art)
         stat_txt = []
         for k, v in stats.items():
             if v > 0:
                 k_name = {"max_hp":"체력","max_mental":"정신력","attack":"공격","defense":"방어","defense_rate":"방어율"}.get(k, k)
                 actual = effective_stats.get(k, v)
-                unit = "%" if k == "defense_rate" else ""
-                primary_marker = " (주 능력)" if k == primary_stat else ""
                 stat_txt.append(
-                    f"{k_name}{primary_marker}: {v}{unit}"
-                    + (f" → **{actual}{unit}**" if actual != v else "")
+                    f"{k_name}: {v}" + (f" → **{actual}**" if actual != v else "")
                 )
         embed.add_field(name="📊 현재 스탯", value="\n".join(stat_txt) or "없음", inline=False)
         

@@ -1,174 +1,30 @@
 # character.py
 # rollback-guard-appraisal-gems-v8
-# appraisal-gem-affixes-v8.1
-import hashlib
 import json
-import math
-import random
-
-
-GEM_MAIN_STAT_LABELS = {
-    "max_hp": "최대 체력",
-    "max_mental": "최대 정신력",
-    "attack": "공격력",
-    "defense": "방어력",
-    "defense_rate": "피해감소",
-}
-
-GEM_MAIN_STAT_ROLLS = {
-    "max_hp": {"flat": (12, 28), "percent": (3, 7)},
-    "max_mental": {"flat": (8, 18), "percent": (3, 7)},
-    "attack": {"flat": (1, 3), "percent": (4, 9)},
-    "defense": {"flat": (1, 3), "percent": (4, 9)},
-    # 피해감소는 퍼센트 배율이 아니라 퍼센트포인트만 사용한다.
-    "defense_rate": {"percentage_point": (1, 3)},
-}
-
-_GEM_MAIN_STAT_POPULATION = (
-    "max_hp",
-    "max_mental",
-    "attack",
-    "defense",
-    "defense_rate",
-)
-_GEM_MAIN_STAT_WEIGHTS = (25, 20, 20, 20, 15)
-
-
-def roll_gem_stat_affixes(gem, rng=None):
-    """Roll a character main-stat affix and a flat artifact auxiliary affix."""
-    if not isinstance(gem, dict):
-        return gem
-    rng = rng or random
-    main_stat = rng.choices(
-        _GEM_MAIN_STAT_POPULATION,
-        weights=_GEM_MAIN_STAT_WEIGHTS,
-        k=1,
-    )[0]
-    modes = tuple(GEM_MAIN_STAT_ROLLS[main_stat])
-    main_mode = rng.choice(modes)
-    low, high = GEM_MAIN_STAT_ROLLS[main_stat][main_mode]
-    gem["main_stat"] = main_stat
-    gem["main_stat_mode"] = main_mode
-    gem["main_stat_value"] = rng.randint(low, high)
-    gem["aux_stat_value"] = rng.randint(1, 3)
-    # v8 and older screens read stat_value. Keep it as a compatibility alias.
-    gem["stat_value"] = int(gem["aux_stat_value"])
-    return gem
-
-
-def ensure_gem_stat_affixes(gem):
-    """Give pre-v8.1 gems stable affixes without rerolling them on every load."""
-    if not isinstance(gem, dict):
-        return {}
-    required = ("main_stat", "main_stat_mode", "main_stat_value")
-    if not all(gem.get(key) is not None for key in required):
-        identity = "|".join(
-            str(gem.get(key, ""))
-            for key in ("id", "name", "stone", "crafted_by")
-        )
-        digest = hashlib.sha256(identity.encode("utf-8")).digest()
-        seeded_rng = random.Random(int.from_bytes(digest[:8], "big"))
-        legacy_aux = max(1, int(gem.get("aux_stat_value", gem.get("stat_value", 1)) or 1))
-        roll_gem_stat_affixes(gem, seeded_rng)
-        gem["aux_stat_value"] = legacy_aux
-        gem["stat_value"] = legacy_aux
-    else:
-        gem["aux_stat_value"] = max(
-            0,
-            int(gem.get("aux_stat_value", gem.get("stat_value", 0)) or 0),
-        )
-        gem["stat_value"] = int(gem["aux_stat_value"])
-    return gem
-
-
-def gem_main_stat_text(gem):
-    gem = ensure_gem_stat_affixes(gem)
-    stat = GEM_MAIN_STAT_LABELS.get(gem.get("main_stat"), str(gem.get("main_stat", "능력치")))
-    value = int(gem.get("main_stat_value", 0) or 0)
-    mode = gem.get("main_stat_mode")
-    if mode == "percent":
-        return f"{stat} +{value}%"
-    if mode == "percentage_point":
-        return f"{stat} +{value}%p"
-    return f"{stat} +{value}"
-
-
-def artifact_primary_stat_key(artifact):
-    """Return the host artifact stat affected by flat auxiliary gem values."""
-    if not isinstance(artifact, dict):
-        return None
-    stats = artifact.get("stats", {})
-    if not isinstance(stats, dict):
-        return None
-    metadata = artifact.get("metadata", {})
-    explicit = metadata.get("primary_stat") if isinstance(metadata, dict) else None
-    if explicit in stats and isinstance(stats.get(explicit), (int, float)) and stats[explicit] > 0:
-        return explicit
-    for key in ("max_hp", "max_mental", "attack", "defense", "defense_rate"):
-        value = stats.get(key, 0)
-        if isinstance(value, (int, float)) and value > 0:
-            return key
-    return None
 
 
 def artifact_effective_stats(artifact):
-    """Apply flat auxiliary gem values to the host artifact's primary stat."""
+    """Apply every socketed gem's auxiliary value to its host artifact stats."""
     if not isinstance(artifact, dict):
         return {}
     stats = artifact.get("stats", {})
     if not isinstance(stats, dict):
         return {}
-    effective = dict(stats)
-    primary = artifact_primary_stat_key(artifact)
-    if primary is None:
-        return effective
-    auxiliary = sum(
-        int(ensure_gem_stat_affixes(gem).get("aux_stat_value", 0) or 0)
+    stat_bonus_pct = sum(
+        int(gem.get("stat_value", 0) or 0)
         for gem in artifact.get("gems", [])
         if isinstance(gem, dict)
     )
-    if auxiliary > 0:
-        effective[primary] = int(effective.get(primary, 0) or 0) + auxiliary
-    return effective
-
-
-def gem_main_stat_bonuses(current_stats, artifacts):
-    """
-    Calculate gem main-stat bonuses after artifact auxiliary stats.
-
-    Percent bonuses use the post-artifact subtotal. Flat bonuses are then added.
-    Damage reduction is always a percentage-point addition.
-    """
-    totals = {
-        key: {"flat": 0, "percent": 0, "percentage_point": 0}
-        for key in GEM_MAIN_STAT_LABELS
-    }
-    for artifact in artifacts:
-        if not isinstance(artifact, dict):
-            continue
-        for gem in artifact.get("gems", []):
-            if not isinstance(gem, dict):
-                continue
-            gem = ensure_gem_stat_affixes(gem)
-            stat = gem.get("main_stat")
-            mode = gem.get("main_stat_mode")
-            if stat not in totals or mode not in totals[stat]:
-                continue
-            totals[stat][mode] += max(0, int(gem.get("main_stat_value", 0) or 0))
-
-    result = {}
-    for stat, values in totals.items():
-        if stat == "defense_rate":
-            result[stat] = values["percentage_point"]
-            continue
-        base = max(0, int(current_stats.get(stat, 0) or 0))
-        percent_bonus = (
-            math.ceil(base * values["percent"] / 100)
-            if base > 0 and values["percent"] > 0
-            else 0
+    if stat_bonus_pct <= 0:
+        return dict(stats)
+    return {
+        key: (
+            int(value) + round(int(value) * stat_bonus_pct / 100)
+            if isinstance(value, (int, float))
+            else value
         )
-        result[stat] = values["flat"] + percent_bonus
-    return result
+        for key, value in stats.items()
+    }
 
 # ==================================================================================
 # 1. 기본 플레이어 데이터 템플릿
@@ -248,7 +104,6 @@ class Character:
         self.has_artifact_buff = False # 전투 진입 시 스탯 중복 적용 방지
         self.runtime_cooldowns = {}    # 아티팩트 특수효과 쿨타임 관리
         self._applied_artifact_stats = []
-        self._applied_gem_main_stats = {}
 
     @classmethod
     def from_dict(cls, data):
@@ -334,36 +189,18 @@ class Character:
         if self.has_artifact_buff: 
             self.remove_battle_buffs()
         self._applied_artifact_stats = []
-        self._applied_gem_main_stats = {}
-        equipped_artifacts = []
 
         # 1. 일반 아티팩트
         if self.equipped_artifact and isinstance(self.equipped_artifact, dict):
             stats = artifact_effective_stats(self.equipped_artifact)
             self._add_stats(stats)
             self._applied_artifact_stats.append(stats)
-            equipped_artifacts.append(self.equipped_artifact)
 
         # 2. 각인 아티팩트 (중복 적용 가능)
         if self.equipped_engraved_artifact and isinstance(self.equipped_engraved_artifact, dict):
             stats = artifact_effective_stats(self.equipped_engraved_artifact)
             self._add_stats(stats)
             self._applied_artifact_stats.append(stats)
-            equipped_artifacts.append(self.equipped_engraved_artifact)
-
-        # 3. 젬 주 능력 보정은 보조 능력이 반영된 아티팩트 적용 뒤 계산한다.
-        post_artifact_stats = {
-            "max_hp": self.max_hp,
-            "max_mental": self.max_mental,
-            "attack": self.attack,
-            "defense": self.defense,
-            "defense_rate": self.defense_rate,
-        }
-        self._applied_gem_main_stats = gem_main_stat_bonuses(
-            post_artifact_stats,
-            equipped_artifacts,
-        )
-        self._add_stats(self._applied_gem_main_stats)
 
         self.has_artifact_buff = True
 
@@ -371,12 +208,9 @@ class Character:
         """전투 종료 후 아티팩트 스탯을 제거합니다."""
         if not self.has_artifact_buff: return
 
-        # 적용의 역순으로 제거해 백분율 계산과 체력 보정이 누적되지 않게 한다.
-        self._remove_stats(self._applied_gem_main_stats)
         for stats in self._applied_artifact_stats:
             self._remove_stats(stats)
 
-        self._applied_gem_main_stats = {}
         self._applied_artifact_stats = []
         self.has_artifact_buff = False
 

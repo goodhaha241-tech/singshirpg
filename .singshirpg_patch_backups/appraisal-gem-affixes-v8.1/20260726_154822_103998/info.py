@@ -1,11 +1,6 @@
 # info.py
-# appraisal-gem-affixes-v8.1
 import discord
-from character import (
-    Character,
-    artifact_effective_stats,
-    gem_main_stat_bonuses,
-)
+from character import Character
 from items import ITEM_CATEGORIES
 from data_manager import get_user_data
 from decorators import auto_defer
@@ -287,30 +282,16 @@ class InfoView(discord.ui.View):
 
         art = char_data.get("equipped_artifact")
         if art and isinstance(art, dict):
-            for key, value in artifact_effective_stats(art).items():
+            for key, value in art.get("stats", {}).items():
                 if value > 0:
                     art_stats[key] = art_stats.get(key, 0) + value
         
         # [신규] 각인 아티팩트 스탯 합산 (분리)
         engraved_art = char_data.get("equipped_engraved_artifact")
         if engraved_art and isinstance(engraved_art, dict):
-            for key, value in artifact_effective_stats(engraved_art).items():
+            for key, value in engraved_art.get("stats", {}).items():
                 if value > 0:
                     engraved_stats[key] = engraved_stats.get(key, 0) + value
-
-        equipped_artifacts = [
-            artifact
-            for artifact in (art, engraved_art)
-            if isinstance(artifact, dict)
-        ]
-        post_artifact_stats = {
-            "max_hp": int(char_data.get("hp", 0)) + art_stats["max_hp"] + engraved_stats["max_hp"],
-            "max_mental": int(char_data.get("max_mental", 90)) + art_stats["max_mental"] + engraved_stats["max_mental"],
-            "attack": int(char_data.get("attack", 0)) + art_stats["attack"] + engraved_stats["attack"],
-            "defense": int(char_data.get("defense", 0)) + art_stats["defense"] + engraved_stats["defense"],
-            "defense_rate": int(char_data.get("defense_rate", 0)) + art_stats["defense_rate"] + engraved_stats["defense_rate"],
-        }
-        gem_stats = gem_main_stat_bonuses(post_artifact_stats, equipped_artifacts)
 
         # 2. 버프 스탯 계산 (카페 음식 및 부적 등)
         buff_stats = {"max_hp": 0, "max_mental": 0, "attack": 0, "defense": 0, "defense_rate": 0, "success_rate": 0}
@@ -326,32 +307,31 @@ class InfoView(discord.ui.View):
             if s_name in buff_stats:
                 buff_stats[s_name] += b_info.get("value", 0)
 
-        # 표시 형식: 기본 → 아티팩트 보조 적용 → 젬 주 능력 → 음식·기타 버프
-        def format_stat(base, art, engraved, gem, buff, is_percent=False):
-            total = base + art + engraved + gem + buff
+        # 표시 형식 도우미 함수 (기본 + 아티팩트 + 각인 + 버프)
+        def format_stat(base, art, engraved, buff, is_percent=False):
+            total = base + art + engraved + buff
             unit = "%" if is_percent else ""
-            if art > 0 or engraved > 0 or gem > 0 or buff > 0:
+            if art > 0 or engraved > 0 or buff > 0:
                 parts = [str(base)]
                 if art > 0: parts.append(f"💍{art}")
                 if engraved > 0: parts.append(f"🔮{engraved}")
-                if gem > 0: parts.append(f"💎{gem}")
                 if buff > 0: parts.append(f"☕{buff}")
                 return f"{total}{unit} ({'+'.join(parts)}){unit}"
             return f"{total}{unit}"
 
         # HP 및 멘탈 표시
-        hp_val_str = format_stat(char_data.get('hp', 0), art_stats["max_hp"], engraved_stats["max_hp"], gem_stats["max_hp"], buff_stats["max_hp"])
+        hp_val_str = format_stat(char_data.get('hp', 0), art_stats["max_hp"], engraved_stats["max_hp"], buff_stats["max_hp"])
         hp_str = f"{char_data.get('current_hp')}/{hp_val_str}"
 
-        mental_val_str = format_stat(char_data.get('max_mental', 90), art_stats["max_mental"], engraved_stats["max_mental"], gem_stats["max_mental"], buff_stats["max_mental"])
+        mental_val_str = format_stat(char_data.get('max_mental', 90), art_stats["max_mental"], engraved_stats["max_mental"], buff_stats["max_mental"])
         mental_str = f"{char_data.get('current_mental')}/{mental_val_str}"
         
         embed.add_field(name="상태", value=f"❤️ HP: {hp_str}\n🔮 멘탈: {mental_str}", inline=True)
         
         # 전투 능력치 표시
-        atk_str = format_stat(char_data.get('attack', 0), art_stats["attack"], engraved_stats["attack"], gem_stats["attack"], buff_stats["attack"])
-        dfs_str = format_stat(char_data.get('defense', 0), art_stats["defense"], engraved_stats["defense"], gem_stats["defense"], buff_stats["defense"])
-        dr_str = format_stat(char_data.get('defense_rate', 0), art_stats["defense_rate"], engraved_stats["defense_rate"], gem_stats["defense_rate"], buff_stats["defense_rate"], True)
+        atk_str = format_stat(char_data.get('attack', 0), art_stats["attack"], engraved_stats["attack"], buff_stats["attack"])
+        dfs_str = format_stat(char_data.get('defense', 0), art_stats["defense"], engraved_stats["defense"], buff_stats["defense"])
+        dr_str = format_stat(char_data.get('defense_rate', 0), art_stats["defense_rate"], engraved_stats["defense_rate"], buff_stats["defense_rate"], True)
         sr_str = f"+{buff_stats['success_rate']}%" if buff_stats['success_rate'] > 0 else "0%"
 
         ability_value = f"⚔️ 공격력: {atk_str}\n🛡️ 방어력: {dfs_str}\n✨ 피해감소: {dr_str}\n🍀 조사보정: {sr_str}"

@@ -1,22 +1,14 @@
 # cumulative-v3-life-system
 # rollback-guard-appraisal-gems-v8
-# appraisal-gem-affixes-v8.1
 from __future__ import annotations
 
-import asyncio
 import random
 import uuid
 from typing import Any
 
 import discord
 
-from character import (
-    GEM_MAIN_STAT_LABELS,
-    ensure_gem_stat_affixes,
-    gem_main_stat_text,
-    roll_gem_stat_affixes,
-)
-from data_manager import StaleUserDataError, advance_world_turn, get_user_data
+from data_manager import advance_world_turn
 from navigation_v7 import attach_navigation
 
 # guild-pvp-stability-v7.2
@@ -32,8 +24,6 @@ APPRAISAL_TURNS = 30
 CRAFT_TURNS = 20
 MAX_TOOL_BREAKTHROUGH = 3
 MAX_EQUIPPED_TOOLS = 3
-
-_APPRAISAL_OPERATION_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 # category:
@@ -261,53 +251,17 @@ def ensure_life_data(user_data: dict[str, Any]) -> dict[str, Any]:
     appraisal_slots = life.get("appraisal_slots")
     if not isinstance(appraisal_slots, list):
         appraisal_slots = [legacy_appraisal if isinstance(legacy_appraisal, dict) else None]
-    # Keep the list object stable. Claim code may hold a reference to it while
-    # collection/achievement helpers call ensure_life_data again.
-    while len(appraisal_slots) < 3:
-        appraisal_slots.append(None)
-    del appraisal_slots[3:]
-    for index, task in enumerate(appraisal_slots):
-        if not isinstance(task, dict):
-            appraisal_slots[index] = None
-            continue
-        task.setdefault("task_id", uuid.uuid4().hex)
-    life["appraisal_slots"] = appraisal_slots
+    appraisal_slots = (appraisal_slots + [None, None, None])[:3]
+    life["appraisal_slots"] = [
+        task if isinstance(task, dict) else None for task in appraisal_slots
+    ]
     # Compatibility field for older views; v8 uses appraisal_slots exclusively.
     life["appraisal"] = None
-    life.setdefault("claimed_appraisal_ids", [])
     life.setdefault("stones", {})
     life.setdefault("gems", [])
-    for gem in life["gems"]:
-        if isinstance(gem, dict):
-            ensure_gem_stat_affixes(gem)
     life.setdefault("tools", {})
     life.setdefault("tool_overflow_duplicates", 0)
     life.setdefault("gem_crafting", None)
-    active_craft = life.get("gem_crafting")
-    if isinstance(active_craft, dict):
-        craft_affixes = {
-            "id": active_craft.get("id"),
-            "name": (active_craft.get("gem_def") or {}).get("name"),
-            "stone": active_craft.get("stone"),
-            "crafted_by": active_craft.get("worker_name"),
-            "stat_value": active_craft.get("stat_value", 1),
-            "aux_stat_value": active_craft.get(
-                "aux_stat_value",
-                active_craft.get("stat_value", 1),
-            ),
-            "main_stat": active_craft.get("main_stat"),
-            "main_stat_mode": active_craft.get("main_stat_mode"),
-            "main_stat_value": active_craft.get("main_stat_value"),
-        }
-        ensure_gem_stat_affixes(craft_affixes)
-        for key in (
-            "main_stat",
-            "main_stat_mode",
-            "main_stat_value",
-            "aux_stat_value",
-            "stat_value",
-        ):
-            active_craft[key] = craft_affixes[key]
     life.setdefault("vegetable_garden", {"plot": None, "produce": {}})
     life.setdefault("fish_farm", {"tank": None, "produce": {}})
     life.setdefault("starter_supply_claimed", {"garden": False, "fish_farm": False})
@@ -494,11 +448,7 @@ def start_appraisal(
         return False, "미감정 원석이 없습니다."
     inv[RAW_STONE_ITEM] = int(inv.get(RAW_STONE_ITEM, 0)) - 1
     now = int(user_data.get("myhome", {}).get("total_turns", 0) or 0)
-    slots[slot_index] = {
-        "task_id": uuid.uuid4().hex,
-        "start_turn": now,
-        "required_turns": APPRAISAL_TURNS,
-    }
+    slots[slot_index] = {"start_turn": now, "required_turns": APPRAISAL_TURNS}
     return True, (
         f"{slot_index + 1}번 슬롯에서 원석 감정을 시작했습니다. "
         f"공용 활동 {APPRAISAL_TURNS}턴이 필요합니다."
@@ -531,22 +481,14 @@ def claim_appraisal(
     slot_index = int(slot_index)
     if not 0 <= slot_index < len(slots):
         return False, "잘못된 감정 슬롯입니다."
-    task = slots[slot_index]
-    if not task:
+    if not slots[slot_index]:
         return False, "감정 중인 원석이 없습니다."
     progress, required = appraisal_progress(user_data, slot_index)
     if progress < required:
         return False, f"감정 진행 중입니다. ({progress}/{required})"
-    task_id = str(task.setdefault("task_id", uuid.uuid4().hex))
-    claimed_ids = life.setdefault("claimed_appraisal_ids", [])
-    if task_id in claimed_ids:
-        slots[slot_index] = None
-        return False, "이미 수령한 감정 결과입니다."
-    stone = str(task.setdefault("result_stone", random.choice(STONE_NAMES)))
+    stone = random.choice(STONE_NAMES)
     stones = life["stones"]
     stones[stone] = int(stones.get(stone, 0)) + 1
-    claimed_ids.append(task_id)
-    del claimed_ids[:-100]
     slots[slot_index] = None
     try:
         from progression_system_v6 import add_collection, ensure_progression
@@ -554,9 +496,6 @@ def claim_appraisal(
         progression = ensure_progression(user_data)
         if "first_appraisal" not in progression["achievements"]:
             progression["achievements"].append("first_appraisal")
-        notification_key = f"appraisal_ready_{slot_index}"
-        if notification_key in progression.get("notification_keys", []):
-            progression["notification_keys"].remove(notification_key)
     except ImportError:
         pass
     return True, stone
@@ -609,11 +548,8 @@ def start_gem_crafting(
     gem_def = gems[gem_index]
     low, high = gem_def["range"]
     life["stones"][stone_name] = int(life["stones"][stone_name]) - 1
-    craft_id = str(uuid.uuid4())
-    rolled_affixes = {"id": craft_id, "name": gem_def["name"], "stone": stone_name}
-    roll_gem_stat_affixes(rolled_affixes, random)
     craft = {
-        "id": craft_id,
+        "id": str(uuid.uuid4()),
         "stone": stone_name,
         "gem_def": gem_def,
         "worker_index": worker_index,
@@ -625,22 +561,14 @@ def start_gem_crafting(
         "max_heat": 0,
         "used_cool": False,
         "effect_value": random.randint(int(low), int(high)),
-        "main_stat": rolled_affixes["main_stat"],
-        "main_stat_mode": rolled_affixes["main_stat_mode"],
-        "main_stat_value": int(rolled_affixes["main_stat_value"]),
-        "aux_stat_value": int(rolled_affixes["aux_stat_value"]),
-        "stat_value": int(rolled_affixes["aux_stat_value"]),
+        "stat_value": random.randint(1, 3),
         "meteor_stacks": 0,
         "heat_uses": 0,
         "spirit_furnace_pending": False,
         "frost_success_bonus": 0,
         "effect_heat_override": None,
         "ice_plate_uses": 0,
-        "last_log": (
-            f"0성 젬 세공을 시작했습니다. "
-            f"주 능력: {gem_main_stat_text(rolled_affixes)} · "
-            f"보조 능력: 아티팩트 주 능력치 +{rolled_affixes['aux_stat_value']}"
-        ),
+        "last_log": "0성 젬 세공을 시작했습니다.",
     }
     life["gem_crafting"] = craft
     return True, f"{gem_def['name']} 세공을 시작했습니다."
@@ -705,20 +633,6 @@ def _consume_next_action_bonuses(craft: dict[str, Any]) -> None:
     craft["effect_heat_override"] = None
 
 
-def _main_stat_craft_gain(craft: dict[str, Any], heat: int) -> int:
-    """Make heat meaningfully affect the character-stat side of enchanting."""
-    stat = craft.get("main_stat")
-    mode = craft.get("main_stat_mode")
-    heat = max(0, int(heat))
-    if mode == "percentage_point":
-        return 1 + int(heat >= 6)
-    if mode == "percent":
-        return 1 + heat // 3
-    if stat in ("max_hp", "max_mental"):
-        return 2 + heat
-    return 1 + heat // 2
-
-
 def _finish_craft_if_needed(user_data: dict[str, Any]) -> dict[str, Any] | None:
     life = ensure_life_data(user_data)
     craft = life.get("gem_crafting")
@@ -734,11 +648,7 @@ def _finish_craft_if_needed(user_data: dict[str, Any]) -> dict[str, Any] | None:
         "summary": gem_def["summary"],
         "star": int(craft["star"]),
         "effect_value": int(craft["effect_value"]),
-        "main_stat": craft["main_stat"],
-        "main_stat_mode": craft["main_stat_mode"],
-        "main_stat_value": int(craft["main_stat_value"]),
-        "aux_stat_value": int(craft["aux_stat_value"]),
-        "stat_value": int(craft["aux_stat_value"]),
+        "stat_value": int(craft["stat_value"]),
         "crafted_by": craft.get("worker_name"),
     }
     life["gems"].append(result)
@@ -817,32 +727,24 @@ def perform_craft_action(user_data: dict[str, Any], action: str) -> tuple[bool, 
         effect_heat = craft.get("effect_heat_override")
         effect_heat = heat if effect_heat is None else int(effect_heat)
         if success:
-            # v8.1: 달굼이 마법부여 결과에도 분명히 체감되도록 상향한다.
-            gain = 1 + (effect_heat * 3 + 3) // 4
-            main_gain = _main_stat_craft_gain(craft, effect_heat)
+            gain = 1 + effect_heat // 2
             spirit = _tool_level(craft, "정령 화로")
             if craft.get("spirit_furnace_pending") and spirit is not None:
                 gain = max(1, round(gain * [1.10, 1.15, 1.20, 1.30][spirit]))
-                main_gain = max(1, round(main_gain * [1.10, 1.15, 1.20, 1.30][spirit]))
                 craft["spirit_furnace_pending"] = False
 
             brush = _tool_level(craft, "마력 붓")
             if brush is not None:
                 gain = max(1, round(gain * [1.10, 1.15, 1.20, 1.30][brush]))
                 if brush >= 2:
-                    main_gain += 1 if brush == 2 else 2
+                    craft["stat_value"] = int(craft["stat_value"]) + (1 if brush == 2 else 2)
 
             catalyst = _tool_level(craft, "폭주 촉매")
             if catalyst is not None:
                 gain = max(1, round(gain * [1.50, 1.55, 1.65, 1.80][catalyst]))
-                main_gain = max(1, round(main_gain * [1.25, 1.30, 1.40, 1.50][catalyst]))
 
             craft["effect_value"] = int(craft["effect_value"]) + gain
-            craft["main_stat_value"] = int(craft["main_stat_value"]) + main_gain
-            log = (
-                f"✨ 마법부여 성공: 고유 효과 +{gain} · "
-                f"{GEM_MAIN_STAT_LABELS.get(craft.get('main_stat'), '주 능력')} +{main_gain}"
-            )
+            log = f"✨ 마법부여 성공: 기본 효과 +{gain}"
         else:
             log = "✨ 마법부여 실패: 수치 변화 없음"
         _consume_next_action_bonuses(craft)
@@ -871,8 +773,7 @@ def perform_craft_action(user_data: dict[str, Any], action: str) -> tuple[bool, 
         effect_heat = craft.get("effect_heat_override")
         effect_heat = heat if effect_heat is None else int(effect_heat)
         if success:
-            # 보조 능력도 달굼에 따라 눈에 띄게 성장하지만 성공률은 함께 낮아진다.
-            gain = 1 + (effect_heat * 2 + 2) // 3
+            gain = 1 + effect_heat // 3
             spirit = _tool_level(craft, "정령 화로")
             if craft.get("spirit_furnace_pending") and spirit is not None:
                 gain = max(1, round(gain * [1.10, 1.15, 1.20, 1.30][spirit]))
@@ -889,9 +790,8 @@ def perform_craft_action(user_data: dict[str, Any], action: str) -> tuple[bool, 
             else:
                 log = "🔷 불순물 제거 성공"
 
-            craft["aux_stat_value"] = int(craft["aux_stat_value"]) + gain
-            craft["stat_value"] = int(craft["aux_stat_value"])
-            log += f": 아티팩트 주 능력치 보조 +{gain}"
+            craft["stat_value"] = int(craft["stat_value"]) + gain
+            log += f": 보조 수치 +{gain}"
         else:
             log = "🔷 불순물 제거 실패: 수치 변화 없음"
         _consume_next_action_bonuses(craft)
@@ -1229,34 +1129,6 @@ async def _defer(interaction: discord.Interaction) -> None:
 
 async def _save(save_func, author, user_data) -> None:
     await save_func(author.id, user_data)
-
-
-def _replace_user_snapshot(target: dict[str, Any], fresh: dict[str, Any]) -> None:
-    target.clear()
-    target.update(fresh)
-
-
-async def _run_latest_appraisal_operation(author, save_func, current_data, operation):
-    """
-    Reload, mutate and persist appraisal state as one per-user UI operation.
-
-    A completed slot is never reported as claimed until its cleared state has
-    committed. Old Discord messages therefore cannot replay a completed slot.
-    """
-    user_key = str(author.id)
-    lock = _APPRAISAL_OPERATION_LOCKS.setdefault(user_key, asyncio.Lock())
-    async with lock:
-        fresh = await get_user_data(author.id, getattr(author, "display_name", None))
-        ok, payload = operation(fresh)
-        if ok:
-            try:
-                await _save(save_func, author, fresh)
-            except StaleUserDataError:
-                newest = await get_user_data(author.id, getattr(author, "display_name", None))
-                _replace_user_snapshot(current_data, newest)
-                return False, "다른 화면에서 감정 상태가 먼저 변경되었습니다. 최신 상태를 다시 확인해주세요."
-        _replace_user_snapshot(current_data, fresh)
-        return ok, payload
 
 
 class PureHopeShopView(discord.ui.View):
@@ -1659,38 +1531,26 @@ class AppraisalView(_LifeChildView):
     @discord.ui.button(label="선택 슬롯 감정 시작", style=discord.ButtonStyle.primary, row=1)
     async def start(self, interaction, button):
         await _defer(interaction)
-        ok, msg = await _run_latest_appraisal_operation(
-            self.author,
-            self.save_func,
-            self.user_data,
-            lambda latest: start_appraisal(latest, self.selected_slot),
-        )
+        ok, msg = start_appraisal(self.user_data, self.selected_slot)
+        if ok:
+            await _save(self.save_func, self.author, self.user_data)
         await interaction.edit_original_response(embed=self.get_embed(msg), view=self)
 
     @discord.ui.button(label="선택 슬롯 결과 수령", style=discord.ButtonStyle.success, row=1)
     async def claim(self, interaction, button):
         await _defer(interaction)
-        ok, msg = await _run_latest_appraisal_operation(
-            self.author,
-            self.save_func,
-            self.user_data,
-            lambda latest: claim_appraisal(latest, self.selected_slot),
-        )
+        ok, msg = claim_appraisal(self.user_data, self.selected_slot)
         if ok:
+            await _save(self.save_func, self.author, self.user_data)
             msg = f"✅ 감정 완료: **{msg}**"
         await interaction.edit_original_response(embed=self.get_embed(msg), view=self)
 
     @discord.ui.button(label="완료 결과 모두 수령", style=discord.ButtonStyle.success, row=2)
     async def claim_all(self, interaction, button):
         await _defer(interaction)
-        ok, results = await _run_latest_appraisal_operation(
-            self.author,
-            self.save_func,
-            self.user_data,
-            claim_all_appraisals,
-        )
-        if isinstance(results, str):
-            results = [results]
+        ok, results = claim_all_appraisals(self.user_data)
+        if ok:
+            await _save(self.save_func, self.author, self.user_data)
         await interaction.edit_original_response(
             embed=self.get_embed("\n".join(results)),
             view=self,
@@ -2076,15 +1936,7 @@ class GemCraftingView(_LifeChildView):
         chances = _craft_chances(self.user_data, craft)
         embed.add_field(name="대상", value=f"{craft['gem_def']['name']} · {craft['star']}성", inline=False)
         embed.add_field(name="진행", value=f"{craft['turn']}/{CRAFT_TURNS}턴 · 달굼 {craft['heat']}", inline=True)
-        embed.add_field(
-            name="현재 수치",
-            value=(
-                f"고유 효과 **{craft['effect_value']}**\n"
-                f"주 능력 **{gem_main_stat_text(craft)}**\n"
-                f"보조 능력 **아티팩트 주 능력치 +{craft['aux_stat_value']}**"
-            ),
-            inline=True,
-        )
+        embed.add_field(name="수치", value=f"기본 효과 {craft['effect_value']} · 보조 수치 {craft['stat_value']}", inline=True)
         embed.add_field(name="담당", value=craft.get("worker_name", "-"), inline=True)
         tools = [f"{name} {level}돌파" for name, level in craft.get("tools", {}).items()]
         embed.add_field(name="도구", value="\n".join(tools) or "미사용", inline=False)
