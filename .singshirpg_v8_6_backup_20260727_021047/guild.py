@@ -11,13 +11,11 @@ from discord.ui import View, Select, Button, Modal, TextInput
 from data_manager import (
     get_user_data, get_db_pool, save_user_data, mutate_user_data,
     get_user_guild_info, create_guild, join_guild_by_id,
-    deposit_guild_item, store_guild_item, craft_guild_workshop_item,
-    deposit_guild_artifact, get_guild_logs, get_guild_list,
+    deposit_guild_item, deposit_guild_artifact, get_guild_logs, get_guild_list,
     get_guild_items, withdraw_guild_item, craft_guild_item,
     consume_guild_raid_supplies, add_guild_contribution,
     get_or_create_daily_guild_shop, buy_guild_shop_item,
-    advance_world_turn, GUILD_RANK_THRESHOLDS, GUILD_DONATION_EFFICIENCY,
-    guild_level_for_contribution,
+    advance_world_turn
 )
 from items import ITEM_CATEGORIES
 from monsters import RAID_BOSS_DATA, Monster
@@ -34,9 +32,6 @@ from gem_effects import (
 # guild-pvp-stability-v7.2
 # raid-private-command-panel-v8.5
 # guild-shop-training-v8.6
-# guild-workshop-warehouse-v8.6.1
-# guild-rank-training-score-v8.6.2
-# guild-inline-navigation-v8.6.3
 
 # --- 설정 데이터 (items.py 기준 통일) ---
 ITEM_TOKEN_VALUES = {
@@ -53,62 +48,8 @@ ITEM_TOKEN_VALUES = {
     "녹슨 철": {"iron": 5},
 }
 
-GUILD_WORKSHOP_RECIPES = {
-    "목재": {
-        "need": {"평범한 나무판자": 3},
-        "description": "평범한 판자를 길드 규격의 목재로 가공합니다.",
-    },
-    "철괴": {
-        "need": {"녹슨 철": 3, "반짝가루": 1},
-        "description": "녹슨 철을 정련해 쓸 수 있는 철괴로 만듭니다.",
-    },
-    "중급 마력석": {
-        "need": {"하급 마력석": 3, "반짝가루": 1},
-        "description": "하급 마력석의 마력을 한 덩어리로 압축합니다.",
-    },
-    "주술석": {
-        "need": {"악몽 파편": 2, "빛구슬": 2},
-        "description": "불안정한 파편을 길드용 주술석으로 안정화합니다.",
-    },
-    "구름 블럭": {
-        "need": {"구름 한 줌": 3, "중급 마력석": 1},
-        "description": "흩어진 구름을 단단한 제작 블럭으로 굳힙니다.",
-    },
-    "양질 목재": {
-        "need": {"목재": 4, "사랑나무 가지": 1},
-        "description": "기본 목재를 상위 제작용 목재로 다듬습니다.",
-    },
-    "강화 철강": {
-        "need": {"철괴": 4, "반짝가루": 2},
-        "description": "철괴를 반복 정련해 강화 철강으로 만듭니다.",
-    },
-    "상급 마력석": {
-        "need": {"중급 마력석": 4, "반짝가루": 2},
-        "description": "중급 마력석을 한층 더 강하게 응축합니다.",
-    },
-    "고급 주술석": {
-        "need": {"주술석": 4, "상급 마력석": 1},
-        "description": "주술석의 불안정성을 상급 마력으로 고정합니다.",
-    },
-    "응결 구름 블럭": {
-        "need": {"구름 블럭": 4, "상급 마력석": 1},
-        "description": "구름 블럭을 고밀도로 응결한 희귀 제작 재료입니다.",
-    },
-}
-
-GUILD_STORABLE_ITEMS = set(GUILD_WORKSHOP_RECIPES)
-for _recipe in GUILD_WORKSHOP_RECIPES.values():
-    GUILD_STORABLE_ITEMS.update(_recipe["need"])
-
-RANK_NAMES = {level: name for level, name, _ in GUILD_RANK_THRESHOLDS}
-RAID_RANK_KEYS = {
-    1: "Bronze", 2: "Bronze", 3: "Silver", 4: "Gold", 5: "Platinum",
-    6: "Platinum", 7: "Diamond", 8: "Diamond", 9: "Diamond", 10: "Diamond",
-}
-GUILD_SHOP_SLOT_COUNT = {
-    1: 3, 2: 4, 3: 5, 4: 6, 5: 7,
-    6: 8, 7: 9, 8: 10, 9: 11, 10: 12,
-}
+RANK_NAMES = {1: "브론즈", 2: "실버", 3: "골드", 4: "플래티넘", 5: "다이아몬드"}
+RAID_RANK_KEYS = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum", 5: "Diamond"}
 
 GUILD_CRAFT_RECIPES = {
     "길드 응급상자": {
@@ -139,63 +80,50 @@ GUILD_SHOP_PREMIUM = [
         "item_name": "원석", "category": "material",
         "cost": {"iron": 60, "magic": 60, "sorcery": 40},
         "description": "감정과 젬 세공에 사용하는 미감정 원석입니다.",
-        "min_rank": 3,
     },
     {
         "item_name": "순수한 희망", "category": "consumable",
         "cost": {"wood": 80, "iron": 80, "magic": 100, "sorcery": 100},
         "description": "세공 도구 뽑기 1회에 사용하는 귀한 재화입니다.",
-        "min_rank": 5,
     },
 ]
 GUILD_SHOP_HIGH_TIER = [
-    {"item_name": "양질 목재", "category": "material", "cost": {"wood": 25, "sorcery": 8}, "description": "상위 제작용 목재입니다.", "min_rank": 1},
-    {"item_name": "강화 철강", "category": "material", "cost": {"iron": 25, "magic": 8}, "description": "상위 제작용 금속입니다.", "min_rank": 2},
-    {"item_name": "상급 마력석", "category": "material", "cost": {"magic": 25, "iron": 8}, "description": "응축된 상급 마력 자원입니다.", "min_rank": 3},
-    {"item_name": "고급 주술석", "category": "material", "cost": {"sorcery": 25, "wood": 8}, "description": "고급 주술 제작에 쓰는 자원입니다.", "min_rank": 4},
-    {"item_name": "응결 구름 블럭", "category": "material", "cost": {"wood": 30, "magic": 15}, "description": "희귀 제작에 쓰는 응결 재료입니다.", "min_rank": 5},
+    {"item_name": "양질 목재", "category": "material", "cost": {"wood": 25, "sorcery": 8}, "description": "상위 제작용 목재입니다."},
+    {"item_name": "강화 철강", "category": "material", "cost": {"iron": 25, "magic": 8}, "description": "상위 제작용 금속입니다."},
+    {"item_name": "상급 마력석", "category": "material", "cost": {"magic": 25, "iron": 8}, "description": "응축된 상급 마력 자원입니다."},
+    {"item_name": "고급 주술석", "category": "material", "cost": {"sorcery": 25, "wood": 8}, "description": "고급 주술 제작에 쓰는 자원입니다."},
+    {"item_name": "응결 구름 블럭", "category": "material", "cost": {"wood": 30, "magic": 15}, "description": "희귀 제작에 쓰는 응결 재료입니다."},
 ]
 GUILD_SHOP_SUPPLIES = [
-    {
-        "item_name": name,
-        "category": "consumable",
-        "cost": dict(info["cost"]),
-        "description": info["description"],
-        "min_rank": index + 1,
-    }
-    for index, (name, info) in enumerate(GUILD_CRAFT_RECIPES.items())
+    {"item_name": name, "category": "consumable", "cost": dict(info["cost"]), "description": info["description"]}
+    for name, info in GUILD_CRAFT_RECIPES.items()
 ]
 GUILD_SHOP_SEEDS = [
-    {"item_name": name, "category": "seed", "cost": cost, "description": "채소밭 재배를 시작하는 종묘입니다.", "min_rank": min_rank}
-    for name, cost, min_rank in [
-        ("새벽 감자 씨앗", {"wood": 6}, 1), ("별빛 토마토 씨앗", {"wood": 8}, 1),
-        ("꿈양배추 씨앗", {"wood": 12, "magic": 3}, 2), ("구름 양파 씨앗", {"wood": 8}, 2),
-        ("무지개 당근 씨앗", {"wood": 14, "magic": 4}, 3), ("시간 호박 씨앗", {"wood": 20, "magic": 8}, 4),
-        ("달빛 버섯 종균", {"wood": 15, "sorcery": 5}, 5), ("악몽 고추 씨앗", {"wood": 18, "sorcery": 8}, 6),
+    {"item_name": name, "category": "seed", "cost": cost, "description": "채소밭 재배를 시작하는 종묘입니다."}
+    for name, cost in [
+        ("새벽 감자 씨앗", {"wood": 6}), ("별빛 토마토 씨앗", {"wood": 8}),
+        ("꿈양배추 씨앗", {"wood": 12, "magic": 3}), ("구름 양파 씨앗", {"wood": 8}),
+        ("무지개 당근 씨앗", {"wood": 14, "magic": 4}), ("시간 호박 씨앗", {"wood": 20, "magic": 8}),
+        ("달빛 버섯 종균", {"wood": 15, "sorcery": 5}), ("악몽 고추 씨앗", {"wood": 18, "sorcery": 8}),
     ]
 ]
 GUILD_SHOP_FINGERLINGS = [
-    {"item_name": name, "category": "fingerling", "cost": cost, "description": "양어장 양식을 시작하는 어린 개체입니다.", "min_rank": min_rank}
-    for name, cost, min_rank in [
-        ("빵잉어 치어", {"iron": 6}, 1), ("버들치 치어", {"iron": 9}, 1),
-        ("모래무지 치어", {"iron": 8}, 2), ("등불오징어 유생", {"iron": 15, "magic": 5}, 3),
-        ("로운새우 치하", {"iron": 7}, 2), ("어름치 치어", {"iron": 20, "magic": 7}, 4),
-        ("별비늘돔 치어", {"iron": 25, "magic": 12}, 5), ("악몽 메기 치어", {"iron": 20, "sorcery": 8}, 6),
+    {"item_name": name, "category": "fingerling", "cost": cost, "description": "양어장 양식을 시작하는 어린 개체입니다."}
+    for name, cost in [
+        ("빵잉어 치어", {"iron": 6}), ("버들치 치어", {"iron": 9}),
+        ("모래무지 치어", {"iron": 8}), ("등불오징어 유생", {"iron": 15, "magic": 5}),
+        ("로운새우 치하", {"iron": 7}), ("어름치 치어", {"iron": 20, "magic": 7}),
+        ("별비늘돔 치어", {"iron": 25, "magic": 12}), ("악몽 메기 치어", {"iron": 20, "sorcery": 8}),
     ]
 ]
 
 TRAINING_REWARD_TIERS = [
     (0, {"money": 5_000}, "참가 보상"),
-    (100, {"money": 10_000, "pt": 100}, "100점"),
-    (250, {"money": 20_000, "pt": 250}, "250점"),
-    (500, {"money": 35_000, "pt": 450, "contribution": 10}, "500점"),
-    (750, {"money": 50_000, "pt": 700, "items": {"상급 마력석": 1}}, "750점"),
-    (1_000, {"money": 70_000, "pt": 1_000, "items": {"순수한 희망": 1}, "contribution": 15}, "1,000점"),
-    (1_500, {"money": 100_000, "pt": 1_500, "items": {"응결 구름 블럭": 1}}, "1,500점"),
-    (2_000, {"money": 140_000, "pt": 2_000, "items": {"원석": 1}, "contribution": 20}, "2,000점"),
-    (3_000, {"money": 200_000, "pt": 3_000, "items": {"원석": 1, "상급 마력석": 2}}, "3,000점"),
-    (5_000, {"money": 300_000, "pt": 5_000, "items": {"순수한 희망": 1}, "contribution": 30}, "5,000점"),
-    (8_000, {"money": 500_000, "pt": 8_000, "items": {"원석": 2}, "contribution": 50}, "8,000점"),
+    (5, {"money": 10_000, "pt": 100}, "유효 주사위 5개"),
+    (10, {"money": 20_000, "pt": 250}, "유효 주사위 10개"),
+    (15, {"money": 30_000, "pt": 400, "items": {"상급 마력석": 1}, "contribution": 10}, "유효 주사위 15개"),
+    (20, {"money": 50_000, "pt": 600, "items": {"순수한 희망": 1}}, "유효 주사위 20개"),
+    (25, {"money": 80_000, "pt": 1_000, "items": {"원석": 1}, "contribution": 20}, "유효 주사위 25개"),
 ]
 
 
@@ -206,79 +134,19 @@ def _format_token_cost(cost, multiplier=1):
     )
 
 
-def _message_command_owner_id(interaction):
-    """메시지를 처음 연 이용자 ID를 상호작용 메타데이터나 푸터에서 찾는다."""
-    message = getattr(interaction, "message", None)
-    for attr in ("interaction_metadata", "interaction"):
-        metadata = getattr(message, attr, None)
-        user = getattr(metadata, "user", None)
-        if user is not None and getattr(user, "id", None) is not None:
-            return int(user.id)
-    embeds = getattr(message, "embeds", None) or []
-    if embeds:
-        footer_text = str(getattr(getattr(embeds[0], "footer", None), "text", "") or "")
-        marker = "owner:"
-        if marker in footer_text:
-            raw = footer_text.rsplit(marker, 1)[1].split()[0].strip()
-            if raw.isdigit():
-                return int(raw)
-    return None
-
-
-def _rank_threshold_info(total_contribution):
-    total = max(0, int(total_contribution or 0))
-    level = guild_level_for_contribution(total)
-    current = next(row for row in GUILD_RANK_THRESHOLDS if row[0] == level)
-    next_rank = next((row for row in GUILD_RANK_THRESHOLDS if row[0] == level + 1), None)
-    return current, next_rank
-
-
-def _donation_efficiency(level):
-    return GUILD_DONATION_EFFICIENCY.get(max(1, min(10, int(level or 1))), 100)
-
-
-def _scale_donation_rewards(rewards, level):
-    efficiency = _donation_efficiency(level)
-    return {
-        key: (max(0, int(value)) * efficiency + 99) // 100
-        for key, value in rewards.items()
-        if int(value) > 0
-    }
-
-
-def _build_daily_shop_rotation(level, day_key):
-    """Build a deterministic daily roster whose size and pool grow by guild rank."""
-    level = max(1, min(10, int(level or 1)))
-    rng = random.Random(f"{day_key}:{level}:guild-shop-v2")
-    unlocked_high = [item for item in GUILD_SHOP_HIGH_TIER if item["min_rank"] <= level]
-    unlocked_seeds = [item for item in GUILD_SHOP_SEEDS if item["min_rank"] <= level]
-    unlocked_fish = [item for item in GUILD_SHOP_FINGERLINGS if item["min_rank"] <= level]
-    unlocked_all = [
-        item
-        for item in (
-            GUILD_SHOP_PREMIUM
-            + GUILD_SHOP_HIGH_TIER
-            + GUILD_SHOP_SEEDS
-            + GUILD_SHOP_FINGERLINGS
-        )
-        if item["min_rank"] <= level
+def _build_daily_shop_rotation():
+    """Five persisted slots: premium, two materials, seed and fingerling."""
+    pools = [
+        random.choice(GUILD_SHOP_PREMIUM),
+        *random.sample(GUILD_SHOP_HIGH_TIER, 2),
+        random.choice(GUILD_SHOP_SEEDS),
+        random.choice(GUILD_SHOP_FINGERLINGS),
     ]
-
-    selected = [
-        rng.choice(unlocked_high),
-        rng.choice(unlocked_seeds),
-        rng.choice(unlocked_fish),
-    ]
-    selected_names = {item["item_name"] for item in selected}
-    extras = [item for item in unlocked_all if item["item_name"] not in selected_names]
-    rng.shuffle(extras)
-    selected.extend(extras[:max(0, GUILD_SHOP_SLOT_COUNT[level] - len(selected))])
-
     result = []
-    for item in selected[:GUILD_SHOP_SLOT_COUNT[level]]:
+    for item in pools:
         row = dict(item)
         row["cost"] = dict(item["cost"])
-        row["stock"] = rng.randint(20, 100)
+        row["stock"] = random.randint(20, 100)
         result.append(row)
     return result
 
@@ -323,210 +191,141 @@ async def advance_guild_world_turn(user, amount=1):
 # 1. 물자 관리 (입/출고 통합)
 # ==================================================================================
 
-class InventoryManageView(discord.ui.View):
-    """재고를 보면서 수량 버튼으로 납품하거나 공용 창고에 반입한다."""
-    PER_PAGE = 4
+class QuantityModal(Modal):
+    """수량 입력 모달 (입고/출고 공용)"""
+    def __init__(self, mode, item_name, guild_id, user_data, parent_view):
+        title = "납품 수량 입력" if mode == "deposit" else "수령 수량 입력"
+        super().__init__(title=title)
+        self.mode = mode
+        self.item_name = item_name
+        self.guild_id = guild_id
+        self.user_data = user_data
+        self.parent_view = parent_view
+        self.amount = TextInput(label="수량", placeholder="숫자만 입력하세요", min_length=1)
+        self.add_item(self.amount)
 
-    def __init__(self, author, guild_info, mode="donate"):
-        super().__init__(timeout=180)
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            qty = int(self.amount.value)
+            if qty <= 0: raise ValueError
+        except ValueError:
+            return await interaction.response.send_message("❌ 올바른 숫자를 입력하세요.", ephemeral=True)
+
+        if self.mode == "deposit":
+            # 입고 로직
+            inventory = self.user_data.get("inventory", {})
+            if inventory.get(self.item_name, 0) < qty:
+                return await interaction.response.send_message(f"❌ 보유 수량이 부족합니다. (보유: {inventory.get(self.item_name, 0)}개)", ephemeral=True)
+
+            cat = "material"
+            for c_name, items in ITEM_CATEGORIES.items():
+                if self.item_name in items:
+                    if c_name == "consumable": cat = "consumable"
+                    break
+            
+            tokens_per_unit = ITEM_TOKEN_VALUES.get(self.item_name, {"wood": 1})
+            total_tokens = {k: v * qty for k, v in tokens_per_unit.items()}
+            
+            success, msg = await deposit_guild_item(interaction.user.id, self.guild_id, self.item_name, qty, cat, total_tokens)
+        else:
+            # 출고 로직
+            success, msg = await withdraw_guild_item(interaction.user.id, self.guild_id, self.item_name, qty)
+
+        if success and self.mode == "deposit":
+            await advance_guild_mission(interaction.user, "donate", sum(total_tokens.values()))
+        await interaction.response.send_message(msg, ephemeral=True)
+        if success and hasattr(self.parent_view, 'refresh'):
+            await self.parent_view.refresh(interaction)
+
+class InventoryManageView(discord.ui.View):
+    """길드 물자 관리 뷰 (입고/출고 탭)"""
+    def __init__(self, author, guild_info, mode="deposit"):
+        super().__init__(timeout=60)
         self.author = author
         self.guild_info = guild_info
-        self.mode = mode if mode in {"donate", "store"} else "donate"
-        self.user_data = {}
-        self.guild_stock = {}
-        self.items = []
+        self.mode = mode # 'deposit' or 'withdraw'
+        self.user_data = None
         self.page = 0
-        self.selected_item = None
-        self.quantity = 0
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.author.id:
             return True
-        await interaction.response.send_message("본인이 연 길드 물자 화면만 조작할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("본인의 길드 납품 화면만 조작할 수 있습니다.", ephemeral=True)
         return False
 
-    def _eligible_items(self):
-        inventory = self.user_data.get("inventory", {})
-        allowed = ITEM_TOKEN_VALUES if self.mode == "donate" else GUILD_STORABLE_ITEMS
-        return sorted(
-            (name, int(count))
-            for name, count in inventory.items()
-            if name in allowed and int(count or 0) > 0
-        )
-
-    def _item_category(self, item_name):
-        return "consumable" if item_name in ITEM_CATEGORIES.get("consumable", []) else "material"
-
     async def setup_view(self):
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
-        current_guild = await get_user_guild_info(self.author.id)
-        if current_guild:
-            self.guild_info = current_guild
-        rows = await get_guild_items(self.guild_info["guild_id"])
-        self.guild_stock = {
-            row["item_name"]: int(row.get("count", 0) or 0)
-            for row in rows
-        }
-        self.items = self._eligible_items()
-        total_pages = max(1, (len(self.items) + self.PER_PAGE - 1) // self.PER_PAGE)
-        self.page = max(0, min(self.page, total_pages - 1))
-
-        inventory = self.user_data.get("inventory", {})
-        if self.selected_item not in dict(self.items):
-            self.selected_item = None
-            self.quantity = 0
-        elif self.selected_item:
-            self.quantity = min(self.quantity, int(inventory.get(self.selected_item, 0)))
-
         self.clear_items()
-        donate = Button(
-            label="♻️ 자원 납품",
-            style=discord.ButtonStyle.primary if self.mode == "donate" else discord.ButtonStyle.secondary,
-            row=0,
-        )
-        store = Button(
-            label="📥 창고 반입",
-            style=discord.ButtonStyle.primary if self.mode == "store" else discord.ButtonStyle.secondary,
-            row=0,
-        )
-        donate.callback = self.switch_to_donate
-        store.callback = self.switch_to_store
-        self.add_item(donate)
-        self.add_item(store)
+        self.user_data = await get_user_data(self.author.id)
+        
+        # 상단 탭 버튼
+        btn_dep = Button(label="📥 입고(납품)", style=discord.ButtonStyle.primary if self.mode=="deposit" else discord.ButtonStyle.secondary)
+        btn_dep.callback = self.switch_to_deposit
+        self.add_item(btn_dep)
+        
+        # 공용 길드의 자원은 개인 인벤토리로 출고하지 않는다.
 
-        visible = self.items[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
-        if not visible:
-            self.add_item(Button(label="옮길 수 있는 재고가 없습니다", disabled=True, row=1))
-        for item_name, count in visible:
-            selected = item_name == self.selected_item
-            button = Button(
-                label=f"{item_name} ×{count}",
-                style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
-                row=1,
-            )
+        # 아이템 선택 메뉴
+        if self.mode == "deposit":
+            inventory = self.user_data.get("inventory", {})
+            items = [(name, count) for name, count in inventory.items() if name in ITEM_TOKEN_VALUES and count > 0]
+            placeholder = "납품할 자재 선택"
+        else:
+            # 출고: 길드 인벤토리 조회
+            g_items = await get_guild_items(self.guild_info['guild_id'])
+            items = [(i['item_name'], i['count']) for i in g_items]
+            placeholder = "꺼낼 자재 선택"
 
-            async def select_item(interaction, name=item_name):
-                self.selected_item = name
-                self.quantity = min(1, int(self.user_data.get("inventory", {}).get(name, 0)))
-                await self.setup_view()
-                await interaction.response.edit_message(embed=await self.get_embed(), view=self)
-
-            button.callback = select_item
-            self.add_item(button)
-
-        previous = Button(label="이전", disabled=self.page == 0, row=2)
-        counter = Button(label=f"{self.page + 1}/{total_pages}", disabled=True, row=2)
-        following = Button(label="다음", disabled=self.page >= total_pages - 1, row=2)
-        previous.callback = self.prev_page
-        following.callback = self.next_page
-        self.add_item(previous)
-        self.add_item(counter)
-        self.add_item(following)
-
-        for label, delta in (("-10", -10), ("-1", -1), ("+1", 1), ("+10", 10)):
-            button = Button(label=label, disabled=not self.selected_item, row=3)
-
-            async def adjust(interaction, amount=delta):
-                stock = int(self.user_data.get("inventory", {}).get(self.selected_item, 0))
-                self.quantity = max(0, min(stock, self.quantity + amount))
-                await self.setup_view()
-                await interaction.response.edit_message(embed=await self.get_embed(), view=self)
-
-            button.callback = adjust
-            self.add_item(button)
-
-        confirm = Button(
-            label="납품 확정" if self.mode == "donate" else "반입 확정",
-            style=discord.ButtonStyle.success,
-            disabled=not self.selected_item or self.quantity <= 0,
-            row=4,
-        )
-        reset = Button(label="수량 초기화", style=discord.ButtonStyle.secondary, disabled=not self.selected_item, row=4)
-        back = Button(label="길드로 돌아가기", style=discord.ButtonStyle.secondary, row=4)
-        confirm.callback = self.confirm
-        reset.callback = self.reset_quantity
+        if not items:
+            self.add_item(Button(label="가능한 아이템이 없습니다", disabled=True, row=1))
+        else:
+            options = []
+            visible = items[self.page * 8:self.page * 8 + 8]
+            for name, count in visible:
+                options.append(discord.SelectOption(label=f"{name} (x{count})", value=name))
+            
+            select = Select(placeholder=placeholder, options=options, row=1)
+            select.callback = self.on_select
+            self.add_item(select)
+            if len(items) > 8:
+                prev = Button(label="이전", disabled=self.page == 0, row=2)
+                nxt = Button(label="다음", disabled=(self.page + 1) * 8 >= len(items), row=2)
+                prev.callback = self.prev_page
+                nxt.callback = self.next_page
+                self.add_item(prev); self.add_item(nxt)
+        back = Button(label="길드로 돌아가기", style=discord.ButtonStyle.secondary, row=3)
         back.callback = self.back_to_guild
-        self.add_item(confirm)
-        self.add_item(reset)
         self.add_item(back)
 
     async def get_embed(self):
-        if self.mode == "donate":
-            title = "♻️ 길드 자원 납품"
-            description = (
-                "개인 아이템을 길드 공용 자원으로 **환산해 소모**합니다.\n"
-                "환산 자원 1점마다 개인 공헌도도 1 올라갑니다.\n"
-                f"현재 길드 등급 납품 효율: **{_donation_efficiency(self.guild_info.get('level', 1))}%**"
-            )
-            color = discord.Color.green()
-        else:
-            title = "📥 길드 창고 반입"
-            description = (
-                "개인 아이템을 환산하지 않고 공용 창고로 그대로 옮깁니다.\n"
-                "반입한 실물 재료는 길드 제작소의 `공용 재료` 제작에 사용됩니다."
-            )
-            color = discord.Color.blue()
-        embed = discord.Embed(title=title, description=description, color=color)
-
-        visible = self.items[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
         lines = []
-        for item_name, count in visible:
-            suffix = ""
-            if self.mode == "donate":
-                scaled = _scale_donation_rewards(
-                    ITEM_TOKEN_VALUES[item_name],
-                    self.guild_info.get("level", 1),
-                )
-                suffix = " → " + _format_token_cost(scaled)
-            else:
-                suffix = f" · 공용 {self.guild_stock.get(item_name, 0)}"
-            lines.append(f"• **{item_name}**: 개인 {count}{suffix}")
+        for item_name, rewards in ITEM_TOKEN_VALUES.items():
+            conversion = ", ".join(
+                f"{TOKEN_EMOJIS.get(key, '')}{TOKEN_LABELS.get(key, key)} +{int(value)}"
+                for key, value in rewards.items()
+            )
+            lines.append(f"**{item_name} ×1** → {conversion}")
+        embed = discord.Embed(
+            title="📥 길드 자재 납품",
+            description=(
+                "아래 목록에서 보유 자재를 선택해 납품합니다.\n"
+                "환산된 **공용 자원 1점마다 개인 공헌도도 1** 올라갑니다."
+            ),
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="📊 재료별 환산표", value="\n".join(lines), inline=False)
         embed.add_field(
-            name="현재 선택 가능한 재고",
-            value="\n".join(lines) if lines else "조건에 맞는 개인 재고가 없습니다.",
+            name="🏅 공헌도 획득 안내",
+            value=(
+                "• 자재 납품: 환산 자원 합계만큼\n"
+                "• 일일 길드 미션 보상 수령: 미션당 +20\n"
+                "• 레이드 성공: +100 / 실패: +20\n"
+                "• 수련 점수 15·25 도달: 각각 +10·+20 (일일 최초)\n"
+                "• 상시 보급품 구매: 제작 수량 1개당 +10\n"
+                "• 로테이션 상품 구매 자체는 공헌도를 주지 않습니다."
+            ),
             inline=False,
         )
-
-        if self.selected_item:
-            owned = int(self.user_data.get("inventory", {}).get(self.selected_item, 0))
-            detail = [
-                f"아이템: **{self.selected_item}**",
-                f"선택 수량: **{self.quantity}개**",
-                f"처리 후 개인 재고: **{owned - self.quantity}개**",
-            ]
-            if self.mode == "donate":
-                base_rewards = {
-                    key: int(value) * self.quantity
-                    for key, value in ITEM_TOKEN_VALUES[self.selected_item].items()
-                }
-                rewards = _scale_donation_rewards(
-                    base_rewards,
-                    self.guild_info.get("level", 1),
-                )
-                detail.append(f"획득 공용 자원: {_format_token_cost(rewards) if self.quantity else '없음'}")
-                detail.append(f"획득 공헌도: **{sum(rewards.values())}**")
-                detail.append(
-                    f"현재 등급 효율: **{_donation_efficiency(self.guild_info.get('level', 1))}%**"
-                )
-            else:
-                shared = self.guild_stock.get(self.selected_item, 0)
-                detail.append(f"처리 후 공용 재고: **{shared + self.quantity}개**")
-            embed.add_field(name="선택 내용", value="\n".join(detail), inline=False)
         return embed
-
-    async def _switch_mode(self, interaction, mode):
-        self.mode = mode
-        self.page = 0
-        self.selected_item = None
-        self.quantity = 0
-        await self.setup_view()
-        await interaction.response.edit_message(content=None, embed=await self.get_embed(), view=self)
-
-    async def switch_to_donate(self, interaction):
-        await self._switch_mode(interaction, "donate")
-
-    async def switch_to_store(self, interaction):
-        await self._switch_mode(interaction, "store")
 
     async def prev_page(self, interaction):
         self.page = max(0, self.page - 1)
@@ -538,56 +337,22 @@ class InventoryManageView(discord.ui.View):
         await self.setup_view()
         await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
-    async def reset_quantity(self, interaction):
-        self.quantity = 0
+    async def switch_to_deposit(self, interaction):
+        self.mode = "deposit"
         await self.setup_view()
-        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
+        await interaction.response.edit_message(content=None, embed=await self.get_embed(), view=self)
 
-    async def confirm(self, interaction):
-        item_name = self.selected_item
-        quantity = int(self.quantity)
-        if not item_name or quantity <= 0:
-            return await interaction.response.send_message("아이템과 수량을 먼저 선택해주세요.", ephemeral=True)
+    async def switch_to_withdraw(self, interaction):
+        await interaction.response.send_message(
+            "📦 공용 자원은 개인 인벤토리로 출고할 수 없습니다.",
+            ephemeral=True,
+        )
 
-        if self.mode == "donate":
-            base_rewards = {
-                key: int(value) * quantity
-                for key, value in ITEM_TOKEN_VALUES[item_name].items()
-            }
-            scaled_rewards = _scale_donation_rewards(
-                base_rewards,
-                self.guild_info.get("level", 1),
-            )
-            success, message = await deposit_guild_item(
-                interaction.user.id,
-                self.guild_info["guild_id"],
-                item_name,
-                quantity,
-                self._item_category(item_name),
-                base_rewards,
-                interaction.user.display_name,
-            )
-            if success:
-                await advance_guild_mission(interaction.user, "donate", sum(scaled_rewards.values()))
-        else:
-            success, message = await store_guild_item(
-                interaction.user.id,
-                self.guild_info["guild_id"],
-                item_name,
-                quantity,
-                self._item_category(item_name),
-                interaction.user.display_name,
-            )
-
-        if not success:
-            return await interaction.response.send_message(f"❌ {message}", ephemeral=True)
-        self.selected_item = None
-        self.quantity = 0
-        await self.setup_view()
-        await interaction.response.edit_message(
-            content=f"✅ {message}",
-            embed=await self.get_embed(),
-            view=self,
+    async def on_select(self, interaction):
+        if interaction.user.id != self.author.id: return
+        item_name = interaction.data["values"][0]
+        await interaction.response.send_modal(
+            QuantityModal(self.mode, item_name, self.guild_info['guild_id'], self.user_data, self)
         )
 
     async def back_to_guild(self, interaction):
@@ -597,202 +362,10 @@ class InventoryManageView(discord.ui.View):
             embed=await view.get_embed(interaction.user.id, interaction.user.display_name),
             view=view,
         )
-
+    
     async def refresh(self, interaction):
         await self.setup_view()
-
-
-class GuildWorkshopView(discord.ui.View):
-    """길드 제작 재료를 개인 또는 공용 재고 한쪽에서 선택해 사용한다."""
-    PER_PAGE = 4
-
-    def __init__(self, author, guild_info):
-        super().__init__(timeout=180)
-        self.author = author
-        self.guild_info = guild_info
-        self.source = "personal"
-        self.recipe_names = list(GUILD_WORKSHOP_RECIPES)
-        self.selected_recipe = self.recipe_names[0] if self.recipe_names else None
-        self.page = 0
-        self.personal_stock = {}
-        self.guild_stock = {}
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인이 연 길드 제작소만 조작할 수 있습니다.", ephemeral=True)
-        return False
-
-    async def setup_view(self):
-        user_data = await get_user_data(self.author.id, self.author.display_name)
-        self.personal_stock = {
-            name: int(count or 0)
-            for name, count in user_data.get("inventory", {}).items()
-        }
-        rows = await get_guild_items(self.guild_info["guild_id"])
-        self.guild_stock = {
-            row["item_name"]: int(row.get("count", 0) or 0)
-            for row in rows
-        }
-        total_pages = max(1, (len(self.recipe_names) + self.PER_PAGE - 1) // self.PER_PAGE)
-        self.page = max(0, min(self.page, total_pages - 1))
-
-        self.clear_items()
-        personal = Button(
-            label="🎒 개인 재료",
-            style=discord.ButtonStyle.primary if self.source == "personal" else discord.ButtonStyle.secondary,
-            row=0,
-        )
-        shared = Button(
-            label="🏰 공용 재료",
-            style=discord.ButtonStyle.primary if self.source == "guild" else discord.ButtonStyle.secondary,
-            row=0,
-        )
-        personal.callback = self.use_personal
-        shared.callback = self.use_guild
-        self.add_item(personal)
-        self.add_item(shared)
-
-        visible = self.recipe_names[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
-        for recipe_name in visible:
-            button = Button(
-                label=recipe_name,
-                style=discord.ButtonStyle.success if recipe_name == self.selected_recipe else discord.ButtonStyle.secondary,
-                row=1,
-            )
-
-            async def select_recipe(interaction, name=recipe_name):
-                self.selected_recipe = name
-                await self.setup_view()
-                await interaction.response.edit_message(embed=await self.get_embed(), view=self)
-
-            button.callback = select_recipe
-            self.add_item(button)
-
-        previous = Button(label="이전", disabled=self.page == 0, row=2)
-        counter = Button(label=f"{self.page + 1}/{total_pages}", disabled=True, row=2)
-        following = Button(label="다음", disabled=self.page >= total_pages - 1, row=2)
-        previous.callback = self.prev_page
-        following.callback = self.next_page
-        self.add_item(previous)
-        self.add_item(counter)
-        self.add_item(following)
-
-        stock = self.personal_stock if self.source == "personal" else self.guild_stock
-        recipe = GUILD_WORKSHOP_RECIPES.get(self.selected_recipe, {})
-        for quantity in (1, 5, 10):
-            can_make = bool(recipe) and all(
-                int(stock.get(name, 0)) >= int(need) * quantity
-                for name, need in recipe.get("need", {}).items()
-            )
-            button = Button(
-                label=f"{quantity}개 제작",
-                style=discord.ButtonStyle.success if quantity == 1 else discord.ButtonStyle.primary,
-                disabled=not can_make,
-                row=3,
-            )
-
-            async def craft(interaction, amount=quantity):
-                await self.craft(interaction, amount)
-
-            button.callback = craft
-            self.add_item(button)
-
-        back = Button(label="길드로 돌아가기", style=discord.ButtonStyle.secondary, row=4)
-        back.callback = self.back_to_guild
-        self.add_item(back)
-
-    async def get_embed(self):
-        source_label = "개인 인벤토리" if self.source == "personal" else "길드 공용 창고"
-        destination = source_label
-        embed = discord.Embed(
-            title="🛠️ 길드 제작소",
-            description=(
-                "제작 재료의 출처를 고른 뒤 레시피와 수량을 누르세요.\n"
-                "개인 재료로 만들면 개인에게, 공용 재료로 만들면 공용 창고에 결과가 들어갑니다.\n"
-                "**두 재고를 한 제작에 섞어 쓰지는 않습니다.**"
-            ),
-            color=discord.Color.dark_gold(),
-        )
-        embed.add_field(name="현재 재료 출처 / 결과 위치", value=f"**{source_label}** → **{destination}**", inline=False)
-
-        if not self.selected_recipe:
-            embed.add_field(name="레시피", value="등록된 레시피가 없습니다.", inline=False)
-            return embed
-
-        recipe = GUILD_WORKSHOP_RECIPES[self.selected_recipe]
-        stock = self.personal_stock if self.source == "personal" else self.guild_stock
-        requirements = []
-        max_craft = None
-        for material_name, need in recipe["need"].items():
-            have = int(stock.get(material_name, 0))
-            need = int(need)
-            possible = have // need
-            max_craft = possible if max_craft is None else min(max_craft, possible)
-            requirements.append(
-                f"{'✅' if have >= need else '❌'} **{material_name}** {have}/{need}"
-            )
-        embed.add_field(
-            name=f"선택 레시피: {self.selected_recipe}",
-            value=recipe["description"],
-            inline=False,
-        )
-        embed.add_field(name="1개 제작 재료", value="\n".join(requirements), inline=False)
-        embed.add_field(name="현재 최대 제작 가능", value=f"**{int(max_craft or 0)}개**", inline=False)
-        return embed
-
-    async def _switch_source(self, interaction, source):
-        self.source = source
-        await self.setup_view()
-        await interaction.response.edit_message(content=None, embed=await self.get_embed(), view=self)
-
-    async def use_personal(self, interaction):
-        await self._switch_source(interaction, "personal")
-
-    async def use_guild(self, interaction):
-        await self._switch_source(interaction, "guild")
-
-    async def prev_page(self, interaction):
-        self.page = max(0, self.page - 1)
-        await self.setup_view()
-        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
-
-    async def next_page(self, interaction):
-        self.page += 1
-        await self.setup_view()
-        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
-
-    async def craft(self, interaction, count):
-        if not self.selected_recipe:
-            return await interaction.response.send_message("제작할 레시피를 먼저 선택해주세요.", ephemeral=True)
-        recipe = GUILD_WORKSHOP_RECIPES[self.selected_recipe]
-        success, message = await craft_guild_workshop_item(
-            interaction.user.id,
-            self.guild_info["guild_id"],
-            self.selected_recipe,
-            recipe["need"],
-            count,
-            self.source,
-            "material",
-            interaction.user.display_name,
-        )
-        if not success:
-            return await interaction.response.send_message(f"❌ {message}", ephemeral=True)
-        await self.setup_view()
-        await interaction.response.edit_message(
-            content=f"✅ {message}",
-            embed=await self.get_embed(),
-            view=self,
-        )
-
-    async def back_to_guild(self, interaction):
-        view = GuildMainView()
-        await interaction.response.edit_message(
-            content=None,
-            embed=await view.get_embed(interaction.user.id, interaction.user.display_name),
-            view=view,
-        )
-
+        # 메시지 갱신이 필요하면 여기서 처리 (보통 모달 후 메시지는 유지됨)
 
 # ==================================================================================
 # 2. 길드 미션 시스템
@@ -805,12 +378,6 @@ class GuildMissionView(discord.ui.View):
         self.guild_info = guild_info
         self.selected_mission = "donate"
         self.add_item(self._mission_select())
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인이 연 길드 미션만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     def _mission_select(self):
         select = Select(
@@ -928,22 +495,18 @@ class GuildShopView(discord.ui.View):
 
     async def setup(self):
         self.day_key = _guild_day_key()
-        current_guild = await get_user_guild_info(self.author.id)
-        if current_guild:
-            self.guild_info = current_guild
-        guild_level = max(1, min(10, int(self.guild_info.get("level", 1) or 1)))
         daily_items = await get_or_create_daily_guild_shop(
             self.guild_info["guild_id"],
             self.day_key,
-            _build_daily_shop_rotation(guild_level, self.day_key),
+            _build_daily_shop_rotation(),
         )
+        # Early v8.6 test data may still contain one rotating raid supply.
+        # Hide it because the three original workshop products are now permanent.
         self.items = [
             row for row in daily_items
             if row.get("item_name") not in GUILD_CRAFT_RECIPES
         ]
         for index, item in enumerate(GUILD_SHOP_SUPPLIES):
-            if int(item.get("min_rank", 1)) > guild_level:
-                continue
             self.items.append({
                 **item,
                 "slot_index": 100 + index,
@@ -1040,10 +603,7 @@ class GuildShopView(discord.ui.View):
         embed = discord.Embed(
             title="🛒 길드 상점",
             description=(
-                f"현재 길드 등급은 **{RANK_NAMES.get(int(guild.get('level', 1)), '아이언')}**이며 "
-                f"오늘의 로테이션은 **{GUILD_SHOP_SLOT_COUNT.get(int(guild.get('level', 1)), 3)}종**입니다.\n"
-                "등급이 오르면 로테이션 품목 수와 상시 보급품 종류가 늘어납니다.\n"
-                "해금된 보급품은 상시 판매되며 **공용 창고**로 들어갑니다.\n"
+                "원래 제작소의 보급품 3종은 상시 판매되며 **공용 창고**로 들어갑니다.\n"
                 "나머지는 한국 시간 자정마다 상품과 **길드원 전체가 공유하는 재고**가 교체됩니다.\n\n"
                 + ("\n".join(lines) if lines else "오늘의 상품을 불러오지 못했습니다.")
             ),
@@ -1295,11 +855,7 @@ class GuildWarehouseView(discord.ui.View):
         text = ""
         for l in logs:
             action = {
-                "deposit": "구형 입고",
-                "donation": "자원 납품",
-                "store_item": "창고 반입",
-                "workshop_personal": "개인 제작",
-                "workshop_guild": "공용 제작",
+                "deposit": "입고",
                 "withdraw": "출고",
                 "deposit_artifact": "보관",
                 "craft": "제작",
@@ -1848,14 +1404,9 @@ async def _grant_training_rewards(user, score):
     def grant(latest):
         life = latest.setdefault("life_data", {})
         training = life.setdefault("guild_training", {})
-        if training.get("date") != _guild_day_key() or int(training.get("score_version", 0)) != 2:
+        if training.get("date") != _guild_day_key():
             training.clear()
-            training.update({
-                "date": _guild_day_key(),
-                "score_version": 2,
-                "best_score": 0,
-                "claimed_thresholds": [],
-            })
+            training.update({"date": _guild_day_key(), "best_score": 0, "claimed_thresholds": []})
         claimed = {int(value) for value in training.setdefault("claimed_thresholds", [])}
         training["best_score"] = max(int(training.get("best_score", 0)), int(score))
         inventory = latest.setdefault("inventory", {})
@@ -1908,35 +1459,28 @@ class GuildTrainingView(discord.ui.View):
     async def get_embed(self):
         data = await get_user_data(self.author.id, self.author.display_name)
         training = data.get("life_data", {}).get("guild_training", {})
-        best = (
-            int(training.get("best_score", 0))
-            if training.get("date") == _guild_day_key()
-            and int(training.get("score_version", 0)) == 2
-            else 0
-        )
+        best = int(training.get("best_score", 0)) if training.get("date") == _guild_day_key() else 0
         embed = discord.Embed(
             title="🥋 길드 수련장",
             description=(
                 "공격하는 무한 체력 샌드백을 상대로 **최대 10턴** 동안 수련합니다.\n"
                 "내 캐릭터가 쓰러지면 즉시 종료되며, 실제 체력이나 아이템은 소모되지 않습니다.\n"
-                "유효한 수련 행동 1회마다 **공용 활동 턴도 1** 진행됩니다.\n"
-                "기존의 주사위 개수 점수제는 폐지되었습니다."
+                "유효한 수련 행동 1회마다 **공용 활동 턴도 1** 진행됩니다."
             ),
             color=discord.Color.orange(),
         )
         embed.add_field(
             name="🎯 점수 규칙",
             value=(
-                "공격·방어·반격·체력 회복·정신 회복 주사위의 **최종 유효값을 전부 합산**합니다.\n"
-                "예: 유효 주사위 값이 42, 58이면 해당 턴에 **100점**을 얻습니다."
+                "전투 처리 후 남은 유효한 공격·방어·반격·체력 회복·정신 회복 "
+                "주사위 하나당 1점입니다."
             ),
             inline=False,
         )
         embed.add_field(
             name="🎁 일일 구간 보상",
             value=(
-                "0 / 100 / 250 / 500 / 750 / 1,000 / 1,500 / 2,000 / "
-                "3,000 / 5,000 / 8,000점 구간에 보상이 있습니다.\n"
+                "0 / 5 / 10 / 15 / 20 / 25점 구간을 처음 넘을 때마다 보상이 열립니다.\n"
                 "같은 날 재도전해 더 높은 구간을 넘으면 새 구간 보상만 추가 지급됩니다."
             ),
             inline=False,
@@ -2251,19 +1795,17 @@ class TrainingBattleView(discord.ui.View):
             [],
             self.turn,
         )
-        scored_dice = [
-            max(0, int(dice.get("resolved_value", dice.get("value", 0)) or 0))
+        effective = sum(
+            1
             for dice in user_res
-            if dice.get("resolved_type", dice.get("type")) in self.EFFECTIVE_DICE
-            and int(dice.get("resolved_value", dice.get("value", 0)) or 0) > 0
-        ]
-        turn_score = sum(scored_dice)
-        self.score += turn_score
+            if dice.get("type") in self.EFFECTIVE_DICE and int(dice.get("value", 0)) > 0
+        )
+        self.score += effective
         self.sandbag.current_hp = self.sandbag.max_hp
         self.sandbag.current_mental = self.sandbag.max_mental
         summary = (
             f"**{self.turn}턴** {card_name} vs {bag_card.name} · "
-            f"유효 주사위 값 **{'+'.join(map(str, scored_dice)) or '0'} = +{turn_score}점**"
+            f"유효 주사위 **+{effective}**"
         )
         if gem_log:
             summary += f"\n💎 {gem_log}"
@@ -2301,22 +1843,8 @@ class TrainingBattleView(discord.ui.View):
 
 class GuildMainView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=300)
         self.page = 0
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        owner_id = _message_command_owner_id(interaction)
-        if owner_id is not None and interaction.user.id == owner_id:
-            return True
-        if owner_id is None:
-            message = "소유자를 확인할 수 없는 오래된 길드 메뉴입니다. `/길드`로 새로 열어주세요."
-        else:
-            message = "다른 이용자가 연 길드 메뉴입니다. `/길드`로 본인 메뉴를 열어주세요."
-        await interaction.response.send_message(
-            message,
-            ephemeral=True,
-        )
-        return False
 
     def _add_navigation(self):
         previous = Button(label="이전", disabled=self.page == 0, row=1)
@@ -2359,26 +1887,15 @@ class GuildMainView(discord.ui.View):
         else:
             self.add_item(self.btn_training)
             self.add_item(self.btn_raid)
-            self.add_item(self.btn_workshop)
         self._add_navigation()
 
         g = guild_info
-        total_contribution = int(g.get("total_contribution", g.get("exp", 0)) or 0)
-        current_rank, next_rank = _rank_threshold_info(total_contribution)
-        if next_rank:
-            rank_progress = (
-                f"{total_contribution:,}/{next_rank[2]:,} "
-                f"(다음: {next_rank[1]}, 남은 공헌도 {max(0, next_rank[2] - total_contribution):,})"
-            )
-        else:
-            rank_progress = f"{total_contribution:,} · 최고 등급 달성"
         embed = discord.Embed(
             title=f"🛡️ {g['name']}",
             description=(
                 "모든 조사원이 함께 성장시키는 공용 길드입니다.\n"
-                f"등급: **{current_rank[1]}**\n"
-                f"길드 공헌도: **{rank_progress}**\n"
-                f"내 공헌도: **{g.get('contribution', 0):,}**"
+                f"등급: {RANK_NAMES.get(g['level'], '브론즈')}\n"
+                f"개인 공헌도: {g.get('contribution', 0):,}"
             ),
             color=discord.Color.gold(),
         )
@@ -2391,28 +1908,12 @@ class GuildMainView(discord.ui.View):
             inline=False,
         )
         embed.add_field(
-            name="🏅 현재 등급 혜택",
-            value=(
-                f"납품 환산 효율 **{_donation_efficiency(current_rank[0])}%** · "
-                f"일일 상점 로테이션 **{GUILD_SHOP_SLOT_COUNT[current_rank[0]]}종**\n"
-                "공헌도: 납품 환산 1점당 +1 · 미션 +20 · 레이드 성공 +100/실패 +20"
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="📈 길드 등급 공헌도 기준",
-            value=(
-                "아이언 0 · 브론즈 1,000 · 실버 3,000 · 골드 7,500 · 플래티넘 15,000\n"
-                "에메랄드 30,000 · 다이아몬드 60,000 · 마스터 100,000 · "
-                "그랜드마스터 175,000 · 챌린저 300,000"
-            ),
+            name="🏅 공헌도 핵심",
+            value="납품 환산 1점당 +1 · 미션 보상 +20 · 레이드 성공 +100/실패 +20",
             inline=False,
         )
         embed.set_footer(
-            text=(
-                f"메뉴 {self.page + 1}/2 · 생성·검색·탈퇴 없이 모든 이용자가 자동 소속됩니다. "
-                f"· owner:{int(user_id)}"
-            )
+            text=f"메뉴 {self.page + 1}/2 · 생성·검색·탈퇴 없이 모든 이용자가 자동 소속됩니다."
         )
         return embed
 
@@ -2422,7 +1923,7 @@ class GuildMainView(discord.ui.View):
         guild_info = await get_user_guild_info(interaction.user.id)
         if not guild_info: return
         view = GuildMissionView(interaction.user, guild_info)
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="🛒 길드 상점", style=discord.ButtonStyle.primary, custom_id="guild_btn_shop")
     async def btn_shop(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2431,14 +1932,14 @@ class GuildMainView(discord.ui.View):
             return
         view = GuildShopView(interaction.user, guild_info, None)
         await view.setup()
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="📦 창고", style=discord.ButtonStyle.secondary, custom_id="guild_btn_warehouse")
     async def btn_warehouse(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_info = await get_user_guild_info(interaction.user.id)
         if not guild_info: return
         view = GuildWarehouseView(interaction.user, guild_info)
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="⚔️ 레이드", style=discord.ButtonStyle.danger, custom_id="guild_btn_raid")
     async def btn_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2450,8 +1951,11 @@ class GuildMainView(discord.ui.View):
             return await interaction.response.send_message("레이드 보스 데이터를 찾지 못했습니다.", ephemeral=True)
         lobby = RaidLobbyView(interaction.user, guild_info, boss_data)
         await lobby.add_participant(interaction.user)
-        await interaction.response.edit_message(content=None, embed=lobby.get_embed(), view=lobby)
-        lobby.public_message = interaction.message
+        await interaction.response.send_message(embed=lobby.get_embed(), view=lobby)
+        try:
+            lobby.public_message = await interaction.original_response()
+        except (discord.NotFound, discord.HTTPException):
+            pass
 
     @discord.ui.button(label="🥋 수련장", style=discord.ButtonStyle.success, custom_id="guild_btn_training")
     async def btn_training(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2459,16 +1963,7 @@ class GuildMainView(discord.ui.View):
         if not guild_info:
             return
         view = GuildTrainingView(interaction.user, guild_info)
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
-
-    @discord.ui.button(label="🛠️ 길드 제작소", style=discord.ButtonStyle.primary, custom_id="guild_btn_workshop")
-    async def btn_workshop(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild_info = await get_user_guild_info(interaction.user.id)
-        if not guild_info:
-            return
-        view = GuildWorkshopView(interaction.user, guild_info)
-        await view.setup_view()
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
     
     @discord.ui.button(label="⚖️ 물자 관리", style=discord.ButtonStyle.secondary, custom_id="guild_btn_manage")
     async def btn_manage(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2476,7 +1971,7 @@ class GuildMainView(discord.ui.View):
         if not guild_info: return
         view = InventoryManageView(interaction.user, guild_info)
         await view.setup_view()
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     async def refresh_ui(self, interaction):
         embed = await self.get_embed(interaction.user.id, interaction.user.display_name)

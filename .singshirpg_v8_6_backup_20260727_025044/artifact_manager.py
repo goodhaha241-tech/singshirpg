@@ -2,7 +2,6 @@
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
 # gem-visibility-tools-v8.3
-# owner-isolated-ui-v8.6.4
 import discord
 import random
 import re
@@ -94,12 +93,6 @@ class ArtifactManageView(discord.ui.View):
         
         self.load_character() 
         self.update_view_components()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 아티팩트만 관리할 수 있습니다.", ephemeral=True)
-        return False
 
     
 

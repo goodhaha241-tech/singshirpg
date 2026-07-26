@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 # rollback-guard-appraisal-gems-v8
 # raid-pvp-command-panels-v8.5
 # guild-shop-training-v8.6
-# guild-workshop-warehouse-v8.6.1
-# guild-rank-training-score-v8.6.2
 
 _pool = None
 _user_save_locks = defaultdict(asyncio.Lock)
@@ -655,52 +653,6 @@ async def update_user_resources(user_id, money_change=0, pt_change=0):
 
 GLOBAL_GUILD_ID = 1
 GLOBAL_GUILD_NAME = "공용 길드"
-GUILD_RANK_THRESHOLDS = (
-    (1, "아이언", 0),
-    (2, "브론즈", 1_000),
-    (3, "실버", 3_000),
-    (4, "골드", 7_500),
-    (5, "플래티넘", 15_000),
-    (6, "에메랄드", 30_000),
-    (7, "다이아몬드", 60_000),
-    (8, "마스터", 100_000),
-    (9, "그랜드마스터", 175_000),
-    (10, "챌린저", 300_000),
-)
-GUILD_DONATION_EFFICIENCY = {
-    1: 100, 2: 110, 3: 120, 4: 135, 5: 150,
-    6: 170, 7: 195, 8: 225, 9: 260, 10: 300,
-}
-
-
-def guild_level_for_contribution(total_contribution):
-    total = max(0, int(total_contribution or 0))
-    level = 1
-    for candidate, _, required in GUILD_RANK_THRESHOLDS:
-        if total < required:
-            break
-        level = candidate
-    return level
-
-
-async def _sync_global_guild_level(cur):
-    """길드원 전체 공헌도 합계를 exp로 기록하고 현재 티어를 동기화한다."""
-    await cur.execute(
-        "SELECT COALESCE(SUM(contribution),0) AS total "
-        "FROM guild_members WHERE guild_id=%s",
-        (GLOBAL_GUILD_ID,),
-    )
-    row = await cur.fetchone()
-    if isinstance(row, dict):
-        total = int(row.get("total", 0) or 0)
-    else:
-        total = int((row or (0,))[0] or 0)
-    level = guild_level_for_contribution(total)
-    await cur.execute(
-        "UPDATE guilds SET level=%s, exp=%s WHERE guild_id=%s",
-        (level, total, GLOBAL_GUILD_ID),
-    )
-    return level, total
 
 
 def advance_world_turn(user_data, amount=1):
@@ -743,7 +695,6 @@ async def ensure_global_guild_membership(user_id):
                        WHERE guild_id=%s""",
                     (GLOBAL_GUILD_ID, GLOBAL_GUILD_ID),
                 )
-                await _sync_global_guild_level(cur)
                 await conn.commit()
             except Exception:
                 await conn.rollback()
@@ -756,26 +707,11 @@ async def get_user_guild_info(user_id):
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute("""
-                SELECT g.*, m.role, m.contribution,
-                       (SELECT COALESCE(SUM(m2.contribution),0)
-                        FROM guild_members m2
-                        WHERE m2.guild_id=g.guild_id) AS total_contribution
+                SELECT g.*, m.role, m.contribution 
                 FROM guild_members m JOIN guilds g ON m.guild_id = g.guild_id
                 WHERE m.user_id = %s AND m.guild_id = %s
             """, (str(user_id), GLOBAL_GUILD_ID))
-            row = await cur.fetchone()
-            if not row:
-                return None
-            level = guild_level_for_contribution(row.get("total_contribution", 0))
-            if int(row.get("level", 1) or 1) != level or int(row.get("exp", 0) or 0) != int(row.get("total_contribution", 0) or 0):
-                await cur.execute(
-                    "UPDATE guilds SET level=%s, exp=%s WHERE guild_id=%s",
-                    (level, int(row.get("total_contribution", 0) or 0), GLOBAL_GUILD_ID),
-                )
-                await conn.commit()
-            row["level"] = level
-            row["exp"] = int(row.get("total_contribution", 0) or 0)
-            return row
+            return await cur.fetchone()
 
 async def create_guild(user_id, guild_name):
     await ensure_global_guild_membership(user_id)
@@ -830,13 +766,6 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
                 if not await cur.fetchone():
                     await conn.rollback()
                     return False, "공용 길드 소속이 아닙니다."
-                await cur.execute(
-                    "SELECT level FROM guilds WHERE guild_id=%s FOR UPDATE",
-                    (GLOBAL_GUILD_ID,),
-                )
-                guild_row = await cur.fetchone()
-                guild_level = max(1, min(10, int((guild_row or (1,))[0] or 1)))
-                efficiency = GUILD_DONATION_EFFICIENCY[guild_level]
                 await cur.execute("SELECT quantity FROM inventory WHERE user_id=%s AND item_name=%s FOR UPDATE", (str(user_id), item_name))
                 row = await cur.fetchone()
                 if not row or row[0] < count:
@@ -846,231 +775,39 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
                 if row[0] == count: await cur.execute("DELETE FROM inventory WHERE user_id=%s AND item_name=%s", (str(user_id), item_name))
                 else: await cur.execute("UPDATE inventory SET quantity=quantity-%s WHERE user_id=%s AND item_name=%s", (count, str(user_id), item_name))
                 
-                scaled_rewards = {
-                    key: (max(0, int(value)) * efficiency + 99) // 100
-                    for key, value in token_rewards.items()
-                    if int(value) > 0
-                }
-                set_c = [f"token_{k} = token_{k} + {int(v)}" for k,v in scaled_rewards.items()]
+                await cur.execute("""INSERT INTO guild_inventory (guild_id, item_name, count, category) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE count = count + VALUES(count)""", (guild_id, item_name, count, category))
+                
+                set_c = [f"token_{k} = token_{k} + {int(v)}" for k,v in token_rewards.items()]
                 if set_c: await cur.execute(f"UPDATE guilds SET {', '.join(set_c)} WHERE guild_id=%s", (guild_id,))
-                contribution_gain = sum(scaled_rewards.values())
+                contribution_gain = sum(max(0, int(value)) for value in token_rewards.values())
                 if contribution_gain:
                     await cur.execute(
                         """UPDATE guild_members SET contribution=contribution+%s
                            WHERE guild_id=%s AND user_id=%s""",
                         (contribution_gain, GLOBAL_GUILD_ID, str(user_id)),
                     )
-                await _sync_global_guild_level(cur)
                 
                 await cur.execute(
                     """INSERT INTO guild_log
                        (guild_id,user_id,user_name,action_type,item_name,count)
-                       VALUES (%s,%s,%s,'donation',%s,%s)""",
+                       VALUES (%s,%s,%s,'deposit',%s,%s)""",
                     (guild_id, str(user_id), user_name, item_name, count),
                 )
                 await conn.commit()
                 token_labels = {"wood": "목재", "iron": "철괴", "magic": "마력", "sorcery": "주술"}
                 gained = ", ".join(
                     f"{token_labels.get(key, key)} +{int(value)}"
-                    for key, value in scaled_rewards.items()
+                    for key, value in token_rewards.items()
                     if int(value) > 0
                 )
                 return True, (
                     f"{item_name} {count}개 납품 완료"
                     f"\n공용 자원: {gained or '변화 없음'}"
                     f"\n개인 공헌도: +{contribution_gain}"
-                    f"\n등급 납품 효율: {efficiency}%"
                 )
             except Exception as e:
                 await conn.rollback()
                 return False, f"오류: {e}"
-
-
-async def store_guild_item(user_id, guild_id, item_name, count, category="material", user_name=None):
-    """개인 아이템을 환산하지 않고 길드 공용 창고로 그대로 옮긴다."""
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
-        return False, "수량이 올바르지 않습니다."
-    if count <= 0 or int(guild_id) != GLOBAL_GUILD_ID:
-        return False, "공용 길드 창고에는 양수 수량만 반입할 수 있습니다."
-
-    await ensure_global_guild_membership(user_id)
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
-            try:
-                await conn.begin()
-                await cur.execute(
-                    "UPDATE users SET data_revision=data_revision+1 WHERE user_id=%s",
-                    (str(user_id),),
-                )
-                await cur.execute(
-                    "SELECT 1 FROM guild_members WHERE guild_id=%s AND user_id=%s FOR UPDATE",
-                    (GLOBAL_GUILD_ID, str(user_id)),
-                )
-                if not await cur.fetchone():
-                    await conn.rollback()
-                    return False, "공용 길드 소속이 아닙니다."
-
-                await cur.execute(
-                    "SELECT quantity FROM inventory WHERE user_id=%s AND item_name=%s FOR UPDATE",
-                    (str(user_id), item_name),
-                )
-                row = await cur.fetchone()
-                owned = int(row.get("quantity", 0)) if row else 0
-                if owned < count:
-                    await conn.rollback()
-                    return False, f"보유량이 부족합니다. ({owned}/{count})"
-
-                if owned == count:
-                    await cur.execute(
-                        "DELETE FROM inventory WHERE user_id=%s AND item_name=%s",
-                        (str(user_id), item_name),
-                    )
-                else:
-                    await cur.execute(
-                        "UPDATE inventory SET quantity=quantity-%s WHERE user_id=%s AND item_name=%s",
-                        (count, str(user_id), item_name),
-                    )
-                await cur.execute(
-                    """INSERT INTO guild_inventory (guild_id,item_name,count,category)
-                       VALUES (%s,%s,%s,%s)
-                       ON DUPLICATE KEY UPDATE count=count+VALUES(count), category=VALUES(category)""",
-                    (GLOBAL_GUILD_ID, item_name, count, category),
-                )
-                await cur.execute(
-                    """INSERT INTO guild_log
-                       (guild_id,user_id,user_name,action_type,item_name,count)
-                       VALUES (%s,%s,%s,'store_item',%s,%s)""",
-                    (GLOBAL_GUILD_ID, str(user_id), user_name, item_name, count),
-                )
-                await conn.commit()
-                return True, f"{item_name} {count}개를 길드 공용 창고에 반입했습니다."
-            except Exception as exc:
-                await conn.rollback()
-                return False, f"길드 창고 반입 오류: {exc}"
-
-
-async def craft_guild_workshop_item(
-    user_id,
-    guild_id,
-    item_name,
-    ingredients,
-    count=1,
-    source="personal",
-    category="material",
-    user_name=None,
-):
-    """개인 또는 공용 재고 한쪽만 사용해 길드 제작소 레시피를 처리한다."""
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
-        return False, "제작 수량이 올바르지 않습니다."
-    if count <= 0 or int(guild_id) != GLOBAL_GUILD_ID:
-        return False, "공용 길드에서 양수 수량만 제작할 수 있습니다."
-    if source not in {"personal", "guild"}:
-        return False, "재료 출처가 올바르지 않습니다."
-
-    try:
-        required = {
-            str(name): int(amount) * count
-            for name, amount in dict(ingredients).items()
-            if int(amount) > 0
-        }
-    except (TypeError, ValueError):
-        return False, "제작 재료 설정이 올바르지 않습니다."
-    if not required:
-        return False, "제작 재료가 설정되지 않았습니다."
-
-    await ensure_global_guild_membership(user_id)
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
-            try:
-                await conn.begin()
-                await cur.execute(
-                    "SELECT 1 FROM guild_members WHERE guild_id=%s AND user_id=%s FOR UPDATE",
-                    (GLOBAL_GUILD_ID, str(user_id)),
-                )
-                if not await cur.fetchone():
-                    await conn.rollback()
-                    return False, "공용 길드 소속이 아닙니다."
-
-                source_table = "inventory" if source == "personal" else "guild_inventory"
-                key_where = "user_id=%s" if source == "personal" else "guild_id=%s"
-                owner_key = str(user_id) if source == "personal" else GLOBAL_GUILD_ID
-                quantity_column = "quantity" if source == "personal" else "count"
-                owned = {}
-                for material_name in sorted(required):
-                    await cur.execute(
-                        f"""SELECT {quantity_column} AS quantity FROM {source_table}
-                            WHERE {key_where} AND item_name=%s FOR UPDATE""",
-                        (owner_key, material_name),
-                    )
-                    row = await cur.fetchone()
-                    owned[material_name] = int(row.get("quantity", 0)) if row else 0
-
-                lacking = [
-                    f"{name} {owned.get(name, 0)}/{need}"
-                    for name, need in required.items()
-                    if owned.get(name, 0) < need
-                ]
-                if lacking:
-                    await conn.rollback()
-                    label = "개인 인벤토리" if source == "personal" else "공용 창고"
-                    return False, f"{label} 재료가 부족합니다: " + ", ".join(lacking)
-
-                if source == "personal":
-                    await cur.execute(
-                        "UPDATE users SET data_revision=data_revision+1 WHERE user_id=%s",
-                        (str(user_id),),
-                    )
-
-                for material_name, need in required.items():
-                    if owned[material_name] == need:
-                        await cur.execute(
-                            f"DELETE FROM {source_table} WHERE {key_where} AND item_name=%s",
-                            (owner_key, material_name),
-                        )
-                    else:
-                        await cur.execute(
-                            f"""UPDATE {source_table}
-                                SET {quantity_column}={quantity_column}-%s
-                                WHERE {key_where} AND item_name=%s""",
-                            (need, owner_key, material_name),
-                        )
-
-                if source == "personal":
-                    await cur.execute(
-                        """INSERT INTO inventory (user_id,item_name,quantity)
-                           VALUES (%s,%s,%s)
-                           ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity)""",
-                        (str(user_id), item_name, count),
-                    )
-                    action_type = "workshop_personal"
-                    destination = "개인 인벤토리"
-                else:
-                    await cur.execute(
-                        """INSERT INTO guild_inventory (guild_id,item_name,count,category)
-                           VALUES (%s,%s,%s,%s)
-                           ON DUPLICATE KEY UPDATE count=count+VALUES(count), category=VALUES(category)""",
-                        (GLOBAL_GUILD_ID, item_name, count, category),
-                    )
-                    action_type = "workshop_guild"
-                    destination = "길드 공용 창고"
-
-                await cur.execute(
-                    """INSERT INTO guild_log
-                       (guild_id,user_id,user_name,action_type,item_name,count)
-                       VALUES (%s,%s,%s,%s,%s,%s)""",
-                    (GLOBAL_GUILD_ID, str(user_id), user_name, action_type, item_name, count),
-                )
-                await conn.commit()
-                return True, f"{item_name} {count}개를 제작해 {destination}에 보관했습니다."
-            except Exception as exc:
-                await conn.rollback()
-                return False, f"길드 제작소 오류: {exc}"
 
 
 async def add_guild_contribution(user_id, amount, action_type=None, item_name=None, user_name=None):
@@ -1092,7 +829,6 @@ async def add_guild_contribution(user_id, amount, action_type=None, item_name=No
                        WHERE guild_id=%s AND user_id=%s""",
                     (amount, GLOBAL_GUILD_ID, str(user_id)),
                 )
-                await _sync_global_guild_level(cur)
                 if action_type:
                     await cur.execute(
                         """INSERT INTO guild_log
@@ -1115,7 +851,7 @@ async def add_guild_contribution(user_id, amount, action_type=None, item_name=No
 
 
 async def get_or_create_daily_guild_shop(guild_id, day_key, rotation_rows):
-    """등급별 결정적 로테이션을 저장하고 같은 날의 구매 재고를 보존한다."""
+    """그날 최초 접근자가 만든 길드 공용 재고를 저장하고 모두에게 같은 목록을 반환한다."""
     if int(guild_id) != GLOBAL_GUILD_ID:
         return []
     pool = await get_db_pool()
@@ -1136,52 +872,37 @@ async def get_or_create_daily_guild_shop(guild_id, day_key, rotation_rows):
                     (GLOBAL_GUILD_ID, str(day_key)),
                 )
                 rows = await cur.fetchall()
-                existing = {int(row["slot_index"]): row for row in rows}
-                for slot_index, row in enumerate(rotation_rows):
-                    stock = max(0, int(row.get("stock", 0)))
-                    old = existing.get(slot_index)
-                    if old and old.get("item_name") == row["item_name"]:
-                        continue
+                if not rows:
+                    for slot_index, row in enumerate(rotation_rows):
+                        stock = max(0, int(row.get("stock", 0)))
+                        await cur.execute(
+                            """INSERT INTO guild_shop_stock
+                               (guild_id,day_key,slot_index,item_name,category,stock,
+                                initial_stock,cost_json,description)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            (
+                                GLOBAL_GUILD_ID,
+                                str(day_key),
+                                slot_index,
+                                row["item_name"],
+                                row.get("category", "material"),
+                                stock,
+                                stock,
+                                json.dumps(row.get("cost", {}), ensure_ascii=False),
+                                row.get("description", ""),
+                            ),
+                        )
                     await cur.execute(
-                        """INSERT INTO guild_shop_stock
-                           (guild_id,day_key,slot_index,item_name,category,stock,
-                            initial_stock,cost_json,description)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                           ON DUPLICATE KEY UPDATE
-                             item_name=VALUES(item_name),
-                             category=VALUES(category),
-                             stock=VALUES(stock),
-                             initial_stock=VALUES(initial_stock),
-                             cost_json=VALUES(cost_json),
-                             description=VALUES(description)""",
-                        (
-                            GLOBAL_GUILD_ID,
-                            str(day_key),
-                            slot_index,
-                            row["item_name"],
-                            row.get("category", "material"),
-                            stock,
-                            stock,
-                            json.dumps(row.get("cost", {}), ensure_ascii=False),
-                            row.get("description", ""),
-                        ),
+                        """DELETE FROM guild_shop_stock
+                           WHERE guild_id=%s AND day_key<>%s""",
+                        (GLOBAL_GUILD_ID, str(day_key)),
                     )
-                await cur.execute(
-                    """DELETE FROM guild_shop_stock
-                       WHERE guild_id=%s AND day_key=%s AND slot_index>=%s""",
-                    (GLOBAL_GUILD_ID, str(day_key), len(rotation_rows)),
-                )
-                await cur.execute(
-                    """DELETE FROM guild_shop_stock
-                       WHERE guild_id=%s AND day_key<>%s""",
-                    (GLOBAL_GUILD_ID, str(day_key)),
-                )
-                await cur.execute(
-                    """SELECT * FROM guild_shop_stock
-                       WHERE guild_id=%s AND day_key=%s ORDER BY slot_index""",
-                    (GLOBAL_GUILD_ID, str(day_key)),
-                )
-                rows = await cur.fetchall()
+                    await cur.execute(
+                        """SELECT * FROM guild_shop_stock
+                           WHERE guild_id=%s AND day_key=%s ORDER BY slot_index""",
+                        (GLOBAL_GUILD_ID, str(day_key)),
+                    )
+                    rows = await cur.fetchall()
                 await conn.commit()
             except Exception:
                 await conn.rollback()
@@ -1349,7 +1070,6 @@ async def craft_guild_item(user_id, guild_id, item_name, category, token_costs, 
                        WHERE guild_id=%s AND user_id=%s""",
                     (10 * count, GLOBAL_GUILD_ID, str(user_id)),
                 )
-                await _sync_global_guild_level(cur)
                 await cur.execute(
                     """INSERT INTO guild_log
                        (guild_id,user_id,action_type,item_name,count)

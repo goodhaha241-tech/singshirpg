@@ -1479,14 +1479,6 @@ async def _run_latest_appraisal_operation(author, save_func, current_data, opera
         return ok, payload
 
 
-# owner-isolated-ui-v8.6.4
-async def _life_owner_only(view, interaction):
-    if interaction.user.id == view.author.id:
-        return True
-    await interaction.response.send_message("❌ 본인의 생활 화면만 조작할 수 있습니다.", ephemeral=True)
-    return False
-
-
 class PureHopeShopView(discord.ui.View):
     """Money shop for Pure Hope. One item always costs exactly 1,000,000 won."""
 
@@ -1495,9 +1487,6 @@ class PureHopeShopView(discord.ui.View):
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _life_owner_only(self, interaction)
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         inv = _inventory(self.user_data)
@@ -1553,9 +1542,6 @@ class LifeSystemView(discord.ui.View):
         ensure_life_data(self.user_data)
         self.page = 0
         self._rebuild_menu()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _life_owner_only(self, interaction)
 
     def _rebuild_menu(self):
         self.clear_items()
@@ -1641,9 +1627,6 @@ class _LifeChildView(discord.ui.View):
             self._life_hub_factory,
             back_label="생활 관리로",
         )
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _life_owner_only(self, interaction)
 
     def _life_hub_factory(self):
         from life_overhaul_v5 import LifeHubView

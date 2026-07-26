@@ -423,15 +423,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
                 clash_log += f", 보호막 {shield}" if shield else ""
                 clash_log += ") "
 
-        # Keep the final displayed dice values available to callers such as
-        # guild training without changing the normal combat dice payload.
-        if i < len(res1):
-            res1[i]["resolved_type"] = t1
-            res1[i]["resolved_value"] = max(0, int(v1))
-        if i < len(res2):
-            res2[i]["resolved_type"] = t2
-            res2[i]["resolved_value"] = max(0, int(v2))
-
         clash_log += f"{get_emoji(t1)}{v1} vs {get_emoji(t2)}{v2}"
         
         dmg1, dmg2 = 0, 0 

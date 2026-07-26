@@ -381,7 +381,7 @@ class BossEncounterView(discord.ui.View):
 
 class DungeonMainView(discord.ui.View):
     """던전 탐사 메인 뷰"""
-    def __init__(self, author=None, user_data=None, save_func=None, char_index=0, region_name="", timeout=None):
+    def __init__(self, author=None, user_data=None, save_func=None, char_index=0, region_name="", timeout=600):
         super().__init__(timeout=timeout)
         self.author = author
         self.user_data = user_data
@@ -590,9 +590,6 @@ class DungeonMainView(discord.ui.View):
                     return await interaction.followup.send("♻️ 이미 처리된 선택지입니다. 최신 던전 화면에서 계속해주세요.", ephemeral=True)
                 active_view = DungeonMainView(interaction.user, user_data, self.save_func)
                 await active_view.process_choice(interaction, choice_idx)
-                # The action has now been handed to a freshly loaded view. Stop
-                # the previous in-memory view after the handoff succeeds.
-                self.stop()
         return callback
 
     async def process_choice(self, interaction, choice_idx):
@@ -662,10 +659,11 @@ class DungeonMainView(discord.ui.View):
         else: await self.enter_recovery_room(interaction, debuff_msg)
 
     async def on_timeout(self):
-        # Every valid room action is saved immediately. Writing the snapshot
-        # again from an old timed-out view can trigger StaleUserDataError and
-        # may remove the buttons from the user's current dungeon message.
-        self.stop()
+        if self.user_data:
+            await self.save_dungeon_state()
+        if self.message:
+            try: await self.message.edit(content="⌛ 시간 초과로 인해 탐사가 일시 중단되었습니다.\n진행 상황이 저장되었으니 '이어하기'로 계속할 수 있습니다.", view=None)
+            except: pass
 
     def apply_monster_buffs(self, monsters, is_boss=False):
         buff_sets = self.depth // 10

@@ -36,7 +36,6 @@ from gem_effects import (
 # guild-shop-training-v8.6
 # guild-workshop-warehouse-v8.6.1
 # guild-rank-training-score-v8.6.2
-# guild-inline-navigation-v8.6.3
 
 # --- 설정 데이터 (items.py 기준 통일) ---
 ITEM_TOKEN_VALUES = {
@@ -204,25 +203,6 @@ def _format_token_cost(cost, multiplier=1):
         f"{TOKEN_EMOJIS.get(key, '')}{TOKEN_LABELS.get(key, key)} {int(value) * int(multiplier):,}"
         for key, value in cost.items()
     )
-
-
-def _message_command_owner_id(interaction):
-    """메시지를 처음 연 이용자 ID를 상호작용 메타데이터나 푸터에서 찾는다."""
-    message = getattr(interaction, "message", None)
-    for attr in ("interaction_metadata", "interaction"):
-        metadata = getattr(message, attr, None)
-        user = getattr(metadata, "user", None)
-        if user is not None and getattr(user, "id", None) is not None:
-            return int(user.id)
-    embeds = getattr(message, "embeds", None) or []
-    if embeds:
-        footer_text = str(getattr(getattr(embeds[0], "footer", None), "text", "") or "")
-        marker = "owner:"
-        if marker in footer_text:
-            raw = footer_text.rsplit(marker, 1)[1].split()[0].strip()
-            if raw.isdigit():
-                return int(raw)
-    return None
 
 
 def _rank_threshold_info(total_contribution):
@@ -805,12 +785,6 @@ class GuildMissionView(discord.ui.View):
         self.guild_info = guild_info
         self.selected_mission = "donate"
         self.add_item(self._mission_select())
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인이 연 길드 미션만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     def _mission_select(self):
         select = Select(
@@ -2304,20 +2278,6 @@ class GuildMainView(discord.ui.View):
         super().__init__(timeout=None)
         self.page = 0
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        owner_id = _message_command_owner_id(interaction)
-        if owner_id is not None and interaction.user.id == owner_id:
-            return True
-        if owner_id is None:
-            message = "소유자를 확인할 수 없는 오래된 길드 메뉴입니다. `/길드`로 새로 열어주세요."
-        else:
-            message = "다른 이용자가 연 길드 메뉴입니다. `/길드`로 본인 메뉴를 열어주세요."
-        await interaction.response.send_message(
-            message,
-            ephemeral=True,
-        )
-        return False
-
     def _add_navigation(self):
         previous = Button(label="이전", disabled=self.page == 0, row=1)
         counter = Button(label=f"{self.page + 1}/2", disabled=True, row=1)
@@ -2409,10 +2369,7 @@ class GuildMainView(discord.ui.View):
             inline=False,
         )
         embed.set_footer(
-            text=(
-                f"메뉴 {self.page + 1}/2 · 생성·검색·탈퇴 없이 모든 이용자가 자동 소속됩니다. "
-                f"· owner:{int(user_id)}"
-            )
+            text=f"메뉴 {self.page + 1}/2 · 생성·검색·탈퇴 없이 모든 이용자가 자동 소속됩니다."
         )
         return embed
 
@@ -2422,7 +2379,7 @@ class GuildMainView(discord.ui.View):
         guild_info = await get_user_guild_info(interaction.user.id)
         if not guild_info: return
         view = GuildMissionView(interaction.user, guild_info)
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="🛒 길드 상점", style=discord.ButtonStyle.primary, custom_id="guild_btn_shop")
     async def btn_shop(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2431,14 +2388,14 @@ class GuildMainView(discord.ui.View):
             return
         view = GuildShopView(interaction.user, guild_info, None)
         await view.setup()
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="📦 창고", style=discord.ButtonStyle.secondary, custom_id="guild_btn_warehouse")
     async def btn_warehouse(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_info = await get_user_guild_info(interaction.user.id)
         if not guild_info: return
         view = GuildWarehouseView(interaction.user, guild_info)
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="⚔️ 레이드", style=discord.ButtonStyle.danger, custom_id="guild_btn_raid")
     async def btn_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2450,8 +2407,11 @@ class GuildMainView(discord.ui.View):
             return await interaction.response.send_message("레이드 보스 데이터를 찾지 못했습니다.", ephemeral=True)
         lobby = RaidLobbyView(interaction.user, guild_info, boss_data)
         await lobby.add_participant(interaction.user)
-        await interaction.response.edit_message(content=None, embed=lobby.get_embed(), view=lobby)
-        lobby.public_message = interaction.message
+        await interaction.response.send_message(embed=lobby.get_embed(), view=lobby)
+        try:
+            lobby.public_message = await interaction.original_response()
+        except (discord.NotFound, discord.HTTPException):
+            pass
 
     @discord.ui.button(label="🥋 수련장", style=discord.ButtonStyle.success, custom_id="guild_btn_training")
     async def btn_training(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2459,7 +2419,7 @@ class GuildMainView(discord.ui.View):
         if not guild_info:
             return
         view = GuildTrainingView(interaction.user, guild_info)
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="🛠️ 길드 제작소", style=discord.ButtonStyle.primary, custom_id="guild_btn_workshop")
     async def btn_workshop(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2468,7 +2428,7 @@ class GuildMainView(discord.ui.View):
             return
         view = GuildWorkshopView(interaction.user, guild_info)
         await view.setup_view()
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
     
     @discord.ui.button(label="⚖️ 물자 관리", style=discord.ButtonStyle.secondary, custom_id="guild_btn_manage")
     async def btn_manage(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2476,7 +2436,7 @@ class GuildMainView(discord.ui.View):
         if not guild_info: return
         view = InventoryManageView(interaction.user, guild_info)
         await view.setup_view()
-        await interaction.response.edit_message(content=None, embed=await view.get_embed(), view=view)
+        await interaction.response.send_message(embed=await view.get_embed(), view=view, ephemeral=True)
 
     async def refresh_ui(self, interaction):
         embed = await self.get_embed(interaction.user.id, interaction.user.display_name)

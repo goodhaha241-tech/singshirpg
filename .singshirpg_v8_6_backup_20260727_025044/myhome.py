@@ -23,7 +23,6 @@ DATA_FILE = "user_data.json"
 from data_manager import advance_world_turn, get_user_data
 
 # guild-pvp-stability-v7.2
-# owner-isolated-ui-v8.6.4
 
 # --- 마이홈 건설 단계별 요구 조건 (총 5단계) ---
 CONSTRUCTION_DATA = {
@@ -257,27 +256,8 @@ class MyHomeView(discord.ui.View):
             await i.response.edit_message(content=f"🚀 **{region}** 파견 설정을 선택하세요.", view=view, embed=None)
 
         select.callback = select_cb
-        view = discord.ui.View(timeout=60)
-
-        async def owner_check(i):
-            if i.user.id == self.author.id:
-                return True
-            await i.response.send_message("❌ 본인의 원격 파견만 조작할 수 있습니다.", ephemeral=True)
-            return False
-
-        async def back_cb(i):
-            await i.response.edit_message(content=None, embed=self.get_embed(), view=self)
-
-        view.interaction_check = owner_check
-        view.add_item(select)
-        back = discord.ui.Button(label="마이홈으로 돌아가기", style=discord.ButtonStyle.secondary)
-        back.callback = back_cb
-        view.add_item(back)
-        await interaction.edit_original_response(
-            content="🚀 원격 파견지를 선택하세요.",
-            embed=None,
-            view=view,
-        )
+        view = discord.ui.View(); view.add_item(select)
+        await interaction.followup.send("🚀 원격 파견지를 선택하세요.", view=view, ephemeral=True)
 
     async def rest_callback(self, interaction: discord.Interaction):
         recovered_count = 0

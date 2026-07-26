@@ -1,6 +1,5 @@
 # life-artifact-v5-life-hub
 # rollback-guard-appraisal-gems-v8
-# owner-isolated-ui-v8.6.4
 from __future__ import annotations
 
 import discord
@@ -59,12 +58,6 @@ class LifeSupplyShopView(discord.ui.View):
         self.quantity = 1
         self.page = 0
         self._rebuild()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 생활 상점만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     def _rebuild(self):
         self.clear_items()

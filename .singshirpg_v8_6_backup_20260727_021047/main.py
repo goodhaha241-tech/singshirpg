@@ -97,12 +97,10 @@ class MyBot(commands.Bot):
             # (2) 던전/토벌 관련 뷰 등록 (필요한 경우)
             # 주의: 해당 뷰 클래스들이 timeout=None을 지원하도록 수정되었는지 확인 필요
             try:
-                from subjugation import SubjugationRegionView, DungeonMainView
+                from subjugation import SubjugationRegionView
                 # 인자가 필요한 경우 None 등을 넣어 초기화하되, 내부에서 데이터 로드 로직이 있어야 함
                 self.add_view(SubjugationRegionView(None, None, save_user_data, timeout=None))
                 logger.info("✅ SubjugationRegionView 지속성 등록 완료")
-                self.add_view(DungeonMainView(None, None, save_user_data, timeout=None))
-                logger.info("✅ DungeonMainView 지속성 등록 완료")
             except ImportError:
                 pass # 해당 파일이 없거나 뷰가 없으면 패스
             except Exception as e:

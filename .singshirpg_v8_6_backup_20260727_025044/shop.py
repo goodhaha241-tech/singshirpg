@@ -8,8 +8,6 @@ from artifacts import generate_artifact
 from data_manager import get_user_data
 from decorators import auto_defer
 
-# owner-isolated-ui-v8.6.4
-
 DATA_FILE = "user_data.json"
 
 # [설정] 포인트 충전 가격
@@ -44,12 +42,6 @@ class ShopView(discord.ui.View):
         self.save_func = save_func
         self.page = 0
         self._rebuild_menu()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 상점만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     def _rebuild_menu(self):
         self.clear_items()
@@ -181,12 +173,6 @@ class PointShopView(discord.ui.View):
         back_btn = discord.ui.Button(label="⬅️ 메인으로", style=discord.ButtonStyle.secondary, row=2)
         back_btn.callback = self.back_callback
         self.add_item(back_btn)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 포인트 상점만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     
 

@@ -8,19 +8,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# owner-isolated-ui-v8.6.4
-
-
-async def _author_only_interaction(view, interaction):
-    author = getattr(view, "author", None)
-    if author is not None and interaction.user.id == author.id:
-        return True
-    await interaction.response.send_message(
-        "❌ 다른 이용자가 연 메뉴입니다. 본인의 명령어로 새로 열어주세요.",
-        ephemeral=True,
-    )
-    return False
-
 # [DB 및 데이터 매니저]
 from data_manager import get_db_pool, get_user_data, save_user_data
 from decorators import auto_defer
@@ -54,9 +41,6 @@ class StatusMenuView(discord.ui.View):
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _author_only_interaction(self, interaction)
 
     @discord.ui.button(label="정보", style=discord.ButtonStyle.primary, emoji="📜")
     @auto_defer(reload_data=True)
@@ -105,9 +89,6 @@ class OutingMenuView(discord.ui.View):
         self.save_func = save_func
         self.page = 0
         self._rebuild_menu()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _author_only_interaction(self, interaction)
 
     def _rebuild_menu(self):
         self.clear_items()
@@ -171,9 +152,6 @@ class ManagementMenuView(discord.ui.View):
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _author_only_interaction(self, interaction)
 
     @discord.ui.button(label="상점", style=discord.ButtonStyle.primary, emoji="🛒", custom_id="menu:manage:shop")
     @auto_defer(reload_data=True)

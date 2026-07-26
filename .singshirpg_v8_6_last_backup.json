@@ -1,9 +1,21 @@
 {
   "version": "8.6",
-  "backup": "H:\\디코봇\\.singshirpg_v8_6_backup_20260727_013313",
+  "backup": "H:\\디코봇\\.singshirpg_v8_6_backup_20260727_025044",
   "files": [
     "data_manager.py",
     "guild.py",
-    "subjugation.py"
+    "battle_engine.py",
+    "subjugation.py",
+    "main.py",
+    "rpg_commands.py",
+    "info.py",
+    "cooking_system_v6.py",
+    "myhome.py",
+    "artifact_manager.py",
+    "shop.py",
+    "battle.py",
+    "progression_system_v6.py",
+    "life_system.py",
+    "life_overhaul_v5.py"
   ]
 }

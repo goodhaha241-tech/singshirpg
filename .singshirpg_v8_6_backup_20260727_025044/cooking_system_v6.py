@@ -383,25 +383,6 @@ async def _save(save_func, author, user_data):
         await save_func(user_data)
 
 
-# owner-isolated-ui-v8.6.4
-async def _cooking_owner_only(view, interaction):
-    parent = getattr(view, "parent", None)
-    author = getattr(view, "author", None) or getattr(parent, "author", None)
-    if author is not None and interaction.user.id == author.id:
-        return True
-    await interaction.response.send_message("❌ 본인의 요리 화면만 조작할 수 있습니다.", ephemeral=True)
-    return False
-
-
-async def _back_to_cooking(parent, interaction, message=None):
-    parent._rebuild_menu()
-    await interaction.response.edit_message(
-        content=None,
-        embed=parent.get_embed(message),
-        view=parent,
-    )
-
-
 class CookingView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
         super().__init__(timeout=180)
@@ -409,9 +390,6 @@ class CookingView(discord.ui.View):
         ensure_cooking_data(user_data)
         self.page = 0
         self._rebuild_menu()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _cooking_owner_only(self, interaction)
 
     def _rebuild_menu(self):
         self.clear_items()
@@ -473,11 +451,7 @@ class CookingView(discord.ui.View):
                 "현재 재료로 만들 수 있는 요리가 없습니다.",
                 ephemeral=True,
             )
-        await interaction.response.edit_message(
-            content="조리할 레시피를 선택하세요.",
-            embed=None,
-            view=RecipeSelectView(self, recipes, 1),
-        )
+        await interaction.response.send_message("조리할 레시피를 선택하세요.", view=RecipeSelectView(self, recipes, 1), ephemeral=True)
 
     @discord.ui.button(label="레시피 10개 조리", style=discord.ButtonStyle.primary)
     async def cook_ten(self, interaction, button):
@@ -487,31 +461,27 @@ class CookingView(discord.ui.View):
                 "현재 재료로 10개 만들 수 있는 요리가 없습니다.",
                 ephemeral=True,
             )
-        await interaction.response.edit_message(
-            content="조리할 레시피를 선택하세요.",
-            embed=None,
-            view=RecipeSelectView(self, recipes, 10),
-        )
+        await interaction.response.send_message("조리할 레시피를 선택하세요.", view=RecipeSelectView(self, recipes, 10), ephemeral=True)
 
     @discord.ui.button(label="레시피 연구", style=discord.ButtonStyle.secondary)
     async def research(self, interaction, button):
         view = ResearchView(self)
-        await interaction.response.edit_message(content=None, embed=view.get_embed(), view=view)
+        await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="완성 요리 판매", style=discord.ButtonStyle.secondary)
     async def sell(self, interaction, button):
-        await interaction.response.edit_message(
-            content="판매할 완성 요리를 선택하세요.",
-            embed=None,
+        await interaction.response.send_message(
+            "판매할 완성 요리를 선택하세요.",
             view=SellFoodView(self),
+            ephemeral=True,
         )
 
     @discord.ui.button(label="완성 요리 먹기", style=discord.ButtonStyle.secondary)
     async def use(self, interaction, button):
-        await interaction.response.edit_message(
-            content="먹을 완성 요리를 선택하세요.",
-            embed=None,
+        await interaction.response.send_message(
+            "먹을 완성 요리를 선택하세요.",
             view=UseFoodView(self),
+            ephemeral=True,
         )
 
 
@@ -527,9 +497,6 @@ class SellFoodView(discord.ui.View):
         self.foods, self.page = foods, 0
         self.rebuild()
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _cooking_owner_only(self, interaction)
-
     def rebuild(self):
         self.clear_items()
         visible = self.foods[self.page * 8:self.page * 8 + 8]
@@ -541,9 +508,6 @@ class SellFoodView(discord.ui.View):
             select.callback = self.selected
             self.add_item(select)
         self._page_buttons()
-        back = discord.ui.Button(label="요리로 돌아가기", style=discord.ButtonStyle.secondary, row=4)
-        back.callback = lambda interaction: _back_to_cooking(self.parent, interaction)
-        self.add_item(back)
 
     def _page_buttons(self):
         if len(self.foods) <= 8: return
@@ -559,7 +523,7 @@ class SellFoodView(discord.ui.View):
         ok, message = sell_food(self.parent.user_data, food, 1)
         if ok:
             await _save(self.parent.save_func, self.parent.author, self.parent.user_data)
-        await _back_to_cooking(self.parent, interaction, message)
+        await interaction.response.edit_message(content=message, view=None)
 
 
 class UseFoodView(discord.ui.View):
@@ -573,9 +537,6 @@ class UseFoodView(discord.ui.View):
         ]
         self.foods, self.page = foods, 0
         self.rebuild()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _cooking_owner_only(self, interaction)
 
     def rebuild(self):
         self.clear_items()
@@ -594,16 +555,13 @@ class UseFoodView(discord.ui.View):
                 self.page += delta; self.rebuild(); await i.response.edit_message(view=self)
             prev.callback = lambda i: move(i, -1); nxt.callback = lambda i: move(i, 1)
             self.add_item(prev); self.add_item(nxt)
-        back = discord.ui.Button(label="요리로 돌아가기", style=discord.ButtonStyle.secondary, row=4)
-        back.callback = lambda interaction: _back_to_cooking(self.parent, interaction)
-        self.add_item(back)
 
     async def selected(self, interaction):
         food = interaction.data["values"][0]
         ok, message = use_food(self.parent.user_data, food)
         if ok:
             await _save(self.parent.save_func, self.parent.author, self.parent.user_data)
-        await _back_to_cooking(self.parent, interaction, message)
+        await interaction.response.edit_message(content=message, view=None)
 
 
 class RecipeSelectView(discord.ui.View):
@@ -611,9 +569,6 @@ class RecipeSelectView(discord.ui.View):
         super().__init__(timeout=90)
         self.parent, self.count, self.recipes, self.page = parent, count, recipes, 0
         self.rebuild()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _cooking_owner_only(self, interaction)
 
     def rebuild(self):
         self.clear_items()
@@ -624,7 +579,7 @@ class RecipeSelectView(discord.ui.View):
                 discord.SelectOption(
                     label=r,
                     value=r,
-                    description=format_recipe_materials(self.parent.user_data, r, self.count)[:100],
+                    description=format_recipe_materials(parent.user_data, r, count)[:100],
                 )
                 for r in visible
             ],
@@ -638,9 +593,6 @@ class RecipeSelectView(discord.ui.View):
                 self.page += delta; self.rebuild(); await i.response.edit_message(view=self)
             prev.callback = lambda i: move(i, -1); nxt.callback = lambda i: move(i, 1)
             self.add_item(prev); self.add_item(nxt)
-        back = discord.ui.Button(label="요리로 돌아가기", style=discord.ButtonStyle.secondary, row=4)
-        back.callback = lambda interaction: _back_to_cooking(self.parent, interaction)
-        self.add_item(back)
 
     async def selected(self, interaction):
         recipe = interaction.data["values"][0]
@@ -658,7 +610,7 @@ class RecipeSelectView(discord.ui.View):
                         if masterpiece_bonus else ""
                     )
                 )
-        await _back_to_cooking(self.parent, interaction, msg)
+        await interaction.response.edit_message(content=msg, view=None)
 
 
 class ResearchView(discord.ui.View):
@@ -668,12 +620,6 @@ class ResearchView(discord.ui.View):
         for item in self.children:
             if isinstance(item, discord.ui.Button) and item.label in RESEARCH_POOLS:
                 item.disabled = not research_available(parent.user_data, item.label)
-        back = discord.ui.Button(label="요리로 돌아가기", style=discord.ButtonStyle.secondary, row=1)
-        back.callback = lambda interaction: _back_to_cooking(self.parent, interaction)
-        self.add_item(back)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _cooking_owner_only(self, interaction)
 
     def get_embed(self, message=None):
         cooking = ensure_cooking_data(self.parent.user_data)
@@ -730,9 +676,6 @@ class CookingDeliveryView(discord.ui.View):
         foods = [(name, count) for name, count in ensure_cooking_data(user_data)["foods"].items() if count]
         self.foods, self.page = foods, 0
         self.rebuild()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _cooking_owner_only(self, interaction)
 
     def rebuild(self):
         self.clear_items()

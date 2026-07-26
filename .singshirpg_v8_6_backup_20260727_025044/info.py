@@ -1,7 +1,6 @@
 # info.py
 # appraisal-gem-affixes-v8.1
 # gem-visibility-tools-v8.3
-# owner-isolated-ui-v8.6.4
 import discord
 from character import (
     Character,
@@ -15,19 +14,12 @@ from gem_manager import gem_detail_text
 
 class InventoryPaginationView(discord.ui.View):
     """인벤토리 페이지 넘김을 담당하는 뷰"""
-    def __init__(self, author, pages_data, parent_view):
+    def __init__(self, author, pages_data):
         super().__init__(timeout=60)
         self.author = author
         self.pages = pages_data 
-        self.parent_view = parent_view
         self.current_page = 0
         self.update_buttons()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 가방만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     def update_buttons(self):
         self.prev_btn.disabled = (self.current_page == 0)
@@ -58,14 +50,6 @@ class InventoryPaginationView(discord.ui.View):
         self.current_page += 1
         self.update_buttons()
         await interaction.edit_original_response(embed=self.get_current_embed(), view=self)
-
-    @discord.ui.button(label="돌아가기", style=discord.ButtonStyle.secondary)
-    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if isinstance(self.parent_view, InfoView):
-            embed = self.parent_view.create_status_embed()
-        else:
-            embed = self.parent_view.get_embed()
-        await interaction.response.edit_message(content=None, embed=embed, view=self.parent_view)
 
 async def info_command(ctx, load_data, get_user_data, save_data):
     # [수정] load_data가 None이므로 호출하지 않습니다. (DB 사용으로 변경됨)
@@ -98,31 +82,6 @@ class InfoMainView(discord.ui.View):
         status_btn = discord.ui.Button(label="📊 캐릭터 상태", style=discord.ButtonStyle.primary)
         status_btn.callback = self.show_character_status
         self.add_item(status_btn)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 정보 화면만 조작할 수 있습니다.", ephemeral=True)
-        return False
-
-    def get_embed(self):
-        embed = discord.Embed(title=f"👤 {self.author.name}님의 정보", color=discord.Color.blue())
-        embed.add_field(
-            name="💰 보유 자산",
-            value=(
-                f"머니: {self.user_data.get('money', 0):,}원\n"
-                f"포인트: {self.user_data.get('pt', 0):,}pt"
-            ),
-            inline=False,
-        )
-        chars = self.user_data.get("characters", [])
-        if chars:
-            char_text = "\n".join(
-                f"• **{c['name']}** (HP: {c['current_hp']}/{c['hp']})"
-                for c in chars
-            )
-            embed.add_field(name="⚔️ 보유 캐릭터", value=char_text[:1024], inline=False)
-        return embed
 
 
     @discord.ui.button(label="🎒 가방 확인", style=discord.ButtonStyle.success)
@@ -170,12 +129,8 @@ class InfoMainView(discord.ui.View):
         if not pages_data:
             await interaction.followup.send("🎒 가방이 비어있습니다.", ephemeral=True)
         else:
-            view = InventoryPaginationView(self.author, pages_data, self)
-            await interaction.edit_original_response(
-                content=None,
-                embed=view.get_current_embed(),
-                view=view,
-            )
+            view = InventoryPaginationView(self.author, pages_data)
+            await interaction.followup.send(embed=view.get_current_embed(), view=view, ephemeral=True)
 
     @auto_defer()
     async def show_character_status(self, interaction: discord.Interaction):
@@ -196,12 +151,6 @@ class InfoView(discord.ui.View):
         self.char_index = char_index
         self.info_page = 0
         self.update_buttons()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if self.author is not None and interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 정보 화면만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     def update_buttons(self):
         self.clear_items()
@@ -363,12 +312,8 @@ class InfoView(discord.ui.View):
         if not pages_data:
             await interaction.followup.send("🎒 가방이 비어있습니다.", ephemeral=True)
         else:
-            view = InventoryPaginationView(self.author, pages_data, self)
-            await interaction.edit_original_response(
-                content=None,
-                embed=view.get_current_embed(),
-                view=view,
-            )
+            view = InventoryPaginationView(self.author, pages_data)
+            await interaction.followup.send(embed=view.get_current_embed(), view=view, ephemeral=True)
 
     def create_status_embed(self):
         if not self.user_data:

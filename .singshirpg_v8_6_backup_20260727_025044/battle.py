@@ -1,6 +1,5 @@
 # battle.py
 # pve-gem-runtime-v8.2
-# owner-isolated-ui-v8.6.4
 import discord
 import random
 import json
@@ -91,12 +90,6 @@ class BattleView(discord.ui.View):
                 self.player.defense_rate += val
         
         self.update_buttons()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("❌ 본인의 전투만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     def update_buttons(self):
         self.clear_items()

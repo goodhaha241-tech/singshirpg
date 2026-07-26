@@ -365,14 +365,6 @@ def _wiki_detail(category, name):
     return "아직 상세 설명이 준비되지 않은 획득 기록입니다."
 
 
-# owner-isolated-ui-v8.6.4
-async def _progression_owner_only(view, interaction):
-    if interaction.user.id == view.author.id:
-        return True
-    await interaction.response.send_message("❌ 본인의 도감·업적만 조작할 수 있습니다.", ephemeral=True)
-    return False
-
-
 class ObtainedWikiView(discord.ui.View):
     PAGE_SIZE = 8
 
@@ -382,9 +374,6 @@ class ObtainedWikiView(discord.ui.View):
         self.parent_view = parent_view
         self.category, self.page, self.selected = "items", 0, None
         self.rebuild()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _progression_owner_only(self, interaction)
 
     def _names(self):
         return sorted(ensure_progression(self.user_data)["collection"].get(self.category, []))
@@ -483,9 +472,6 @@ class ProgressionView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
         super().__init__(timeout=180)
         self.author, self.user_data, self.save_func = author, user_data, save_func
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await _progression_owner_only(self, interaction)
 
     def get_embed(self):
         p = ensure_progression(self.user_data)
