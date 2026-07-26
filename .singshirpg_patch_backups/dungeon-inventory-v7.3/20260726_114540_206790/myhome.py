@@ -15,9 +15,9 @@ from use_item import ItemUseView
 from card_manager import CardManageView
 from navigation_v7 import attach_navigation
 try:
-    from artifact_overhaul_v5 import ArtifactHubView
+    from artifact_manager import ArtifactManageView
 except ImportError:
-    ArtifactHubView = None
+    ArtifactManageView = None 
 
 DATA_FILE = "user_data.json"
 from data_manager import advance_world_turn, get_user_data
@@ -541,7 +541,7 @@ class CharacterMaintenanceView(discord.ui.View):
 
         self.add_item(discord.ui.Button(label="🎒 아이템 사용", style=discord.ButtonStyle.primary, custom_id="use_item"))
         self.add_item(discord.ui.Button(label="🎴 카드 관리", style=discord.ButtonStyle.primary, custom_id="manage_cards"))
-        if ArtifactHubView:
+        if ArtifactManageView:
             self.add_item(discord.ui.Button(label="💍 아티팩트 관리", style=discord.ButtonStyle.primary, custom_id="manage_artifacts"))
         self.add_item(discord.ui.Button(label="🕵️ 조사원 설정", style=discord.ButtonStyle.primary, custom_id="set_investigator"))
         
@@ -565,9 +565,9 @@ class CharacterMaintenanceView(discord.ui.View):
             await interaction.edit_original_response(content="카드를 관리할 캐릭터를 선택하세요.", embed=None, view=view)
 
         elif cid == "manage_artifacts":
-            if ArtifactHubView:
-                view = ArtifactHubView(self.author, self.user_data, self.save_func)
-                embed = view.get_embed()
+            if ArtifactManageView:
+                view = ArtifactManageView(self.author, self.user_data, self.save_func)
+                embed = view.make_base_embed("💍 아티팩트 관리", "아티팩트를 장착/분해/강화합니다.")
                 await interaction.edit_original_response(content=None, embed=embed, view=view)
 
         elif cid == "set_investigator":

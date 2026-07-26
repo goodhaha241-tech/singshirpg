@@ -15,14 +15,12 @@ from use_item import ItemUseView
 from card_manager import CardManageView
 from navigation_v7 import attach_navigation
 try:
-    from artifact_overhaul_v5 import ArtifactHubView
+    from artifact_manager import ArtifactManageView
 except ImportError:
-    ArtifactHubView = None
+    ArtifactManageView = None 
 
 DATA_FILE = "user_data.json"
-from data_manager import advance_world_turn, get_user_data
-
-# guild-pvp-stability-v7.2
+from data_manager import get_user_data
 
 # --- 마이홈 건설 단계별 요구 조건 (총 5단계) ---
 CONSTRUCTION_DATA = {
@@ -359,18 +357,13 @@ class DispatchView(discord.ui.View):
             
         myhome = self.user_data.setdefault("myhome", {})
         myhome["total_investigations"] = myhome.get("total_investigations", 0) + (count * 10)
-        advance_world_turn(self.user_data, count)
         
         await self.save_func(self.author.id, self.user_data)
         
         res_text = "\n".join([f"{k} x{v}" for k, v in acquired.items()])
         if not res_text: res_text = "획득한 아이템이 없습니다."
         embed = discord.Embed(title=f"🚀 {self.region} 파견 완료 ({count}회)", color=discord.Color.blue())
-        embed.description = (
-            f"**소모 포인트:** {total_cost}pt\n"
-            f"**공용 행동 진행:** +{count}\n\n"
-            f"**[획득 결과]**\n{res_text}"
-        )
+        embed.description = f"**소모 포인트:** {total_cost}pt\n\n**[획득 결과]**\n{res_text}"
         await interaction.edit_original_response(content=None, embed=embed, view=None)
 
     @discord.ui.button(label="10회 파견", style=discord.ButtonStyle.primary)
@@ -541,7 +534,7 @@ class CharacterMaintenanceView(discord.ui.View):
 
         self.add_item(discord.ui.Button(label="🎒 아이템 사용", style=discord.ButtonStyle.primary, custom_id="use_item"))
         self.add_item(discord.ui.Button(label="🎴 카드 관리", style=discord.ButtonStyle.primary, custom_id="manage_cards"))
-        if ArtifactHubView:
+        if ArtifactManageView:
             self.add_item(discord.ui.Button(label="💍 아티팩트 관리", style=discord.ButtonStyle.primary, custom_id="manage_artifacts"))
         self.add_item(discord.ui.Button(label="🕵️ 조사원 설정", style=discord.ButtonStyle.primary, custom_id="set_investigator"))
         
@@ -565,9 +558,9 @@ class CharacterMaintenanceView(discord.ui.View):
             await interaction.edit_original_response(content="카드를 관리할 캐릭터를 선택하세요.", embed=None, view=view)
 
         elif cid == "manage_artifacts":
-            if ArtifactHubView:
-                view = ArtifactHubView(self.author, self.user_data, self.save_func)
-                embed = view.get_embed()
+            if ArtifactManageView:
+                view = ArtifactManageView(self.author, self.user_data, self.save_func)
+                embed = view.make_base_embed("💍 아티팩트 관리", "아티팩트를 장착/분해/강화합니다.")
                 await interaction.edit_original_response(content=None, embed=embed, view=view)
 
         elif cid == "set_investigator":

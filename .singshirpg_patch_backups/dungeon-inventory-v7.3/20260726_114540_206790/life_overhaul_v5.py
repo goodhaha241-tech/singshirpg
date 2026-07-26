@@ -190,12 +190,12 @@ class LifeHubView(discord.ui.View):
             ("요리·완성 요리", "🍳", discord.ButtonStyle.success, CookingView),
             ("원석 감정", "🔍", discord.ButtonStyle.secondary, AppraisalView),
             ("젬 세공", "💎", discord.ButtonStyle.danger, GemCraftingView),
-            ("세공 도구 관리", "🛠️", discord.ButtonStyle.secondary, ToolGachaView),
+            ("세공 도구", "🛠️", discord.ButtonStyle.secondary, ToolGachaView),
             ("순수한 희망 상점", "🛒", discord.ButtonStyle.secondary, PureHopeShopView),
             ("납품", "📦", discord.ButtonStyle.primary, CookingDeliveryView),
             ("도감·업적", "📚", discord.ButtonStyle.secondary, ProgressionView),
             ("아티팩트 관리", "💍", discord.ButtonStyle.secondary, ArtifactHubView),
-            ("젬 관리", "💎", discord.ButtonStyle.secondary, GemManagerView),
+            ("젬 장착", "🔩", discord.ButtonStyle.secondary, GemManagerView),
         ]
 
     def update_components(self):

@@ -198,15 +198,6 @@ TOOL_DEFS = {
 # Rarity is selected first, then one tool in that rarity is selected uniformly.
 TOOL_RARITY_WEIGHT = {"일반": 60, "고급": 30, "희귀": 10}
 
-TOOL_CATEGORIES = {
-    "heating": {"label": "달구기", "tools": ("정령 화로", "흑철 화로")},
-    "cooling": {"label": "식히기", "tools": ("서리 집게", "빙정 냉각판")},
-    "enchanting": {"label": "마법부여", "tools": ("마력 붓", "폭주 촉매")},
-    "shaping": {"label": "모양 내기", "tools": ("별무늬 세공망치", "유성 망치")},
-    "purifying": {"label": "불순물 제거", "tools": ("순백의 체", "결정 추출기")},
-    "general": {"label": "범용", "tools": ("장인의 확대경", "안정의 균형추")},
-}
-
 
 CROPS = {
     "새벽 감자": {"turns": 12, "yield": (3, 6), "water": (25, 80)},
@@ -1201,229 +1192,56 @@ class _LifeChildView(discord.ui.View):
 
 
 class ToolGachaView(_LifeChildView):
-    """Crafting-tool collection and gacha, categorized with eight tools per page."""
-
-    ITEMS_PER_PAGE = 8
-
-    def __init__(self, author, user_data, save_func):
-        super().__init__(author, user_data, save_func, timeout=300)
-        self.category = "all"
-        self.page = 0
-        self.selected_tool = next(iter(TOOL_DEFS), None)
-        self.last_result = None
-        self._rebuild_components()
-
-    def _category_options(self):
-        return (
-            ("all", "전체"),
-            ("owned", "보유 도구"),
-            *((key, data["label"]) for key, data in TOOL_CATEGORIES.items()),
-        )
-
-    def _filtered_tools(self):
-        names = list(TOOL_DEFS)
-        owned = ensure_life_data(self.user_data)["tools"]
-        if self.category == "owned":
-            names = [name for name in names if name in owned]
-        elif self.category in TOOL_CATEGORIES:
-            allowed = set(TOOL_CATEGORIES[self.category]["tools"])
-            names = [name for name in names if name in allowed]
-        return sorted(
-            names,
-            key=lambda name: (
-                0 if name in owned else 1,
-                TOOL_DEFS[name]["rarity"],
-                name,
+    def get_embed(self, message: str | None = None) -> discord.Embed:
+        inv = _inventory(self.user_data)
+        embed = discord.Embed(
+            title="🛠️ 세공 도구 뽑기",
+            description=(
+                "이번 뽑기 결과입니다."
+                if message
+                else "1회당 순수한 희망 1개를 사용합니다. 도구는 영구 재사용되며 중복 획득 즉시 자동 돌파됩니다."
             ),
+            color=discord.Color.purple(),
         )
-
-    def _sync_selection(self):
-        names = self._filtered_tools()
-        total_pages = max(1, (len(names) + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
-        self.page = min(max(0, self.page), total_pages - 1)
-        page_names = names[self.page * self.ITEMS_PER_PAGE:(self.page + 1) * self.ITEMS_PER_PAGE]
-        if self.selected_tool not in page_names:
-            self.selected_tool = page_names[0] if page_names else None
-        return names, page_names, total_pages
-
-    def _rebuild_components(self):
-        self.clear_items()
-        names, page_names, total_pages = self._sync_selection()
-        owned = ensure_life_data(self.user_data)["tools"]
-
-        category_select = discord.ui.Select(
-            placeholder="세공 도구 종류",
-            row=0,
-            options=[
-                discord.SelectOption(
-                    label=label,
-                    value=key,
-                    description=f"{self._category_count(key)}종",
-                    default=key == self.category,
-                )
-                for key, label in self._category_options()
-            ],
+        embed.add_field(name="순수한 희망", value=f"{inv.get(PURE_HOPE_ITEM, 0)}개", inline=True)
+        embed.add_field(
+            name="등장 확률",
+            value=(
+                f"원석 {TOOL_GACHA_STONE_WEIGHT}% · "
+                f"세공 도구 {TOOL_GACHA_TOOL_WEIGHT}%"
+            ),
+            inline=True,
         )
-        category_select.callback = self._select_category
-        self.add_item(category_select)
-
-        if page_names:
-            tool_select = discord.ui.Select(
-                placeholder=f"세공 도구 선택 · 페이지당 {self.ITEMS_PER_PAGE}개",
-                row=1,
-                options=[
-                    discord.SelectOption(
-                        label=(
-                            f"{name} · {owned[name]}돌파"
-                            if name in owned else f"{name} · 미보유"
-                        )[:100],
-                        value=name,
-                        description=(
-                            f"{TOOL_DEFS[name]['rarity']} · "
-                            f"{TOOL_DEFS[name]['effects'][int(owned.get(name, 0)) if name in owned else 0]}"
-                        )[:100],
-                        default=name == self.selected_tool,
-                    )
-                    for name in page_names
-                ],
-            )
-            tool_select.callback = self._select_tool
-            self.add_item(tool_select)
-
-        previous = discord.ui.Button(label="◀", style=discord.ButtonStyle.secondary, row=2, disabled=self.page == 0)
-        previous.callback = self._previous_page
-        self.add_item(previous)
-        self.add_item(discord.ui.Button(
-            label=f"{self.page + 1}/{total_pages} · 총 {len(names)}종",
-            style=discord.ButtonStyle.secondary,
-            row=2,
-            disabled=True,
-        ))
-        following = discord.ui.Button(
-            label="▶",
-            style=discord.ButtonStyle.secondary,
-            row=2,
-            disabled=self.page >= total_pages - 1,
-        )
-        following.callback = self._next_page
-        self.add_item(following)
-
-        draw_one = discord.ui.Button(label="1회 뽑기", style=discord.ButtonStyle.primary, row=3)
-        draw_one.callback = lambda interaction: self._draw(interaction, 1)
-        self.add_item(draw_one)
-        draw_ten = discord.ui.Button(label="10회 뽑기", style=discord.ButtonStyle.danger, row=3)
-        draw_ten.callback = lambda interaction: self._draw(interaction, 10)
-        self.add_item(draw_ten)
-        attach_navigation(
-            self,
-            self.author,
-            self._life_hub_factory,
-            back_label="생활 관리로",
-        )
-
-    def _category_count(self, key):
-        old = self.category
-        self.category = key
-        count = len(self._filtered_tools())
-        self.category = old
-        return count
-
-    async def _select_category(self, interaction):
-        await _defer(interaction)
-        self.category = interaction.data["values"][0]
-        self.page = 0
-        self.selected_tool = None
-        self.last_result = None
-        self._rebuild_components()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _select_tool(self, interaction):
-        await _defer(interaction)
-        self.selected_tool = interaction.data["values"][0]
-        self.last_result = None
-        self._rebuild_components()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _previous_page(self, interaction):
-        await _defer(interaction)
-        self.page = max(0, self.page - 1)
-        self.selected_tool = None
-        self.last_result = None
-        self._rebuild_components()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _next_page(self, interaction):
-        await _defer(interaction)
-        self.page += 1
-        self.selected_tool = None
-        self.last_result = None
-        self._rebuild_components()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        if message:
+            embed.add_field(name="획득 결과", value=message[:1024], inline=False)
+        return embed
 
     async def _draw(self, interaction, count: int):
         await _defer(interaction)
         inv = _inventory(self.user_data)
-        hope = int(inv.get(PURE_HOPE_ITEM, 0))
-        if hope < count:
+        owned = int(inv.get(PURE_HOPE_ITEM, 0))
+        if owned < count:
             return await interaction.followup.send(
-                f"❌ 순수한 희망이 부족합니다. 필요: {count}개 / 보유: {hope}개",
+                f"❌ 순수한 희망이 부족합니다. 필요: {count}개 / 보유: {owned}개",
                 ephemeral=True,
             )
-        inv[PURE_HOPE_ITEM] = hope - count
+        inv[PURE_HOPE_ITEM] = owned - count
         results = draw_crafting_tools(self.user_data, count)
         await _save(self.save_func, self.author, self.user_data)
-        self.last_result = "\n".join(
-            format_tool_result(result, index + 1 if count == 10 else None)
-            for index, result in enumerate(results)
-        )
-        tool_results = [result for result in results if result.get("kind") == "tool"]
-        if tool_results:
-            self.selected_tool = tool_results[-1]["name"]
-            self.category = "owned"
-            owned_names = self._filtered_tools()
-            if self.selected_tool in owned_names:
-                self.page = owned_names.index(self.selected_tool) // self.ITEMS_PER_PAGE
-        self._rebuild_components()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        message = "\n".join(format_tool_result(r, i + 1 if count == 10 else None) for i, r in enumerate(results))
+        await interaction.edit_original_response(embed=self.get_embed(message), view=self)
 
-    def get_embed(self, message: str | None = None) -> discord.Embed:
-        inv = _inventory(self.user_data)
-        life = ensure_life_data(self.user_data)
-        label = dict(self._category_options()).get(self.category, self.category)
-        embed = discord.Embed(
-            title="🛠️ 세공 도구 관리",
-            description=(
-                f"분류: **{label}** · 페이지당 {self.ITEMS_PER_PAGE}종\n"
-                "도구는 영구 재사용되며, 중복 획득 시 즉시 자동 돌파됩니다."
-            ),
-            color=discord.Color.purple(),
-        )
-        embed.add_field(
-            name="보유 현황",
-            value=(
-                f"도구 {len(life['tools'])}/{len(TOOL_DEFS)}종 · "
-                f"순수한 희망 {inv.get(PURE_HOPE_ITEM, 0)}개\n"
-                f"등장: 원석 {TOOL_GACHA_STONE_WEIGHT}% · 도구 {TOOL_GACHA_TOOL_WEIGHT}%"
-            ),
-            inline=False,
-        )
-        if self.selected_tool:
-            level = life["tools"].get(self.selected_tool)
-            effect_level = int(level) if level is not None else 0
-            embed.add_field(
-                name=self.selected_tool,
-                value=(
-                    f"분류: {next((data['label'] for data in TOOL_CATEGORIES.values() if self.selected_tool in data['tools']), '범용')}\n"
-                    f"희귀도: {TOOL_DEFS[self.selected_tool]['rarity']}\n"
-                    f"보유: {f'{level}돌파' if level is not None else '미보유'}\n"
-                    f"효과: {TOOL_DEFS[self.selected_tool]['effects'][effect_level]}"
-                ),
-                inline=False,
-            )
-        result_text = message or self.last_result
-        if result_text:
-            embed.add_field(name="방금 획득", value=result_text[:1024], inline=False)
-        return embed
+    @discord.ui.button(label="1회 뽑기", style=discord.ButtonStyle.primary)
+    async def draw_one(self, interaction, button):
+        await self._draw(interaction, 1)
+
+    @discord.ui.button(label="10회 뽑기", style=discord.ButtonStyle.danger)
+    async def draw_ten(self, interaction, button):
+        await self._draw(interaction, 10)
+
+    @discord.ui.button(label="뒤로", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction, button):
+        await self.go_back(interaction)
 
 
 class AppraisalView(_LifeChildView):

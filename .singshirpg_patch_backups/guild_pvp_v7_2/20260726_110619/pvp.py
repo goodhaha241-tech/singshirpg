@@ -1,26 +1,17 @@
 # pvp.py
 import discord
 import random
-import asyncio
 from cards import get_card
 from character import Character 
 import battle_engine
 
-# guild-pvp-stability-v7.2
-ACTIVE_PVP_USERS = set()
 
 class PVPInviteView(discord.ui.View):
     def __init__(self, author, load_func, save_func):
-        super().__init__(timeout=180)
+        super().__init__(timeout=None)
         self.author = author
         self.load_func = load_func
         self.save_func = save_func
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("대련을 연 본인만 상대를 선택할 수 있습니다.", ephemeral=True)
-        return False
 
     @discord.ui.select(cls=discord.ui.UserSelect, placeholder="⚔️ 대결할 상대를 선택하세요")
     async def select_user(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
@@ -40,12 +31,7 @@ class PVPInviteView(discord.ui.View):
 
         if not u1_chars: return await interaction.response.send_message(f"❌ 본인의 캐릭터가 없습니다.", ephemeral=True)
         if not u2_chars: return await interaction.response.send_message(f"❌ 상대방의 캐릭터가 없습니다.", ephemeral=True)
-        if self.author.id in ACTIVE_PVP_USERS:
-            return await interaction.response.send_message("이미 진행 중인 대련이 있습니다.", ephemeral=True)
-        if target.id in ACTIVE_PVP_USERS:
-            return await interaction.response.send_message("상대방이 이미 다른 대련을 진행 중입니다.", ephemeral=True)
 
-        ACTIVE_PVP_USERS.update((self.author.id, target.id))
         view = PVPBattleView(self.author, target, u1_data, u2_data, self.save_func, self.load_func)
         
         embed = discord.Embed(
@@ -54,17 +40,13 @@ class PVPInviteView(discord.ui.View):
             color=discord.Color.red()
         )
         
-        try:
-            await interaction.response.edit_message(content=f"✅ **{target.name}**님에게 신청 완료!", view=None, embed=None)
-            msg = await interaction.channel.send(content=f"{target.mention}님, 결투 신청이 왔습니다!", embed=embed, view=view)
-            view.action_message = msg # [수정] UI 분리를 위해 action_message 사용
-        except Exception:
-            view.release_users()
-            raise
+        await interaction.response.edit_message(content=f"✅ **{target.name}**님에게 신청 완료!", view=None, embed=None)
+        msg = await interaction.channel.send(content=f"{target.mention}님, 결투 신청이 왔습니다!", embed=embed, view=view)
+        view.action_message = msg # [수정] UI 분리를 위해 action_message 사용
 
 class PVPBattleView(discord.ui.View):
     def __init__(self, p1_user, p2_user, p1_data, p2_data, save_func, load_func):
-        super().__init__(timeout=600)
+        super().__init__(timeout=None)
         self.p1_user = p1_user
         self.p2_user = p2_user
         self.save_func = save_func
@@ -94,9 +76,6 @@ class PVPBattleView(discord.ui.View):
         
         self.processing_turn = False
         self.last_turn_summary = None
-        self.started = False
-        self.finished = False
-        self.state_lock = asyncio.Lock()
         
         # [수정] UI 분리를 위한 메시지 객체
         self.status_message = None # 상단 상태창
@@ -107,13 +86,6 @@ class PVPBattleView(discord.ui.View):
         self.card_page = 0
         
         self.update_setup_buttons()
-
-    def release_users(self):
-        ACTIVE_PVP_USERS.discard(self.p1_user.id)
-        ACTIVE_PVP_USERS.discard(self.p2_user.id)
-
-    def expected_user(self, player_num):
-        return self.p1_user if player_num == 1 else self.p2_user
 
     def update_setup_buttons(self):
         self.clear_items()
@@ -132,27 +104,6 @@ class PVPBattleView(discord.ui.View):
         b2.callback = self.p2_char_select_open
         self.add_item(b2)
 
-        cancel = discord.ui.Button(label="대련 취소·거절", style=discord.ButtonStyle.danger, row=1)
-        cancel.callback = self.cancel_match
-        self.add_item(cancel)
-
-    async def cancel_match(self, interaction: discord.Interaction):
-        if interaction.user.id not in {self.p1_user.id, self.p2_user.id}:
-            return await interaction.response.send_message("대련 참가자만 취소할 수 있습니다.", ephemeral=True)
-        async with self.state_lock:
-            if self.started or self.finished:
-                return await interaction.response.send_message("이미 시작되었거나 종료된 대련입니다.", ephemeral=True)
-            self.finished = True
-        self.release_users()
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(
-            content=f"🚫 **{interaction.user.display_name}**님이 대련을 취소했습니다.",
-            embed=None,
-            view=self,
-        )
-        self.stop()
-
     async def p1_char_select_open(self, interaction: discord.Interaction):
         if interaction.user != self.p1_user: return await interaction.response.send_message("본인이 아닙니다.", ephemeral=True)
         
@@ -170,18 +121,9 @@ class PVPBattleView(discord.ui.View):
         await interaction.response.send_message("출전할 캐릭터를 선택하세요.", view=view, ephemeral=True)
 
     async def set_character(self, interaction, player_num, idx):
-        expected = self.expected_user(player_num)
-        if interaction.user.id != expected.id:
-            return await interaction.response.send_message("본인의 캐릭터만 선택할 수 있습니다.", ephemeral=True)
-        await interaction.response.defer(ephemeral=True)
         user_data = self.p1_data if player_num == 1 else self.p2_data
-        characters = user_data.get("characters", [])
-        if not 0 <= idx < len(characters):
-            return await interaction.followup.send("선택한 캐릭터를 찾지 못했습니다.", ephemeral=True)
-        char_data = characters[idx]
+        char_data = user_data["characters"][idx]
         char_obj = Character.from_dict(char_data)
-        if int(getattr(char_obj, "current_hp", 0) or 0) <= 0:
-            return await interaction.followup.send("전투 불능인 캐릭터는 출전할 수 없습니다.", ephemeral=True)
         
         if "equipped_engraved_artifact" in char_data:
             char_obj.equipped_engraved_artifact = char_data["equipped_engraved_artifact"]
@@ -192,30 +134,18 @@ class PVPBattleView(discord.ui.View):
         char_obj.runtime_cooldowns = {}
         if not hasattr(char_obj, "status_effects"): char_obj.status_effects = {"bleed": 0, "paralysis": 0}
 
-        async with self.state_lock:
-            if self.started or self.finished:
-                return await interaction.followup.send("이미 시작되었거나 종료된 대련입니다.", ephemeral=True)
-            if player_num == 1:
-                if self.p1_char is not None:
-                    return await interaction.followup.send("이미 출전 캐릭터를 선택했습니다.", ephemeral=True)
-                self.p1_char = char_obj
-                self.p1_char_idx = idx
-            else:
-                if self.p2_char is not None:
-                    return await interaction.followup.send("이미 출전 캐릭터를 선택했습니다.", ephemeral=True)
-                self.p2_char = char_obj
-                self.p2_char_idx = idx
+        if player_num == 1:
+            self.p1_char = char_obj
+            self.p1_char_idx = idx
+        else:
+            self.p2_char = char_obj
+            self.p2_char_idx = idx
 
         await self.check_start(interaction)
-        await interaction.followup.send(f"✅ **{char_obj.name}** 출전 준비 완료!", ephemeral=True)
 
     async def check_start(self, interaction):
         # [수정] 전투 시작 시, 상단/하단 메시지 분리하여 생성/수정
         if self.p1_char and self.p2_char:
-            async with self.state_lock:
-                if self.started or self.finished:
-                    return
-                self.started = True
             status_embed = self.make_status_embed("⚔️ **1vs1 대전 시작!**\n기술을 선택하세요.")
             action_embed = discord.Embed(title="🕹️ 기술 선택", description="아래 버튼을 눌러 기술을 선택하세요.", color=discord.Color.greyple())
 
@@ -279,12 +209,7 @@ class PVPBattleView(discord.ui.View):
             self.add_item(b)
             return
 
-        cards = list(getattr(player_char, "equipped_cards", []) or [])
-        if not cards:
-            b = discord.ui.Button(label="행동 불가 · 정신력 회복", style=discord.ButtonStyle.secondary)
-            b.callback = self.make_panic_callback(player_num)
-            self.add_item(b)
-            return
+        cards = player_char.equipped_cards
         PER_PAGE = 4
         total_pages = (len(cards) - 1) // PER_PAGE + 1
         
@@ -310,56 +235,27 @@ class PVPBattleView(discord.ui.View):
 
     # [신규] 카드 페이지네이션 및 콜백 생성
     async def prev_card_page(self, interaction: discord.Interaction):
-        if self.selection_mode not in {"p1", "p2"}:
-            return await interaction.response.send_message("현재 기술을 선택하는 중이 아닙니다.", ephemeral=True)
-        player_num = 1 if self.selection_mode == "p1" else 2
-        if interaction.user.id != self.expected_user(player_num).id:
-            return await interaction.response.send_message("상대방의 기술 목록은 조작할 수 없습니다.", ephemeral=True)
         self.card_page = max(0, self.card_page - 1)
         self.update_main_buttons()
         await interaction.response.edit_message(view=self)
 
     async def next_card_page(self, interaction: discord.Interaction):
-        if self.selection_mode not in {"p1", "p2"}:
-            return await interaction.response.send_message("현재 기술을 선택하는 중이 아닙니다.", ephemeral=True)
-        player_num = 1 if self.selection_mode == "p1" else 2
-        if interaction.user.id != self.expected_user(player_num).id:
-            return await interaction.response.send_message("상대방의 기술 목록은 조작할 수 없습니다.", ephemeral=True)
         self.card_page += 1
         self.update_main_buttons()
         await interaction.response.edit_message(view=self)
 
     def make_card_callback(self, card_name, player_num):
-        expected_turn = self.turn_count
         async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.expected_user(player_num).id:
-                return await interaction.response.send_message("상대방의 행동은 선택할 수 없습니다.", ephemeral=True)
-            if expected_turn != self.turn_count:
-                return await interaction.response.send_message("이 버튼은 이전 턴의 것입니다. 현재 기술을 다시 선택해주세요.", ephemeral=True)
-            if self.selection_mode != f"p{player_num}":
-                return await interaction.response.send_message("이미 닫힌 기술 선택 화면입니다.", ephemeral=True)
             card = get_card(card_name)
-            if card is None:
-                return await interaction.response.send_message("카드 정보를 찾지 못했습니다.", ephemeral=True)
             await self.receive_action(interaction, player_num, card)
         return callback
 
     def make_panic_callback(self, player_num):
-        expected_turn = self.turn_count
         async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.expected_user(player_num).id:
-                return await interaction.response.send_message("상대방의 행동은 선택할 수 없습니다.", ephemeral=True)
-            if expected_turn != self.turn_count:
-                return await interaction.response.send_message("이 버튼은 이전 턴의 것입니다.", ephemeral=True)
             await self.receive_action(interaction, player_num, None)
         return callback
         
     async def back_to_main_selection(self, interaction: discord.Interaction):
-        if self.selection_mode not in {"p1", "p2"}:
-            return await interaction.response.send_message("이미 기술 선택 화면을 닫았습니다.", ephemeral=True)
-        player_num = 1 if self.selection_mode == "p1" else 2
-        if interaction.user.id != self.expected_user(player_num).id:
-            return await interaction.response.send_message("상대방의 화면은 조작할 수 없습니다.", ephemeral=True)
         self.selection_mode = None
         self.card_page = 0
         self.update_main_buttons()
@@ -367,16 +263,14 @@ class PVPBattleView(discord.ui.View):
 
     # [수정] 기술 선택창을 여는 방식 변경
     async def p1_select_open(self, interaction):
-        if interaction.user.id != self.p1_user.id:
-            return await interaction.response.send_message("P1만 선택할 수 있습니다.", ephemeral=True)
+        if interaction.user != self.p1_user: return
         self.selection_mode = 'p1'
         self.card_page = 0
         self.update_main_buttons()
         await interaction.response.edit_message(view=self)
 
     async def p2_select_open(self, interaction):
-        if interaction.user.id != self.p2_user.id:
-            return await interaction.response.send_message("P2만 선택할 수 있습니다.", ephemeral=True)
+        if interaction.user != self.p2_user: return
         self.selection_mode = 'p2'
         self.card_page = 0
         self.update_main_buttons()
@@ -384,43 +278,25 @@ class PVPBattleView(discord.ui.View):
     
     # [수정] ephemeral view 대신 메인 뷰에서 액션 수신
     async def receive_action(self, interaction, player_num, card):
-        if interaction.user.id != self.expected_user(player_num).id:
-            return await interaction.response.send_message("상대방의 행동은 선택할 수 없습니다.", ephemeral=True)
+        if self.processing_turn:
+            return await interaction.response.send_message("⚠️ 현재 턴을 처리 중입니다. 잠시만 기다려주세요.", ephemeral=True)
 
-        should_resolve = False
-        async with self.state_lock:
-            if self.finished:
-                return await interaction.response.send_message("이미 종료된 대련입니다.", ephemeral=True)
-            if self.processing_turn:
-                return await interaction.response.send_message("⚠️ 현재 턴을 처리 중입니다. 잠시만 기다려주세요.", ephemeral=True)
-            current = self.p1_card if player_num == 1 else self.p2_card
-            if current != "waiting":
-                return await interaction.response.send_message("이미 이번 턴의 행동을 선택했습니다.", ephemeral=True)
-            if player_num == 1:
-                self.p1_card = card
-            else:
-                self.p2_card = card
-            self.selection_mode = None
-            self.card_page = 0
-            should_resolve = self.p1_card != "waiting" and self.p2_card != "waiting"
-            if should_resolve:
-                self.processing_turn = True
-
+        if player_num == 1: self.p1_card = card
+        else: self.p2_card = card
+        
+        # 기술 선택 모드에서 메인 선택 모드로 복귀
+        self.selection_mode = None
+        self.card_page = 0
+        
+        # 뷰를 먼저 업데이트해서 "준비 완료" 상태를 보여줌
         self.update_main_buttons()
         await interaction.response.edit_message(view=self)
-
-        if should_resolve:
+        
+        # 양쪽 모두 선택 완료 시 턴 진행
+        if self.p1_card != "waiting" and self.p2_card != "waiting":
+            self.processing_turn = True
             try:
                 await self.resolve_turn(interaction)
-            except Exception:
-                async with self.state_lock:
-                    self.p1_card = "waiting"
-                    self.p2_card = "waiting"
-                self.update_main_buttons()
-                if self.action_message:
-                    await self.action_message.edit(view=self)
-                await interaction.followup.send("턴 처리 중 오류가 발생해 행동 선택을 초기화했습니다.", ephemeral=True)
-                raise
             finally:
                 self.processing_turn = False
 
@@ -544,25 +420,18 @@ class PVPBattleView(discord.ui.View):
             self.p2_revived = True; self.p2_char.current_hp = self.p2_char.max_hp; log += "\n👼 P2 부활!"
 
         if self.p1_char.current_hp <= 0 or self.p2_char.current_hp <= 0:
-            if self.p1_char.current_hp <= 0 and self.p2_char.current_hp <= 0:
-                res_msg = "\n🤝 무승부!"
-            elif self.p1_char.current_hp <= 0:
-                res_msg = f"\n🏆 **{self.p2_char.name}** 승리!"
-            else:
-                res_msg = f"\n🏆 **{self.p1_char.name}** 승리!"
+            res_msg = "\n🏆 전투 종료!"
+            if self.p1_char.current_hp <= 0: res_msg = f"\n🏆 **{self.p2_char.name}** 승리!"
+            if self.p2_char.current_hp <= 0: res_msg = f"\n🏆 **{self.p1_char.name}** 승리!"
             
             if hasattr(self.p1_char, "remove_battle_buffs"): self.p1_char.remove_battle_buffs()
             if hasattr(self.p2_char, "remove_battle_buffs"): self.p2_char.remove_battle_buffs()
             
-            latest_p1 = await self.load_func(self.p1_user.id, self.p1_user.display_name)
-            latest_p2 = await self.load_func(self.p2_user.id, self.p2_user.display_name)
-            if 0 <= self.p1_char_idx < len(latest_p1.get("characters", [])):
-                latest_p1["characters"][self.p1_char_idx] = self.p1_char.to_dict()
-            if 0 <= self.p2_char_idx < len(latest_p2.get("characters", [])):
-                latest_p2["characters"][self.p2_char_idx] = self.p2_char.to_dict()
+            self.p1_data["characters"][self.p1_char_idx] = self.p1_char.to_dict()
+            self.p2_data["characters"][self.p2_char_idx] = self.p2_char.to_dict()
 
-            await self.save_func(self.p1_user.id, latest_p1)
-            await self.save_func(self.p2_user.id, latest_p2)
+            await self.save_func(self.p1_user.id, self.p1_data)
+            await self.save_func(self.p2_user.id, self.p2_data)
 
             # [수정] 전투 종료 시 메시지 업데이트
             final_status_embed = self.make_status_embed(log + res_msg)
@@ -578,8 +447,6 @@ class PVPBattleView(discord.ui.View):
             if self.action_message:
                 await self.action_message.edit(content="**⚔️ 전투 종료 ⚔️**", embed=None, view=self)
             
-            self.finished = True
-            self.release_users()
             self.stop()
         else:
             self.turn_count += 1
@@ -617,10 +484,7 @@ class PVPBattleView(discord.ui.View):
         return battle_engine.get_emoji(action_type)
 
     def make_status_embed(self, log):
-        safe_log = str(log or "")
-        if len(safe_log) > 3900:
-            safe_log = "…(앞부분 생략)\n" + safe_log[-3880:]
-        embed = discord.Embed(title=f"🥊 1vs1 대전 (제 {self.turn_count}턴)", description=safe_log, color=discord.Color.blue())
+        embed = discord.Embed(title=f"🥊 1vs1 대전 (제 {self.turn_count}턴)", description=log, color=discord.Color.blue())
         def bar(c, m, e1, e2):
             rate = max(0, min(10, int((c/m)*10))) if m > 0 else 0
             return f"{e1 * rate}{e2 * (10-rate)} ({c}/{m})"
@@ -640,31 +504,12 @@ class PVPBattleView(discord.ui.View):
             embed.set_footer(text=self.last_turn_summary)
         return embed
 
-    async def on_timeout(self):
-        if self.finished:
-            return
-        self.finished = True
-        self.release_users()
-        for child in self.children:
-            child.disabled = True
-        if self.action_message:
-            try:
-                await self.action_message.edit(content="⏱️ 대련이 장시간 입력 없이 종료되었습니다.", embed=None, view=self)
-            except (discord.NotFound, discord.HTTPException):
-                pass
-
 # --- [공용] 캐릭터 선택 뷰 ---
 class PVPCharSelectView(discord.ui.View):
     def __init__(self, battle_view, user, user_data, player_num):
-        super().__init__(timeout=120)
+        super().__init__(timeout=None)
         self.battle_view, self.user, self.user_data, self.player_num = battle_view, user, user_data, player_num
         self.add_select()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.user.id:
-            return True
-        await interaction.response.send_message("본인의 캐릭터만 선택할 수 있습니다.", ephemeral=True)
-        return False
     def add_select(self):
 
         char_list = self.user_data.get("characters", [])

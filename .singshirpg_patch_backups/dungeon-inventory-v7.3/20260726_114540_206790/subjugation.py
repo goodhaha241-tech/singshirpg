@@ -1,8 +1,6 @@
 # subjugation.py
 import discord
 import random
-import asyncio
-import uuid
 from items import REGIONS, RARE_ITEMS, STAT_UP_ITEMS, ITEM_CATEGORIES
 from monsters import spawn_monster, get_dungeon_boss
 from battle import BattleView
@@ -12,15 +10,6 @@ from trade import update_cafe_quest_progress
 from decorators import auto_defer
 
 SUBJUGATION_COST = 2000
-_DUNGEON_LOCKS = {}
-
-
-def _dungeon_lock(user_id):
-    lock = _DUNGEON_LOCKS.get(int(user_id))
-    if lock is None:
-        lock = asyncio.Lock()
-        _DUNGEON_LOCKS[int(user_id)] = lock
-    return lock
 
 # ==================================================================================
 # 4. Dungeon Item Logic (New)
@@ -111,6 +100,14 @@ class DungeonItemSwapView(discord.ui.View):
         if interaction.user.id != self.author.id: return
         await interaction.response.defer()
         await self.dungeon_view.show_main_screen(interaction, "기존 아이템을 유지하고 이동합니다.")
+
+    async def on_timeout(self):
+        if self.dungeon_view:
+            await self.dungeon_view.save_dungeon_state()
+        if self.message:
+            try: await self.message.edit(content="⌛ 시간 초과 (자동 저장됨)", view=None)
+            except: pass
+
 
     @discord.ui.button(label="새 아이템으로 교체", style=discord.ButtonStyle.primary)
     async def swap_item(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -391,10 +388,6 @@ class DungeonMainView(discord.ui.View):
         self.choices = []
         self.dungeon_item = None # 현재 소지한 던전 전용 아이템
         self.forced_next_room = None # 보스 클리어 후 아이템 방 확정용
-        self.pending_room = None
-        self.choice_token = uuid.uuid4().hex
-        self.stat_item_applied = False
-        self._ending = False
         self.message = None
 
         if user_data:
@@ -404,21 +397,12 @@ class DungeonMainView(discord.ui.View):
             self.accumulated_loot = state.get("loot", {"items": {}, "money": 0, "pt": 0})
             self.choices = state.get("choices", [])
             self.dungeon_item = state.get("dungeon_item")
-            self.forced_next_room = state.get("forced_next_room")
-            self.pending_room = state.get("pending_room")
-            self.choice_token = state.get("choice_token") or uuid.uuid4().hex
             self.region_name = state.get("region", region_name)
             self.char_index = state.get("char_index", char_index)
 
-            if not (0 <= self.char_index < len(user_data.get("characters", []))):
-                self.char_index = 0
-            player_data = state.get("player_state") or user_data["characters"][self.char_index]
-            self.player = Character.from_dict(player_data)
+            self.player = Character.from_dict(user_data["characters"][self.char_index])
             if "equipped_engraved_artifact" in user_data["characters"][self.char_index]:
                 self.player.equipped_engraved_artifact = user_data["characters"][self.char_index]["equipped_engraved_artifact"]
-            self.stat_item_applied = bool(state.get("stat_item_applied", False))
-            if self.dungeon_item and self.dungeon_item.get("type") == "stat" and not self.stat_item_applied:
-                self.apply_stat_item_effect()
         else:
             self.depth = 0
             self.accumulated_loot = {"items": {}, "money": 0, "pt": 0}
@@ -433,37 +417,16 @@ class DungeonMainView(discord.ui.View):
     async def save_dungeon_state(self):
         """현재 던전 진행 상태를 DB에 동기화"""
         if not self.user_data: return
-        player_state = self.player.to_dict() if self.player else None
-        if (
-            player_state
-            and self.stat_item_applied
-            and self.dungeon_item
-            and self.dungeon_item.get("type") == "stat"
-        ):
-            stat = self.dungeon_item.get("stat")
-            value = int(self.dungeon_item.get("value", 0))
-            if stat in {"attack", "defense"}:
-                player_state[stat] = max(1, int(player_state.get(stat, 1)) - value)
-            elif stat == "max_hp":
-                player_state["current_hp"] = max(1, int(player_state.get("current_hp", 1)) - value)
-            elif stat == "max_mental":
-                player_state["current_mental"] = max(0, int(player_state.get("current_mental", 0)) - value)
         self.user_data["current_dungeon"] = {
             "depth": self.depth, "loot": self.accumulated_loot,
             "choices": self.choices, "dungeon_item": self.dungeon_item,
-            "region": self.region_name, "char_index": self.char_index,
-            "forced_next_room": self.forced_next_room,
-            "pending_room": self.pending_room,
-            "choice_token": self.choice_token,
-            # player_state is stored without the temporary stat item, then reapplied once on load.
-            "stat_item_applied": False,
-            "player_state": player_state,
+            "region": self.region_name, "char_index": self.char_index
         }
         await self.save_func(self.author.id, self.user_data)
 
     def apply_stat_item_effect(self):
         """스탯 아이템 효과 적용"""
-        if self.dungeon_item and self.dungeon_item["type"] == "stat" and not self.stat_item_applied:
+        if self.dungeon_item and self.dungeon_item["type"] == "stat":
             stat = self.dungeon_item["stat"]
             val = self.dungeon_item["value"]
             curr_val = getattr(self.player, stat)
@@ -471,25 +434,17 @@ class DungeonMainView(discord.ui.View):
             if stat in ["max_hp", "max_mental"]:
                 curr_curr = getattr(self.player, "current_" + stat.split("_")[1])
                 setattr(self.player, "current_" + stat.split("_")[1], curr_curr + val)
-            self.stat_item_applied = True
 
     def remove_stat_item_effect(self):
         """스탯 아이템 효과 제거"""
-        if self.dungeon_item and self.dungeon_item["type"] == "stat" and self.stat_item_applied:
+        if self.dungeon_item and self.dungeon_item["type"] == "stat":
             stat = self.dungeon_item["stat"]
             val = self.dungeon_item["value"]
             curr_val = getattr(self.player, stat)
             setattr(self.player, stat, max(1, curr_val - val)) # 0 이하 방지
-            if stat in ["max_hp", "max_mental"]:
-                current_name = "current_" + stat.split("_")[1]
-                setattr(self.player, current_name, min(getattr(self.player, current_name), getattr(self.player, stat)))
-            self.stat_item_applied = False
 
-    async def show_main_screen(self, interaction: discord.Interaction, message: str, refresh_choices=True):
-        if refresh_choices or not self.choices:
-            self.setup_choices()
-        else:
-            self.render_choice_buttons()
+    async def show_main_screen(self, interaction: discord.Interaction, message: str):
+        self.setup_choices()
         
         # [중요] 선택지가 생성된 시점에 즉시 DB 저장 (재시작 대비)
         if self.user_data:
@@ -532,12 +487,20 @@ class DungeonMainView(discord.ui.View):
         state = self.user_data.get("current_dungeon", {})
         if not state:
             return await interaction.edit_original_response(content="❌ 저장할 던전 정보가 없습니다.", embed=None, view=None)
-
-        active_view = DungeonMainView(self.author, self.user_data, self.save_func)
-        await active_view.save_dungeon_state()
+            
+        self.depth = state.get("depth", 0)
+        self.accumulated_loot = state.get("loot", {"items": {}, "money": 0, "pt": 0})
+        self.choices = state.get("choices", [])
+        self.dungeon_item = state.get("dungeon_item")
+        self.region_name = state.get("region", "")
+        self.char_index = state.get("char_index", 0)
+        
+        await self.save_dungeon_state()
         await interaction.edit_original_response(content="💾 던전 진행 상황이 저장되었습니다. 나중에 '이어하기'를 통해 계속할 수 있습니다.", embed=None, view=None)
 
     def setup_choices(self):
+        self.clear_items()
+        
         # 보스 확정 로직 (29, 59, 89...)
         next_step = self.depth 
         
@@ -550,11 +513,7 @@ class DungeonMainView(discord.ui.View):
             self.choices = ["boss"]
         else:
             self.choices = random.choices(["monster", "recovery", "item"], weights=[40, 35, 25], k=3)
-        self.choice_token = uuid.uuid4().hex
-        self.render_choice_buttons()
 
-    def render_choice_buttons(self):
-        self.clear_items()
         for i, choice_type in enumerate(self.choices):
             style = discord.ButtonStyle.secondary
             if choice_type == "boss": style = discord.ButtonStyle.danger
@@ -570,22 +529,25 @@ class DungeonMainView(discord.ui.View):
 
     def make_choice_callback(self, choice_idx):
         async def callback(interaction: discord.Interaction):
-            if self.author and interaction.user.id != self.author.id:
-                return await interaction.response.send_message("❌ 본인의 던전만 조작할 수 있습니다.", ephemeral=True)
-            lock = _dungeon_lock(interaction.user.id)
-            if lock.locked():
-                return await interaction.response.send_message("⏳ 이전 던전 행동을 처리 중입니다.", ephemeral=True)
-            await interaction.response.defer()
-            async with lock:
+            # [Fix] 지속성 뷰(재시작 후) 처리: 새로운 뷰 인스턴스 생성하여 처리
+            if self.player is None:
                 user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
-                state = user_data.get("current_dungeon") or {}
-                if not state:
-                    return await interaction.followup.send("❌ 진행 중인 던전 정보가 없습니다.", ephemeral=True)
-                expected_token = self.choice_token if self.player is not None else state.get("choice_token")
-                if expected_token and state.get("choice_token") != expected_token:
-                    return await interaction.followup.send("♻️ 이미 처리된 선택지입니다. 최신 던전 화면에서 계속해주세요.", ephemeral=True)
-                active_view = DungeonMainView(interaction.user, user_data, self.save_func)
-                await active_view.process_choice(interaction, choice_idx)
+                if not user_data.get("current_dungeon"):
+                    return await interaction.response.send_message("❌ 진행 중인 던전 정보가 없습니다.", ephemeral=True)
+                
+                new_view = DungeonMainView(interaction.user, user_data, self.save_func)
+                await new_view.process_choice(interaction, choice_idx)
+                return
+
+            if interaction.user.id != self.author.id: return
+            
+            await interaction.response.defer()
+            
+            # 재시작 후라면 데이터 재로드 및 객체 복구
+            if not self.player:
+                self.user_data = await get_user_data(interaction.user.id, interaction.user.display_name)
+                self.__init__(interaction.user, self.user_data, self.save_func)
+            await self.process_choice(interaction, choice_idx)
         return callback
 
     async def process_choice(self, interaction, choice_idx):
@@ -596,10 +558,7 @@ class DungeonMainView(discord.ui.View):
              return await interaction.followup.send("❌ 유효하지 않은 선택입니다.", ephemeral=True)
 
         choice_type = self.choices[choice_idx]
-        is_forced_item = len(self.choices) == 1 and choice_type == "item"
         self.depth += 1
-        self.choices = []
-        self.choice_token = uuid.uuid4().hex
         
         # [신규] 실시간 랭킹 반영: 최고 기록 경신 시 즉시 저장
         myhome = self.user_data.setdefault("myhome", {})
@@ -607,6 +566,8 @@ class DungeonMainView(discord.ui.View):
             myhome["max_subjugation_depth"] = self.depth
             myhome["max_subjugation_char"] = self.player.name
             myhome["max_subjugation_region"] = self.region_name
+            # 비정상 종료 시에도 랭킹이 유지되도록 실시간으로 DB에 기록합니다.
+            await self.save_func(self.author.id, self.user_data)
         
         # 스탯 아이템 지속시간 차감
         if self.dungeon_item and self.dungeon_item["type"] == "stat":
@@ -627,13 +588,9 @@ class DungeonMainView(discord.ui.View):
 
         # 보스방/확정방은 주사위 굴림 없이 확정 진입
         if choice_type == "boss":
-            self.pending_room = "boss"
-            await self.save_dungeon_state()
             await self.enter_boss_room(interaction, debuff_msg)
             return
-        elif is_forced_item: # 확정된 아이템방
-            self.pending_room = None
-            await self.save_dungeon_state()
+        elif len(self.choices) == 1: # 확정된 아이템방
             await self.enter_item_room(interaction, debuff_msg)
             return
 
@@ -642,8 +599,6 @@ class DungeonMainView(discord.ui.View):
         other_choices = [c for c in room_map if c != choice_type]
         
         actual_room = choice_type if roll < room_map[choice_type] else random.choice(other_choices)
-        self.pending_room = actual_room if actual_room == "monster" else None
-        await self.save_dungeon_state()
 
         if actual_room == "monster": await self.enter_monster_room(interaction, debuff_msg)
         elif actual_room == "item": await self.enter_item_room(interaction, debuff_msg)
@@ -701,7 +656,6 @@ class DungeonMainView(discord.ui.View):
             self.accumulated_loot["pt"] += battle_results.get("pt", 0)
             
             self.forced_next_room = "item" # 보스 클리어 후 아이템방 확정
-            self.pending_room = None
             await self.show_main_screen(i, f"🎉 {boss.name} 처치 완료! 보상 방이 열렸습니다.")
 
         async def on_defeat(i):
@@ -713,16 +667,14 @@ class DungeonMainView(discord.ui.View):
             victory_callback=on_victory, 
             defeat_callback=on_defeat, 
             is_dungeon_run=True,
-            dungeon_item=self.dungeon_item, # 던전 아이템 전달
-            timeout_callback=self.save_dungeon_state,
+            dungeon_item=self.dungeon_item # 던전 아이템 전달
         )
         embed = discord.Embed(title=f"⚔️ {boss.name} 교전 개시!", description="전투가 시작됩니다!", color=discord.Color.dark_red())
         
         if interaction.response.is_done():
-            view.message = await interaction.edit_original_response(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, view=view)
         else:
             await interaction.response.edit_message(embed=embed, view=view)
-            view.message = await interaction.original_response()
 
     async def enter_monster_room(self, interaction: discord.Interaction, extra_msg=""):
         monster_pool = self.get_monster_pool(self.region_name)
@@ -746,7 +698,6 @@ class DungeonMainView(discord.ui.View):
                 self.accumulated_loot["items"][item] = self.accumulated_loot["items"].get(item, 0) + qty
             self.accumulated_loot["money"] += battle_results.get("money", 0)
             self.accumulated_loot["pt"] += battle_results.get("pt", 0)
-            self.pending_room = None
             await self.show_main_screen(i, "전투에서 승리했습니다! 다음 선택지로 이동합니다.")
 
         async def on_defeat(i):
@@ -758,16 +709,14 @@ class DungeonMainView(discord.ui.View):
             victory_callback=on_victory, 
             defeat_callback=on_defeat, 
             is_dungeon_run=True,
-            dungeon_item=self.dungeon_item,
-            timeout_callback=self.save_dungeon_state,
+            dungeon_item=self.dungeon_item
         )
         embed = discord.Embed(title="⚔️ 몬스터 출현!", description=f"{len(monsters)}마리의 몬스터와 조우했습니다!{extra_msg}", color=discord.Color.red())
         
         if interaction.response.is_done():
-            view.message = await interaction.edit_original_response(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, view=view)
         else:
             await interaction.response.edit_message(embed=embed, view=view)
-            view.message = await interaction.original_response()
 
     async def enter_item_room(self, interaction: discord.Interaction, extra_msg=""):
         # 일반 전리품 획득
@@ -844,11 +793,6 @@ class DungeonMainView(discord.ui.View):
             view.message = await interaction.original_response()
 
     async def end_dungeon(self, interaction: discord.Interaction, message: str, is_fail=False):
-        if self._ending:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("이미 던전 종료를 처리하고 있습니다.", ephemeral=True)
-            return
-        self._ending = True
         inv = self.user_data.setdefault("inventory", {})
         for item, qty in self.accumulated_loot["items"].items():
             inv[item] = inv.get(item, 0) + qty
@@ -884,17 +828,7 @@ class DungeonMainView(discord.ui.View):
         color = discord.Color.red() if is_fail else discord.Color.green()
         embed = discord.Embed(title="🏰 던전 탐사 종료", description=message, color=color)
         embed.add_field(name="최종 깊이", value=f"{self.depth}층", inline=False)
-        loot_lines = [f"{item} x{qty}" for item, qty in self.accumulated_loot["items"].items()]
-        loot_str = "\n".join(loot_lines) or "없음"
-        if len(loot_str) > 1000:
-            shown = []
-            length = 0
-            for line in loot_lines:
-                if length + len(line) + 1 > 960:
-                    break
-                shown.append(line)
-                length += len(line) + 1
-            loot_str = "\n".join(shown) + f"\n… 외 {len(loot_lines) - len(shown)}종"
+        loot_str = "\n".join([f"{item} x{qty}" for item, qty in self.accumulated_loot["items"].items()]) or "없음"
         embed.add_field(name="획득 아이템", value=loot_str, inline=False)
         if self.accumulated_loot["money"] > 0 or self.accumulated_loot["pt"] > 0:
             embed.add_field(name="추가 획득", value=f"💰 {self.accumulated_loot['money']}원\n⚡ {self.accumulated_loot['pt']}pt", inline=False)
@@ -988,16 +922,7 @@ class SubjugationRegionView(discord.ui.View):
             return await interaction.edit_original_response(content="❌ 이어할 탐사 정보가 없습니다.", view=self)
             
         dungeon_view = DungeonMainView(self.author, self.user_data, self.save_func)
-        if dungeon_view.pending_room == "boss":
-            await dungeon_view.enter_boss_room(interaction, "\n♻️ 중단된 보스전을 다시 시작합니다.")
-        elif dungeon_view.pending_room == "monster":
-            await dungeon_view.enter_monster_room(interaction, "\n♻️ 중단된 전투를 다시 시작합니다.")
-        else:
-            await dungeon_view.show_main_screen(
-                interaction,
-                "중단했던 탐사를 재개합니다.",
-                refresh_choices=not bool(dungeon_view.choices),
-            )
+        await dungeon_view.show_main_screen(interaction, "중단했던 탐사를 재개합니다.")
 
 
     @discord.ui.button(label="🏆 랭킹 확인", style=discord.ButtonStyle.secondary, row=2, custom_id="dungeon:ranking")
@@ -1013,26 +938,17 @@ class SubjugationRegionView(discord.ui.View):
         if region_name == "none": return
 
         await interaction.response.defer()
-        lock = _dungeon_lock(self.author.id)
-        if lock.locked():
-            return await interaction.followup.send("⏳ 다른 던전 요청을 처리 중입니다.", ephemeral=True)
-        async with lock:
-            self.p_data = await get_user_data(self.author.id, self.author.display_name)
-            if self.p_data.get("current_dungeon"):
-                return await interaction.followup.send(
-                    "❌ 이미 진행 중인 던전이 있습니다. 먼저 이어하기로 돌아가거나 기존 탐사를 종료해주세요.",
-                    ephemeral=True,
-                )
-            characters = self.p_data.get("characters", [])
-            if not (0 <= self.selected_char_index < len(characters)):
-                return await interaction.followup.send("❌ 선택한 캐릭터를 찾을 수 없습니다.", ephemeral=True)
-            current_pt = self.p_data.get("pt", 0)
-            if current_pt < SUBJUGATION_COST:
-                return await interaction.followup.send(f"❌ 포인트가 부족합니다! (현재: {current_pt}pt, 필요: {SUBJUGATION_COST}pt)", ephemeral=True)
+        self.p_data = await get_user_data(self.author.id, self.author.display_name)
+        current_pt = self.p_data.get("pt", 0)
+        if current_pt < SUBJUGATION_COST:
+            return await interaction.followup.send(f"❌ 포인트가 부족합니다! (현재: {current_pt}pt, 필요: {SUBJUGATION_COST}pt)", ephemeral=True)
 
-            self.p_data["pt"] -= SUBJUGATION_COST
-            dungeon_view = DungeonMainView(self.author, self.p_data, self.save_func, self.selected_char_index, region_name)
-            await dungeon_view.show_main_screen(interaction, "던전 탐사를 시작합니다.")
+        self.p_data["pt"] -= SUBJUGATION_COST
+        # [신규] 신규 탐사 시작 시 기존 진행 정보 초기화
+        self.p_data.pop("current_dungeon", None)
+
+        dungeon_view = DungeonMainView(self.author, self.p_data, self.save_func, self.selected_char_index, region_name)
+        await dungeon_view.show_main_screen(interaction, "던전 탐사를 시작합니다.")
 
 class RankingFilterView(discord.ui.View):
     """랭킹 지역 필터 선택 뷰"""

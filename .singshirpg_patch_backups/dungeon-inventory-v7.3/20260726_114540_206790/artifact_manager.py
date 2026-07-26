@@ -65,7 +65,7 @@ class ArtifactManageView(discord.ui.View):
         self.filter_page = 0
         self.artifact_page = 0 
         self.char_page = 0 
-        self.PER_PAGE = 8 # 관리 목록은 다른 장비 화면과 동일하게 페이지당 8개
+        self.PER_PAGE = 7 # 7개 제한
         
         self.char_index = 0
         self.selected_artifact_idx = None

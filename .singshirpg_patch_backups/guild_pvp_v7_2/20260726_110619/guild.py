@@ -16,8 +16,6 @@ from character import Character
 from cards import get_card
 import battle_engine
 
-# guild-pvp-stability-v7.2
-
 # --- 설정 데이터 (items.py 기준 통일) ---
 ITEM_TOKEN_VALUES = {
     "목재": {"wood": 10}, "철괴": {"iron": 10}, "중급 마력석": {"magic": 10},
@@ -91,12 +89,6 @@ class InventoryManageView(discord.ui.View):
         self.guild_info = guild_info
         self.mode = mode # 'deposit' or 'withdraw'
         self.user_data = None
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인의 길드 납품 화면만 조작할 수 있습니다.", ephemeral=True)
-        return False
 
     async def setup_view(self):
         self.clear_items()
@@ -197,12 +189,6 @@ class ArtifactDepositSelectView(discord.ui.View):
         self.artifacts = self.user_data.get("artifacts", [])
         self.add_select()
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인의 아티팩트만 보관할 수 있습니다.", ephemeral=True)
-        return False
-
     def add_select(self):
         if not self.artifacts:
             self.add_item(Button(label="❌ 보관할 아티팩트가 없습니다.", disabled=True))
@@ -239,12 +225,6 @@ class GuildWarehouseView(discord.ui.View):
         self.author = author
         self.guild_info = guild_info
         self.category = "consumable"
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인이 연 길드 창고 화면만 조작할 수 있습니다.", ephemeral=True)
-        return False
         
     async def get_embed(self):
         new_info = await get_user_guild_info(self.author.id)
@@ -321,32 +301,23 @@ class GuildWarehouseView(discord.ui.View):
 # 4. 레이드 (기존 유지)
 # ==================================================================================
 class RaidCardSelectView(discord.ui.View):
-    def __init__(self, author, cards, callback_func):
+    def __init__(self, cards, callback_func):
         super().__init__(timeout=60)
-        self.author = author
         self.callback_func = callback_func
         options = []
         for card_name in cards:
             card_obj = get_card(card_name)
             desc = card_obj.description[:90] if card_obj else "효과 없음"
             options.append(discord.SelectOption(label=card_name, description=desc, value=card_name))
-        self.select = discord.ui.Select(placeholder="카드 선택", options=options[:25])
-        self.select.callback = self.on_select
-        self.add_item(self.select)
+        self.add_item(discord.ui.Select(placeholder="카드 선택", options=options[:25]))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인의 카드만 선택할 수 있습니다.", ephemeral=True)
-        return False
-
-    async def on_select(self, interaction: discord.Interaction):
-        await self.callback_func(interaction, self.select.values[0])
+        await self.callback_func(interaction, interaction.data["values"][0])
         return True
 
 class RaidBattleView(discord.ui.View):
-    def __init__(self, lobby_view, boss: Monster, message=None):
-        super().__init__(timeout=600)
+    def __init__(self, lobby_view, boss: Monster):
+        super().__init__(timeout=None)
         self.lobby = lobby_view
         self.boss = boss
         self.participants = lobby_view.participants
@@ -355,9 +326,6 @@ class RaidBattleView(discord.ui.View):
         self.selected_cards = {}
         self.shayla_triggers = {uid: False for uid in self.participants}
         self.boss_intent = None
-        self.public_message = message
-        self.resolve_lock = asyncio.Lock()
-        self.finished = False
         self.decide_boss_action()
 
     def decide_boss_action(self):
@@ -378,51 +346,29 @@ class RaidBattleView(discord.ui.View):
             if char.current_hp <= 0: st = "💀 행동불가"
             embed.add_field(name=f"👤 {p['user'].display_name}", value=f"❤️ {char.current_hp} | {st}", inline=True)
         
-        if self.logs:
-            log_text = "\n".join(self.logs[-4:])
-            if len(log_text) > 1000:
-                log_text = "…(앞부분 생략)\n" + log_text[-980:]
-            embed.add_field(name="📜 전투 로그", value=log_text, inline=False)
+        if self.logs: embed.add_field(name="📜 전투 로그", value="\n".join(self.logs[-4:]), inline=False)
         return embed
 
     @discord.ui.button(label="🎴 카드 선택", style=discord.ButtonStyle.primary)
     async def btn_pick(self, interaction: discord.Interaction, button: discord.ui.Button):
         uid = interaction.user.id
         if uid not in self.participants: return await interaction.response.send_message("참여자가 아닙니다.", ephemeral=True)
-        if self.finished: return await interaction.response.send_message("이미 종료된 레이드입니다.", ephemeral=True)
-        if self.public_message is None:
-            self.public_message = interaction.message
         
         char_info = self.participants[uid]
         if char_info['char'].current_hp <= 0: return await interaction.response.send_message("행동 불가 상태입니다.", ephemeral=True)
         if uid in self.selected_cards: return await interaction.response.send_message("이미 선택했습니다.", ephemeral=True)
-        selected_turn = self.turn
 
         async def cb(i, val):
-            should_resolve = False
-            async with self.resolve_lock:
-                if self.finished:
-                    return await i.response.send_message("이미 종료된 레이드입니다.", ephemeral=True)
-                if selected_turn != self.turn:
-                    return await i.response.send_message("이 선택창은 이전 턴의 것입니다. 다시 선택해주세요.", ephemeral=True)
-                if uid in self.selected_cards:
-                    return await i.response.send_message("이미 이번 턴의 카드를 선택했습니다.", ephemeral=True)
-                self.selected_cards[uid] = val
-                alive = [u for u, p in self.participants.items() if p['char'].current_hp > 0]
-                should_resolve = all(u in self.selected_cards for u in alive)
+            self.selected_cards[uid] = val
             await i.response.send_message(f"👌 **{val}** 선택!", ephemeral=True)
-            if should_resolve:
-                await self.resolve_turn(i)
+            alive = [u for u, p in self.participants.items() if p['char'].current_hp > 0]
+            if all(u in self.selected_cards for u in alive):
+                await self.resolve_turn(i) 
 
-        cards = list(getattr(char_info['char'], "equipped_cards", []) or [])
-        if not cards:
-            return await interaction.response.send_message("선택 가능한 카드가 없습니다.", ephemeral=True)
-        view = RaidCardSelectView(interaction.user, cards, cb)
+        view = RaidCardSelectView(char_info['char'].equipped_cards, cb)
         await interaction.response.send_message("카드를 선택하세요.", view=view, ephemeral=True)
 
     async def resolve_turn(self, interaction):
-        if self.finished:
-            return
         self.logs.append(f"--- Turn {self.turn} ---")
         alive = [u for u, p in self.participants.items() if p['char'].current_hp > 0]
         if not alive: return await self.end_raid(interaction, False)
@@ -470,18 +416,13 @@ class RaidBattleView(discord.ui.View):
         self.selected_cards = {}
         self.decide_boss_action()
         
-        if self.public_message:
-            try:
-                await self.public_message.edit(embed=self.get_status_embed(), view=self)
-                return
-            except (discord.NotFound, discord.HTTPException):
-                self.public_message = None
-        self.public_message = await interaction.channel.send(embed=self.get_status_embed(), view=self)
+        try:
+            if interaction.response.is_done(): await interaction.edit_original_response(embed=self.get_status_embed(), view=self)
+            else: await interaction.response.edit_message(embed=self.get_status_embed(), view=self)
+        except:
+            await interaction.channel.send(embed=self.get_status_embed(), view=self)
 
     async def end_raid(self, interaction, win):
-        if self.finished:
-            return
-        self.finished = True
         self.clear_items()
         embed = None
         if win:
@@ -501,7 +442,6 @@ class RaidBattleView(discord.ui.View):
                 p['data']['money'] += 5000
                 p['data']['pt'] += 1000
                 p['char'].current_hp = p['char'].max_hp
-                p['data']['characters'][p['char_idx']] = p['char'].to_dict()
                 await save_user_data(uid, p['data'])
                 log_names.append(p['user'].display_name)
             
@@ -511,29 +451,10 @@ class RaidBattleView(discord.ui.View):
             embed = discord.Embed(title="☠️ 토벌 실패", description="파티가 전멸했습니다...", color=discord.Color.dark_grey())
             for uid, p in self.participants.items():
                 p['char'].current_hp = 1 
-                p['data']['characters'][p['char_idx']] = p['char'].to_dict()
                 await save_user_data(uid, p['data'])
 
-        if self.public_message:
-            try:
-                await self.public_message.edit(embed=embed, view=None)
-            except (discord.NotFound, discord.HTTPException):
-                await interaction.channel.send(embed=embed)
-        else:
-            await interaction.channel.send(embed=embed)
-        self.stop()
-
-    async def on_timeout(self):
-        if self.finished:
-            return
-        self.finished = True
-        for child in self.children:
-            child.disabled = True
-        if self.public_message:
-            try:
-                await self.public_message.edit(content="⏱️ 레이드가 장시간 입력 없이 종료되었습니다.", view=self)
-            except (discord.NotFound, discord.HTTPException):
-                pass
+        if interaction.response.is_done(): await interaction.edit_original_response(embed=embed, view=None)
+        else: await interaction.response.edit_message(embed=embed, view=None)
 
 class RaidLobbyView(discord.ui.View):
     def __init__(self, host, guild_info, boss_data):
@@ -542,23 +463,19 @@ class RaidLobbyView(discord.ui.View):
         self.guild_info = guild_info
         self.boss_data = boss_data
         self.participants = {}
-        self.started = False
-        self.state_lock = asyncio.Lock()
-        self.public_message = None
+        asyncio.create_task(self.add_participant(host))
 
     async def add_participant(self, user):
-        async with self.state_lock:
-            if self.started or user.id in self.participants or len(self.participants) >= 4:
-                return False
-            user_data = await get_user_data(user.id)
-            idx = user_data.get("investigator_index", 0)
-            chars = user_data.get("characters", [])
-            char = Character.from_dict(chars[idx]) if chars and idx < len(chars) else Character.from_dict({"name": "모험가", "hp": 100, "attack":10, "defense":5})
-            
-            char.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
-            char.runtime_cooldowns = {}
-            self.participants[user.id] = {"user": user, "char": char, "char_idx": idx, "data": user_data}
-            return True
+        if user.id in self.participants or len(self.participants) >= 4: return False
+        user_data = await get_user_data(user.id)
+        idx = user_data.get("investigator_index", 0)
+        chars = user_data.get("characters", [])
+        char = Character.from_dict(chars[idx]) if chars and idx < len(chars) else Character.from_dict({"name": "모험가", "hp": 100, "attack":10, "defense":5})
+        
+        char.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
+        char.runtime_cooldowns = {}
+        self.participants[user.id] = {"user": user, "char": char, "data": user_data}
+        return True
 
     def get_embed(self):
         embed = discord.Embed(title=f"🛡️ [{self.guild_info['name']}] 레이드 모집", description="같은 길드원만 참여 가능", color=discord.Color.orange())
@@ -568,8 +485,6 @@ class RaidLobbyView(discord.ui.View):
 
     @discord.ui.button(label="✋ 참가", style=discord.ButtonStyle.success)
     async def btn_join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.started:
-            return await interaction.response.send_message("이미 출발한 레이드입니다.", ephemeral=True)
         u_guild = await get_user_guild_info(interaction.user.id)
         if not u_guild or u_guild['guild_id'] != self.guild_info['guild_id']:
             return await interaction.response.send_message("❌ 같은 길드원이 아닙니다.", ephemeral=True)
@@ -579,32 +494,14 @@ class RaidLobbyView(discord.ui.View):
     @discord.ui.button(label="🚀 출발", style=discord.ButtonStyle.danger)
     async def btn_start(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.host.id: return await interaction.response.send_message("호스트만 시작 가능", ephemeral=True)
-        async with self.state_lock:
-            if self.started:
-                return await interaction.response.send_message("이미 출발한 레이드입니다.", ephemeral=True)
-            if len(self.participants) < 2:
-                return await interaction.response.send_message("최소 2명 필요", ephemeral=True)
-            if not self.boss_data:
-                return await interaction.response.send_message("레이드 보스 데이터를 찾지 못했습니다.", ephemeral=True)
-            self.started = True
-
+        if len(self.participants) < 2: return await interaction.response.send_message("최소 2명 필요", ephemeral=True)
+        
         boss = Monster(self.boss_data['name'], self.boss_data['hp'], self.boss_data['atk'], self.boss_data['def'], card_deck=self.boss_data['deck'])
         boss.reward_tokens = self.boss_data.get('reward_tokens', {})
         boss.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
         
-        view = RaidBattleView(self, boss, interaction.message)
+        view = RaidBattleView(self, boss)
         await interaction.response.edit_message(content="⚔️ **전투 시작!**", embed=view.get_status_embed(), view=view)
-
-    async def on_timeout(self):
-        if self.started:
-            return
-        for child in self.children:
-            child.disabled = True
-        if self.public_message:
-            try:
-                await self.public_message.edit(content="⏱️ 레이드 모집이 종료되었습니다.", view=self)
-            except (discord.NotFound, discord.HTTPException):
-                pass
 
 # ==================================================================================
 # 5. 메인 뷰 (동적 버튼 처리)
@@ -648,17 +545,11 @@ class GuildJoinListView(discord.ui.View):
 
 class GuildMainView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
 
     async def get_embed(self, user_id, user_name):
         guild_info = await get_user_guild_info(user_id)
         self.clear_items()
-        if not guild_info:
-            return discord.Embed(
-                title="🛡️ 공용 길드",
-                description="길드 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
-                color=discord.Color.red(),
-            )
         self.add_item(self.btn_mission)
         self.add_item(self.btn_warehouse)
         self.add_item(self.btn_raid)
@@ -717,15 +608,8 @@ class GuildMainView(discord.ui.View):
         if not guild_info: return
         boss_rank = RANK_NAMES.get(guild_info['level'], "Bronze")
         boss_data = RAID_BOSS_DATA.get(boss_rank) or RAID_BOSS_DATA.get("Gold")
-        if not boss_data:
-            return await interaction.response.send_message("레이드 보스 데이터를 찾지 못했습니다.", ephemeral=True)
         lobby = RaidLobbyView(interaction.user, guild_info, boss_data)
-        await lobby.add_participant(interaction.user)
         await interaction.response.send_message(embed=lobby.get_embed(), view=lobby)
-        try:
-            lobby.public_message = await interaction.original_response()
-        except (discord.NotFound, discord.HTTPException):
-            pass
     
     @discord.ui.button(label="⚖️ 물자 관리", style=discord.ButtonStyle.secondary, custom_id="guild_btn_manage")
     async def btn_manage(self, interaction: discord.Interaction, button: discord.ui.Button):

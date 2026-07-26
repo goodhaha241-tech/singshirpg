@@ -1,0 +1,25 @@
+{
+  "patch": "dungeon-inventory-v7.3",
+  "root": "H:\\디코봇",
+  "backup_dir": "H:\\디코봇\\.singshirpg_patch_backups\\dungeon-inventory-v7.3\\20260726_114540_206790",
+  "files": [
+    "life_system.py",
+    "myhome.py",
+    "gem_manager.py",
+    "artifact_overhaul_v5.py",
+    "life_overhaul_v5.py",
+    "subjugation.py",
+    "battle.py",
+    "artifact_manager.py"
+  ],
+  "applied_hashes": {
+    "life_system.py": "2fc4a0d80d84f605fa693d1aa9b1c3f0d70b63ea5a1734bee671c14e4a18c430",
+    "myhome.py": "640c5981f3b8530f023ed6bd3ab536aed0c53b6843a85cad78b5c6bb7acfa331",
+    "gem_manager.py": "ace8616f012773f92d339ee04109d0fe792243622352342589c3df07ea38eb45",
+    "artifact_overhaul_v5.py": "a877b222f98fc2533437191fefe6fb904ba7b14288ce1828b92effe77a103956",
+    "life_overhaul_v5.py": "6c8f751b241160864f445cef9fe3cbdb14c5c4e708691fdb203ba5e77e3668b7",
+    "subjugation.py": "8ed49fcb9404c8896a0484d5834390fd1a2a760c530a70ef2dbbcb38b873e494",
+    "battle.py": "6de91b45ed6c0317858b482f7de9aa42813f8a392bd31161eeeaff98501f16c0",
+    "artifact_manager.py": "90670f4249fb10560ca58015173b6190139f7e957d1986a568b4acf6813174bd"
+  }
+}

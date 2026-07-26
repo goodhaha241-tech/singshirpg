@@ -11,7 +11,6 @@ from character import DEFAULT_PLAYER_DATA
 logger = logging.getLogger(__name__)
 
 # stability-v1 + cumulative-v2 + cumulative-v3 integrated baseline
-# guild-pvp-stability-v7.2
 
 _pool = None
 
@@ -168,7 +167,6 @@ async def check_schema(pool):
                 (guild_id, name, owner_id, level, exp, member_count)
                 VALUES (1, '공용 길드', NULL, 1, 0, 0)
                 ON DUPLICATE KEY UPDATE name='공용 길드'""")
-            await conn.commit()
 
 async def _get_new_user_data(user_name=None):
     new_char = copy.deepcopy(DEFAULT_PLAYER_DATA)
@@ -551,7 +549,6 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
         return False, "수량이 올바르지 않습니다."
     if count <= 0 or int(guild_id) != GLOBAL_GUILD_ID:
         return False, "공용 길드에 양수 수량만 납품할 수 있습니다."
-    await ensure_global_guild_membership(user_id)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -562,7 +559,6 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
                     (GLOBAL_GUILD_ID, str(user_id)),
                 )
                 if not await cur.fetchone():
-                    await conn.rollback()
                     return False, "공용 길드 소속이 아닙니다."
                 await cur.execute("SELECT quantity FROM inventory WHERE user_id=%s AND item_name=%s FOR UPDATE", (str(user_id), item_name))
                 row = await cur.fetchone()
@@ -593,21 +589,10 @@ async def withdraw_guild_item(user_id, guild_id, item_name, count):
     return False, "공용 길드 자원은 개인 인벤토리로 출고할 수 없습니다."
 
 async def deposit_guild_artifact(user_id, guild_id, artifact_data):
-    if int(guild_id) != GLOBAL_GUILD_ID:
-        return False, "공용 길드에만 아티팩트를 보관할 수 있습니다."
-    await ensure_global_guild_membership(user_id)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             try:
-                await conn.begin()
-                await cur.execute(
-                    "SELECT 1 FROM guild_members WHERE guild_id=%s AND user_id=%s FOR UPDATE",
-                    (GLOBAL_GUILD_ID, str(user_id)),
-                )
-                if not await cur.fetchone():
-                    await conn.rollback()
-                    return False, "공용 길드 소속이 아닙니다."
                 await cur.execute("INSERT INTO guild_stored_artifacts (guild_id, artifact_id, name, rank_level, level, data) VALUES (%s, %s, %s, %s, %s, %s)", 
                                   (guild_id, artifact_data['id'], artifact_data['name'], artifact_data.get('rank', 1), artifact_data.get('level', 0), json.dumps(artifact_data)))
                 await cur.execute("INSERT INTO guild_log (guild_id, user_id, action_type, item_name, count) VALUES (%s, %s, 'deposit_artifact', %s, 1)", (guild_id, str(user_id), artifact_data['name']))

@@ -14,8 +14,8 @@ class BattleView(discord.ui.View):
     # [수정] dungeon_item 매개변수 추가
     def __init__(self, author, player, monsters, user_data, save_func, char_index=0, 
                  victory_callback=None, defeat_callback=None, region_name=None, 
-                 is_dungeon_run=False, dungeon_item=None, timeout_callback=None):
-        super().__init__(timeout=600 if is_dungeon_run else 180)
+                 is_dungeon_run=False, dungeon_item=None):
+        super().__init__(timeout=180)
         self.author = author
         self.player = player
         self.monsters = monsters
@@ -29,10 +29,6 @@ class BattleView(discord.ui.View):
         self.region_name = region_name
         self.is_dungeon_run = is_dungeon_run
         self.dungeon_item = dungeon_item # 던전 아이템 정보 저장
-        self.timeout_callback = timeout_callback
-        self._processing = False
-        self._finished = False
-        self.message = None
         
         self.turn_count = 1
         self.selected_card = None
@@ -122,34 +118,28 @@ class BattleView(discord.ui.View):
                 self.add_item(nxt)
 
     async def prev_page_callback(self, interaction):
-        if interaction.user.id != self.author.id:
-            return await interaction.response.send_message("본인의 전투만 조작할 수 있습니다.", ephemeral=True)
+        if interaction.user.id != self.author.id: return
         await interaction.response.defer()
         self.card_page -= 1
         self.update_buttons()
         await interaction.edit_original_response(view=self)
 
     async def next_page_callback(self, interaction):
-        if interaction.user.id != self.author.id:
-            return await interaction.response.send_message("본인의 전투만 조작할 수 있습니다.", ephemeral=True)
+        if interaction.user.id != self.author.id: return
         await interaction.response.defer()
         self.card_page += 1
         self.update_buttons()
         await interaction.edit_original_response(view=self)
 
     async def panic_callback(self, interaction):
-        if interaction.user.id != self.author.id:
-            return await interaction.response.send_message("본인의 전투만 조작할 수 있습니다.", ephemeral=True)
+        if interaction.user.id != self.author.id: return
         await interaction.response.defer()
         self.selected_card = None 
         await self.show_target_selection(interaction)
 
     def make_skill_callback(self, card_name):
         async def callback(interaction):
-            if interaction.user.id != self.author.id:
-                return await interaction.response.send_message("본인의 전투만 조작할 수 있습니다.", ephemeral=True)
-            if self._processing or self._finished:
-                return await interaction.response.send_message("⏳ 이전 전투 행동을 처리 중입니다.", ephemeral=True)
+            if interaction.user.id != self.author.id: return
             await interaction.response.defer()
             self.selected_card = get_card(card_name)
             await self.show_target_selection(interaction)
@@ -174,10 +164,7 @@ class BattleView(discord.ui.View):
             select = discord.ui.Select(placeholder="🎯 공격 대상을 선택하세요", options=options)
             
             async def select_callback(i):
-                if i.user.id != self.author.id:
-                    return await i.response.send_message("본인의 전투만 조작할 수 있습니다.", ephemeral=True)
-                if self._processing or self._finished:
-                    return await i.response.send_message("⏳ 이전 전투 행동을 처리 중입니다.", ephemeral=True)
+                if i.user.id != self.author.id: return
                 await i.response.defer()
                 target_idx = int(select.values[0])
                 await self.process_battle_round(i, self.monsters[target_idx])
@@ -188,15 +175,6 @@ class BattleView(discord.ui.View):
             await interaction.edit_original_response(content=f"⚔️ **[제 {self.turn_count}턴]** 타겟을 선택하세요.", view=view)
 
     async def process_battle_round(self, interaction, target):
-        if self._finished:
-            return
-        if self._processing:
-            if interaction.response.is_done():
-                await interaction.followup.send("⏳ 이전 전투 행동을 처리 중입니다.", ephemeral=True)
-            else:
-                await interaction.response.send_message("⏳ 이전 전투 행동을 처리 중입니다.", ephemeral=True)
-            return
-        self._processing = True
         log = ""
         rec_log = ""
         
@@ -368,7 +346,6 @@ class BattleView(discord.ui.View):
         else:
             self.turn_count += 1
             self.update_buttons()
-            self._processing = False
             await interaction.edit_original_response(content=None, embed=self.make_embed(log), view=self)
 
     def get_emoji(self, atype):
@@ -407,9 +384,6 @@ class BattleView(discord.ui.View):
         return embed
 
     async def finish_battle(self, interaction, log, is_win):
-        if self._finished:
-            return
-        self._finished = True
         # 전투 종료 시 아티팩트 수치 제거 (던전 포함 모든 전투 공통)
         if hasattr(self.player, "remove_battle_buffs"):
             self.player.remove_battle_buffs()
@@ -500,30 +474,3 @@ class BattleView(discord.ui.View):
             })
         elif not is_win and self.defeat_callback:
             await self.defeat_callback(interaction)
-
-    async def on_timeout(self):
-        if self._finished:
-            return
-        self._finished = True
-        for child in self.children:
-            child.disabled = True
-        if self.is_dungeon_run:
-            if hasattr(self.player, "remove_battle_buffs"):
-                self.player.remove_battle_buffs()
-            if self.timeout_callback:
-                try:
-                    await self.timeout_callback()
-                except Exception as error:
-                    print(f"Dungeon battle timeout save failed: {error}")
-        try:
-            message = getattr(self, "message", None)
-            if message:
-                text = (
-                    "⌛ 전투 입력 시간이 만료되었습니다. 던전은 자동 저장되었습니다.\n"
-                    "`던전 → 이어하기`에서 같은 전투를 다시 시작할 수 있습니다."
-                    if self.is_dungeon_run else
-                    "⌛ 전투 입력 시간이 만료되었습니다."
-                )
-                await message.edit(content=text, view=None)
-        except (discord.NotFound, discord.HTTPException):
-            pass
