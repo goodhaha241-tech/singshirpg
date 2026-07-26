@@ -87,26 +87,6 @@ class OutingMenuView(discord.ui.View):
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
-        self.page = 0
-        self._rebuild_menu()
-
-    def _rebuild_menu(self):
-        self.clear_items()
-        entries = [self.invest_btn, self.pvp_btn, self.subjugation_btn, self.cafe_btn, self.guild_btn]
-        for item in entries[self.page * 3:self.page * 3 + 3]:
-            self.add_item(item)
-        page_button = discord.ui.Button(
-            label="이전 메뉴" if self.page else "다음 메뉴",
-            style=discord.ButtonStyle.secondary,
-            row=3,
-        )
-        page_button.callback = self._toggle_page
-        self.add_item(page_button)
-
-    async def _toggle_page(self, interaction):
-        self.page = 0 if self.page else 1
-        self._rebuild_menu()
-        await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="조사", style=discord.ButtonStyle.danger, emoji="🔍", custom_id="menu:outing:invest")
     @auto_defer(reload_data=True)

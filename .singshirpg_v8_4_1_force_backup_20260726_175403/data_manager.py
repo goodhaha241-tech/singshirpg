@@ -372,38 +372,7 @@ async def get_user_data(user_id, user_name=None):
                 "life_data": life_data,
             }
 
-def _sync_obtained_wiki(data):
-    """현재 보유·성장 데이터를 '한 번 얻은 기록'으로 보존한다."""
-    life = data.setdefault("life_data", {})
-    progression = life.setdefault("progression", {})
-    collection = progression.setdefault("collection", {})
-    for key in (
-        "items", "seeds", "fingerlings", "crops", "fish", "stones",
-        "gems", "foods", "artifact_effects", "tools", "titles",
-    ):
-        collection.setdefault(key, [])
-
-    def remember(category, name):
-        if name and name not in collection[category]:
-            collection[category].append(name)
-
-    for name, amount in data.get("inventory", {}).items():
-        if int(amount or 0) <= 0:
-            continue
-        if name.endswith(("씨앗", "종균")):
-            remember("seeds", name)
-        elif name.endswith(("치어", "유생", "치하")):
-            remember("fingerlings", name)
-        else:
-            remember("items", name)
-    for key in progression.get("achievements", []):
-        remember("titles", key)
-    for key in progression.get("secret_achievements", []):
-        remember("titles", key)
-
-
 async def _save_user_data_unlocked(user_id, data):
-    _sync_obtained_wiki(data)
     user_key = str(user_id)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -764,109 +733,6 @@ async def deposit_guild_item(user_id, guild_id, item_name, count, category, toke
 # [신규] 길드 아이템 출고 (Withdraw)
 async def withdraw_guild_item(user_id, guild_id, item_name, count):
     return False, "공용 길드 자원은 개인 인벤토리로 출고할 수 없습니다."
-
-async def craft_guild_item(user_id, guild_id, item_name, category, token_costs, count=1):
-    """공용 길드 토큰을 원자적으로 소비해 길드 제작품을 만든다."""
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
-        return False, "수량이 올바르지 않습니다."
-    if count <= 0 or int(guild_id) != GLOBAL_GUILD_ID:
-        return False, "공용 길드에서 양수 수량만 제작할 수 있습니다."
-    await ensure_global_guild_membership(user_id)
-    costs = {key: int(value) * count for key, value in token_costs.items()}
-    allowed = {"wood", "iron", "magic", "sorcery"}
-    if not costs or any(key not in allowed or value < 0 for key, value in costs.items()):
-        return False, "제작 비용 설정이 올바르지 않습니다."
-
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
-            try:
-                await conn.begin()
-                await cur.execute(
-                    """SELECT token_wood,token_iron,token_magic,token_sorcery
-                       FROM guilds WHERE guild_id=%s FOR UPDATE""",
-                    (GLOBAL_GUILD_ID,),
-                )
-                guild = await cur.fetchone()
-                if not guild:
-                    await conn.rollback()
-                    return False, "공용 길드 정보를 찾지 못했습니다."
-                lacking = [
-                    f"{key} {guild.get('token_' + key, 0)}/{need}"
-                    for key, need in costs.items()
-                    if int(guild.get("token_" + key, 0) or 0) < need
-                ]
-                if lacking:
-                    await conn.rollback()
-                    return False, "길드 자원이 부족합니다: " + ", ".join(lacking)
-
-                assignments = ", ".join(f"token_{key}=token_{key}-%s" for key in costs)
-                await cur.execute(
-                    f"UPDATE guilds SET {assignments} WHERE guild_id=%s",
-                    tuple(costs.values()) + (GLOBAL_GUILD_ID,),
-                )
-                await cur.execute(
-                    """INSERT INTO guild_inventory (guild_id,item_name,count,category)
-                       VALUES (%s,%s,%s,%s)
-                       ON DUPLICATE KEY UPDATE count=count+VALUES(count)""",
-                    (GLOBAL_GUILD_ID, item_name, count, category),
-                )
-                await cur.execute(
-                    """UPDATE guild_members SET contribution=contribution+%s
-                       WHERE guild_id=%s AND user_id=%s""",
-                    (10 * count, GLOBAL_GUILD_ID, str(user_id)),
-                )
-                await cur.execute(
-                    """INSERT INTO guild_log
-                       (guild_id,user_id,action_type,item_name,count)
-                       VALUES (%s,%s,'craft',%s,%s)""",
-                    (GLOBAL_GUILD_ID, str(user_id), item_name, count),
-                )
-                await conn.commit()
-                return True, f"{item_name} {count}개를 길드 창고에 제작했습니다."
-            except Exception as exc:
-                await conn.rollback()
-                return False, f"길드 제작 오류: {exc}"
-
-async def consume_guild_raid_supplies(guild_id):
-    """레이드 시작 시 준비된 길드 보급품을 종류별 최대 1개 소비한다."""
-    if int(guild_id) != GLOBAL_GUILD_ID:
-        return []
-    names = ("길드 응급상자", "길드 전투도구", "길드 보호부적")
-    consumed = []
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            try:
-                await conn.begin()
-                for name in names:
-                    await cur.execute(
-                        """SELECT count FROM guild_inventory
-                           WHERE guild_id=%s AND item_name=%s FOR UPDATE""",
-                        (GLOBAL_GUILD_ID, name),
-                    )
-                    row = await cur.fetchone()
-                    if not row or int(row[0]) <= 0:
-                        continue
-                    if int(row[0]) == 1:
-                        await cur.execute(
-                            "DELETE FROM guild_inventory WHERE guild_id=%s AND item_name=%s",
-                            (GLOBAL_GUILD_ID, name),
-                        )
-                    else:
-                        await cur.execute(
-                            """UPDATE guild_inventory SET count=count-1
-                               WHERE guild_id=%s AND item_name=%s""",
-                            (GLOBAL_GUILD_ID, name),
-                        )
-                    consumed.append(name)
-                await conn.commit()
-                return consumed
-            except Exception:
-                await conn.rollback()
-                raise
 
 async def deposit_guild_artifact(user_id, guild_id, artifact_data):
     if int(guild_id) != GLOBAL_GUILD_ID:

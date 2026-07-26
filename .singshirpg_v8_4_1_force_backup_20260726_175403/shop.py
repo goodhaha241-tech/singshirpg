@@ -40,26 +40,8 @@ class ShopView(discord.ui.View):
         self.author = author
         self.user_data = user_data
         self.save_func = save_func
-        self.page = 0
-        self._rebuild_menu()
 
-    def _rebuild_menu(self):
-        self.clear_items()
-        entries = [self.buy_consumable, self.buy_card, self.pt_shop_tab, self.sell_tab, self.exit_shop]
-        for item in entries[self.page * 3:self.page * 3 + 3]:
-            self.add_item(item)
-        page_button = discord.ui.Button(
-            label="이전 메뉴" if self.page else "다음 메뉴",
-            style=discord.ButtonStyle.secondary,
-            row=3,
-        )
-        page_button.callback = self._toggle_page
-        self.add_item(page_button)
-
-    async def _toggle_page(self, interaction):
-        self.page = 0 if self.page else 1
-        self._rebuild_menu()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+    
 
     def create_shop_embed(self, title="🛒 상점", desc="원하시는 항목을 선택해주세요."):
         money = self.user_data.get("money", 0)
@@ -244,7 +226,6 @@ class BuyDropdownView(discord.ui.View):
         self.all_options = all_options
         self.page = 0
         self.PER_PAGE = 7
-        self.buy_amount = 1
         
         self.update_view()
 
@@ -276,17 +257,12 @@ class BuyDropdownView(discord.ui.View):
             self.select.callback = self.item_callback
             self.add_item(self.select)
             
-            amount_options = [discord.SelectOption(label="1개", value="1", default=self.buy_amount == 1)]
-            if not self.use_pt:
-                amount_options.extend([
-                    discord.SelectOption(label="5개", value="5", default=self.buy_amount == 5),
-                    discord.SelectOption(label="10개", value="10", default=self.buy_amount == 10),
-                    discord.SelectOption(label="최대", value="all", default=self.buy_amount == "all"),
-                ])
-            amount_select = discord.ui.Select(placeholder="구매 수량", options=amount_options, row=1)
-            amount_select.callback = self.select_amount
-            self.add_item(amount_select)
-            self.add_item(discord.ui.Button(label="구매", style=discord.ButtonStyle.success, row=2, custom_id="buy"))
+            # 수량 버튼
+            self.add_item(discord.ui.Button(label="1개", row=1, custom_id="b1"))
+            if not self.use_pt: # 카드는 보통 1개씩 사므로 아이템일 때만 다량 구매 버튼 활성화
+                self.add_item(discord.ui.Button(label="5개", row=1, custom_id="b5"))
+                self.add_item(discord.ui.Button(label="10개", row=1, custom_id="b10"))
+                self.add_item(discord.ui.Button(label="최대", style=discord.ButtonStyle.green, row=1, custom_id="ba"))
         
         if total_pages > 1:
             self.add_item(discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, row=2, custom_id="prev", disabled=(self.page==0)))
@@ -303,7 +279,10 @@ class BuyDropdownView(discord.ui.View):
         elif cid == "back":
             v = ShopView(self.author, self.user_data, self.save_func)
             await interaction.edit_original_response(content="🛒 상점 메인", embed=v.create_shop_embed(), view=v)
-        elif cid == "buy": await self.process_buy(interaction, self.buy_amount)
+        elif cid == "b1": await self.process_buy(interaction, 1)
+        elif cid == "b5": await self.process_buy(interaction, 5)
+        elif cid == "b10": await self.process_buy(interaction, 10)
+        elif cid == "ba": await self.process_buy(interaction, "all")
         return True
 
     
@@ -315,11 +294,6 @@ class BuyDropdownView(discord.ui.View):
             option.default = (option.value == self.selected_item)
         
         await i.edit_original_response(content=f"🛍️ **[{self.selected_item}]** 선택됨. 수량을 골라주세요.", view=self)
-
-    async def select_amount(self, interaction: discord.Interaction):
-        value = interaction.data["values"][0]
-        self.buy_amount = value if value == "all" else int(value)
-        await interaction.response.defer()
 
     async def process_buy(self, i, amount):
         if not self.selected_item: 

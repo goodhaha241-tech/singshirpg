@@ -26,15 +26,7 @@ def ensure_progression(user_data: dict[str, Any]) -> dict[str, Any]:
     p = life.setdefault("progression", {})
     p.setdefault("attendance", {"last_date": None, "streak": 0, "total": 0})
     p.setdefault("weekly", {"week_key": current_week_key(), "progress": {}, "claimed": []})
-    p.setdefault("collection", {k: [] for k in (
-        "items", "seeds", "fingerlings", "crops", "fish", "stones",
-        "gems", "foods", "artifact_effects", "tools", "titles",
-    )})
-    for key in (
-        "items", "seeds", "fingerlings", "crops", "fish", "stones",
-        "gems", "foods", "artifact_effects", "tools", "titles",
-    ):
-        p["collection"].setdefault(key, [])
+    p.setdefault("collection", {k: [] for k in ("crops", "fish", "stones", "gems", "foods", "artifact_effects", "tools")})
     p.setdefault("achievements", [])
     p.setdefault("secret_achievements", [])
     p.setdefault("notifications", [])
@@ -246,153 +238,6 @@ def claim_collection_rewards(user_data):
     return True, f"도감 {', '.join(map(str, claimed_now))}종 구간 보상을 받았습니다."
 
 
-WIKI_CATEGORY_LABELS = {
-    "items": "일반 아이템", "seeds": "씨앗·종균", "fingerlings": "치어·유생",
-    "crops": "작물", "fish": "물고기", "stones": "원석", "gems": "젬",
-    "foods": "요리", "artifact_effects": "아티팩트 효과",
-    "tools": "세공 도구", "titles": "업적·칭호",
-}
-
-
-def _wiki_detail(category, name):
-    """획득 기록을 기반으로 출처·용도·운용 힌트를 만든다."""
-    if category in {"seeds", "fingerlings", "crops", "fish", "stones", "gems", "tools"}:
-        from life_system import CROPS, FISH_SPECIES, SEED_ITEMS, FINGERLING_ITEMS, STONE_GEMS, TOOL_DEFS
-        if category == "seeds":
-            crop = next((key for key, item in SEED_ITEMS.items() if item == name), None)
-            info = CROPS.get(crop, {})
-            return f"**재배 대상:** {crop or '알 수 없음'}\n**기본 기간:** {info.get('turns', '?')}턴\n생활 관리 → 채소밭에서 파종합니다."
-        if category == "fingerlings":
-            fish = next((key for key, item in FINGERLING_ITEMS.items() if item == name), None)
-            info = FISH_SPECIES.get(fish, {})
-            return f"**양식 대상:** {fish or '알 수 없음'}\n**기본 기간:** {info.get('turns', '?')}턴\n생활 관리 → 양어장에서 입식합니다."
-        if category == "crops":
-            return f"채소밭 생산물입니다. 요리·납품에 사용합니다.\n기본 재배 기간: {CROPS.get(name, {}).get('turns', '?')}턴"
-        if category == "fish":
-            return f"낚시 또는 양어장 생산물입니다. 요리·납품에 사용합니다.\n기본 양식 기간: {FISH_SPECIES.get(name, {}).get('turns', '?')}턴"
-        if category == "stones":
-            entries = STONE_GEMS.get(name, [])
-            choices = [entry.get("name", str(entry)) if isinstance(entry, dict) else str(entry) for entry in entries]
-            return "젬 세공에서 다음 젬 중 하나를 선택합니다.\n" + (", ".join(choices) or "등록된 젬 없음")
-        if category == "gems":
-            for stone, entries in STONE_GEMS.items():
-                for entry in entries:
-                    if isinstance(entry, dict) and entry.get("name") == name:
-                        return f"**계열:** {stone}\n{entry.get('description') or entry.get('summary') or '아티팩트 소켓에 장착하는 젬입니다.'}"
-            return "아티팩트 소켓에 장착합니다. 정비 화면에서 실제 보정 수치를 확인하세요."
-        if category == "tools":
-            info = TOOL_DEFS.get(name, {})
-            return info.get("description") or str(info.get("effects") or "젬 세공 전에 편성하는 영구 도구입니다.")
-    if category == "foods":
-        from cooking_system_v6 import RECIPES
-        info = RECIPES.get(name, {})
-        ingredients = ", ".join(f"{item} ×{count}" for item, count in info.get("ingredients", {}).items())
-        return f"**필요 재료:** {ingredients or '정보 없음'}\n**효과:** {info.get('description') or info.get('effect') or '요리 효과 정보 없음'}"
-    if category == "titles":
-        return f"달성한 업적 기록입니다.\n**{ACHIEVEMENTS.get(name) or SECRET_ACHIEVEMENTS.get(name) or name}**"
-    if category == "artifact_effects":
-        return f"아티팩트에서 발견한 고유 효과 **{name}**입니다. 아티팩트 정비에서 현재 적용값을 확인하세요."
-    if category == "items":
-        from items import ITEM_CATEGORIES, REGIONS
-        item_info = ITEM_CATEGORIES.get(name, {})
-        item_type = item_info.get("type", "기타")
-        sources = [
-            region for region, info in REGIONS.items()
-            if name in info.get("common", []) or name in info.get("rare", [])
-        ]
-        if item_info.get("area") and item_info["area"] not in sources:
-            sources.insert(0, item_info["area"])
-        return f"**분류:** {item_type}\n**발견 지역:** {', '.join(sources[:5]) or '상점·제작·특수 보상'}\n제작소와 생활 메뉴에서 사용처를 확인하세요."
-    return "아직 상세 설명이 준비되지 않은 획득 기록입니다."
-
-
-class ObtainedWikiView(discord.ui.View):
-    PAGE_SIZE = 8
-
-    def __init__(self, author, user_data, save_func, parent_view):
-        super().__init__(timeout=180)
-        self.author, self.user_data, self.save_func = author, user_data, save_func
-        self.parent_view = parent_view
-        self.category, self.page, self.selected = "items", 0, None
-        self.rebuild()
-
-    def _names(self):
-        return sorted(ensure_progression(self.user_data)["collection"].get(self.category, []))
-
-    def rebuild(self):
-        self.clear_items()
-        categories = discord.ui.Select(
-            placeholder="위키 분류 선택",
-            options=[discord.SelectOption(label=label, value=key, default=key == self.category) for key, label in WIKI_CATEGORY_LABELS.items()],
-            row=0,
-        )
-        categories.callback = self.select_category
-        self.add_item(categories)
-        names = self._names()
-        visible = names[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
-        if visible:
-            entries = discord.ui.Select(
-                placeholder="설명을 볼 항목 선택",
-                options=[discord.SelectOption(label=name[:100], value=name) for name in visible],
-                row=1,
-            )
-            entries.callback = self.select_entry
-            self.add_item(entries)
-        prev = discord.ui.Button(label="이전", disabled=self.page <= 0, row=2)
-        nxt = discord.ui.Button(label="다음", disabled=(self.page + 1) * self.PAGE_SIZE >= len(names), row=2)
-        reward = discord.ui.Button(label="도감 보상", style=discord.ButtonStyle.success, row=2)
-        back = discord.ui.Button(label="도감·업적으로", style=discord.ButtonStyle.secondary, row=2)
-        prev.callback, nxt.callback = self.prev_page, self.next_page
-        reward.callback, back.callback = self.claim_reward, self.go_back
-        for item in (prev, nxt, reward, back):
-            self.add_item(item)
-
-    def get_embed(self):
-        names = self._names()
-        pages = max(1, (len(names) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
-        visible = names[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
-        embed = discord.Embed(
-            title=f"📖 획득 위키 — {WIKI_CATEGORY_LABELS[self.category]}",
-            description="\n".join(f"• {name}" for name in visible) or "아직 획득한 항목이 없습니다.",
-            color=discord.Color.teal(),
-        )
-        if self.selected in names:
-            embed.add_field(name=self.selected, value=_wiki_detail(self.category, self.selected)[:1024], inline=False)
-        embed.set_footer(text=f"{self.page + 1}/{pages}페이지 · 획득 기록은 소비 후에도 유지됩니다.")
-        return embed
-
-    async def select_category(self, interaction):
-        self.category, self.page, self.selected = interaction.data["values"][0], 0, None
-        self.rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def select_entry(self, interaction):
-        self.selected = interaction.data["values"][0]
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def prev_page(self, interaction):
-        self.page, self.selected = max(0, self.page - 1), None
-        self.rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def next_page(self, interaction):
-        self.page, self.selected = self.page + 1, None
-        self.rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def claim_reward(self, interaction):
-        ok, message = claim_collection_rewards(self.user_data)
-        if ok:
-            try:
-                await self.save_func(self.author.id, self.user_data)
-            except TypeError:
-                await self.save_func(self.user_data)
-        await interaction.response.edit_message(content=message, embed=self.get_embed(), view=self)
-
-    async def go_back(self, interaction):
-        await interaction.response.edit_message(content=None, embed=self.parent_view.get_embed(), view=self.parent_view)
-
-
 class ProgressionView(discord.ui.View):
     def __init__(self, author, user_data, save_func):
         super().__init__(timeout=180)
@@ -438,10 +283,12 @@ class ProgressionView(discord.ui.View):
         except TypeError:
             await self.save_func(self.user_data)
 
-    @discord.ui.button(label="획득 위키", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="도감 보상", style=discord.ButtonStyle.success)
     async def collection_reward(self, interaction, button):
-        view = ObtainedWikiView(self.author, self.user_data, self.save_func, self)
-        await interaction.response.edit_message(content=None, embed=view.get_embed(), view=view)
+        ok, message = claim_collection_rewards(self.user_data)
+        if ok:
+            await self._save()
+        await interaction.response.edit_message(content=message, embed=self.get_embed(), view=self)
 
     @discord.ui.button(label="주간 보상", style=discord.ButtonStyle.primary)
     async def weekly_reward(self, interaction, button):

@@ -5,15 +5,12 @@ import discord
 import random
 import json
 import asyncio
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from discord.ui import View, Select, Button, Modal, TextInput
 from data_manager import (
     get_user_data, get_db_pool, save_user_data,
     get_user_guild_info, create_guild, join_guild_by_id,
     deposit_guild_item, deposit_guild_artifact, get_guild_logs, get_guild_list,
-    get_guild_items, withdraw_guild_item, craft_guild_item,
-    consume_guild_raid_supplies
+    get_guild_items, withdraw_guild_item
 )
 from items import ITEM_CATEGORIES
 from monsters import RAID_BOSS_DATA, Monster
@@ -44,57 +41,7 @@ ITEM_TOKEN_VALUES = {
     "녹슨 철": {"iron": 5},
 }
 
-RANK_NAMES = {1: "브론즈", 2: "실버", 3: "골드", 4: "플래티넘", 5: "다이아몬드"}
-RAID_RANK_KEYS = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum", 5: "Diamond"}
-
-GUILD_CRAFT_RECIPES = {
-    "길드 응급상자": {
-        "cost": {"wood": 30, "magic": 15},
-        "description": "레이드 준비용 공용 회복 물자입니다.",
-    },
-    "길드 전투도구": {
-        "cost": {"iron": 35, "magic": 20},
-        "description": "레이드 공격 준비에 쓰는 공용 도구입니다.",
-    },
-    "길드 보호부적": {
-        "cost": {"wood": 15, "iron": 20, "sorcery": 25},
-        "description": "레이드 방어 준비에 쓰는 공용 부적입니다.",
-    },
-}
-
-GUILD_MISSIONS = {
-    "donate": ("공용 자재 지원", 50, "길드 환산 자원 50점 납품"),
-    "craft": ("길드 제작 참여", 1, "길드 제작 1회"),
-    "raid": ("길드 토벌 작전", 1, "길드 레이드 1회 시작"),
-}
-
-
-def _guild_day_key():
-    return datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
-
-
-def _guild_activity(user_data):
-    life = user_data.setdefault("life_data", {})
-    activity = life.setdefault("guild_activity", {})
-    if activity.get("date") != _guild_day_key():
-        activity.clear()
-        activity.update({
-            "date": _guild_day_key(),
-            "progress": {"donate": 0, "craft": 0, "raid": 0},
-            "claimed": [],
-            "all_claimed": False,
-        })
-    activity.setdefault("progress", {"donate": 0, "craft": 0, "raid": 0})
-    activity.setdefault("claimed", [])
-    activity.setdefault("all_claimed", False)
-    return activity
-
-
-async def advance_guild_mission(user, key, amount=1):
-    data = await get_user_data(user.id, user.display_name)
-    activity = _guild_activity(data)
-    activity["progress"][key] = int(activity["progress"].get(key, 0)) + int(amount)
-    await save_user_data(user.id, data)
+RANK_NAMES = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum", 5: "Diamond"}
 
 # ==================================================================================
 # 1. 물자 관리 (입/출고 통합)
@@ -140,8 +87,6 @@ class QuantityModal(Modal):
             # 출고 로직
             success, msg = await withdraw_guild_item(interaction.user.id, self.guild_id, self.item_name, qty)
 
-        if success and self.mode == "deposit":
-            await advance_guild_mission(interaction.user, "donate", sum(total_tokens.values()))
         await interaction.response.send_message(msg, ephemeral=True)
         if success and hasattr(self.parent_view, 'refresh'):
             await self.parent_view.refresh(interaction)
@@ -154,7 +99,6 @@ class InventoryManageView(discord.ui.View):
         self.guild_info = guild_info
         self.mode = mode # 'deposit' or 'withdraw'
         self.user_data = None
-        self.page = 0
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.author.id:
@@ -188,29 +132,12 @@ class InventoryManageView(discord.ui.View):
             self.add_item(Button(label="가능한 아이템이 없습니다", disabled=True, row=1))
         else:
             options = []
-            visible = items[self.page * 8:self.page * 8 + 8]
-            for name, count in visible:
+            for name, count in items[:25]:
                 options.append(discord.SelectOption(label=f"{name} (x{count})", value=name))
             
             select = Select(placeholder=placeholder, options=options, row=1)
             select.callback = self.on_select
             self.add_item(select)
-            if len(items) > 8:
-                prev = Button(label="이전", disabled=self.page == 0, row=2)
-                nxt = Button(label="다음", disabled=(self.page + 1) * 8 >= len(items), row=2)
-                prev.callback = self.prev_page
-                nxt.callback = self.next_page
-                self.add_item(prev); self.add_item(nxt)
-
-    async def prev_page(self, interaction):
-        self.page = max(0, self.page - 1)
-        await self.setup_view()
-        await interaction.response.edit_message(view=self)
-
-    async def next_page(self, interaction):
-        self.page += 1
-        await self.setup_view()
-        await interaction.response.edit_message(view=self)
 
     async def switch_to_deposit(self, interaction):
         self.mode = "deposit"
@@ -243,149 +170,26 @@ class GuildMissionView(discord.ui.View):
         super().__init__(timeout=60)
         self.author = author
         self.guild_info = guild_info
-        self.selected_mission = "donate"
-        self.add_item(self._mission_select())
-
-    def _mission_select(self):
-        select = Select(
-            placeholder="보상을 확인할 미션",
-            options=[
-                discord.SelectOption(label=title, description=desc, value=key)
-                for key, (title, _, desc) in GUILD_MISSIONS.items()
-            ],
-            row=0,
-        )
-        select.callback = self.on_select_mission
-        return select
         
     async def get_embed(self):
-        user_data = await get_user_data(self.author.id, self.author.display_name)
-        activity = _guild_activity(user_data)
+        # 미션 데이터가 없으면 랜덤 생성 (실제로는 DB나 매일 자정 갱신 로직 필요)
+        # 여기서는 임시로 랜덤 표시
+        missions = [
+            {"title": "철괴 지원", "desc": "철괴 10개 납품", "reward": "🌲 목재 100"},
+            {"title": "마력 비축", "desc": "중급 마력석 5개 납품", "reward": "💰 길드경험치 50"},
+            {"title": "토벌 작전", "desc": "레이드 1회 참여", "reward": "💎 다이아몬드 1"},
+        ]
+        
         embed = discord.Embed(title=f"📜 {self.guild_info['name']} 길드 미션", color=discord.Color.green())
-        for key, (title, target, desc) in GUILD_MISSIONS.items():
-            progress = min(target, int(activity["progress"].get(key, 0)))
-            claimed = key in activity["claimed"]
-            mark = "✅" if claimed else "🎁" if progress >= target else "▫️"
-            embed.add_field(
-                name=f"{mark} {title}",
-                value=f"{desc}\n진행: **{progress}/{target}** · 개별 보상: 30,000원",
-                inline=False,
-            )
-        embed.add_field(
-            name="🌟 오늘의 전체 보상",
-            value="세 미션 보상 수령 완료 시 **순수한 희망 ×1**",
-            inline=False,
-        )
-        embed.set_footer(text="한국 시간 자정에 개인 진행도가 갱신됩니다.")
+        for m in missions:
+            embed.add_field(name=f"🔹 {m['title']}", value=f"{m['desc']}\n보상: {m['reward']}", inline=False)
+        
+        embed.set_footer(text="미션은 매일 자정에 갱신됩니다.")
         return embed
 
-    async def on_select_mission(self, interaction):
-        self.selected_mission = interaction.data["values"][0]
-        await interaction.response.defer()
-
-    @discord.ui.button(label="선택 미션 보상", style=discord.ButtonStyle.success, row=1)
-    async def btn_claim(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = await get_user_data(self.author.id, self.author.display_name)
-        activity = _guild_activity(data)
-        key = self.selected_mission
-        title, target, _ = GUILD_MISSIONS[key]
-        if key in activity["claimed"]:
-            return await interaction.response.send_message("이미 받은 미션 보상입니다.", ephemeral=True)
-        if int(activity["progress"].get(key, 0)) < target:
-            return await interaction.response.send_message("아직 미션 조건을 달성하지 못했습니다.", ephemeral=True)
-        activity["claimed"].append(key)
-        data["money"] = int(data.get("money", 0)) + 30_000
-        extra = ""
-        if len(activity["claimed"]) == len(GUILD_MISSIONS) and not activity["all_claimed"]:
-            activity["all_claimed"] = True
-            inv = data.setdefault("inventory", {})
-            inv["순수한 희망"] = int(inv.get("순수한 희망", 0)) + 1
-            extra = " 모든 미션을 완료해 **순수한 희망 ×1**도 받았습니다."
-        await save_user_data(self.author.id, data)
-        await interaction.response.edit_message(
-            content=f"✅ {title} 보상 30,000원을 받았습니다.{extra}",
-            embed=await self.get_embed(),
-            view=self,
-        )
-
-    @discord.ui.button(label="길드 제작", style=discord.ButtonStyle.primary, row=1)
-    async def btn_craft(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = GuildCraftingView(self.author, self.guild_info, self)
-        await interaction.response.edit_message(embed=await view.get_embed(), view=view)
-
-    @discord.ui.button(label="길드로 돌아가기", style=discord.ButtonStyle.secondary, row=1)
-    async def btn_back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = GuildMainView()
-        await interaction.response.edit_message(
-            content=None,
-            embed=await view.get_embed(interaction.user.id, interaction.user.display_name),
-            view=view,
-        )
-
-
-class GuildCraftingView(discord.ui.View):
-    def __init__(self, author, guild_info, parent_view):
-        super().__init__(timeout=120)
-        self.author = author
-        self.guild_info = guild_info
-        self.parent_view = parent_view
-        self.selected = next(iter(GUILD_CRAFT_RECIPES))
-        select = Select(
-            placeholder="제작품 선택",
-            options=[
-                discord.SelectOption(label=name, description=info["description"][:100], value=name)
-                for name, info in GUILD_CRAFT_RECIPES.items()
-            ],
-        )
-        select.callback = self.on_select
-        self.add_item(select)
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message("본인의 길드 제작 화면만 조작할 수 있습니다.", ephemeral=True)
-        return False
-
-    async def get_embed(self):
-        guild = await get_user_guild_info(self.author.id)
-        info = GUILD_CRAFT_RECIPES[self.selected]
-        labels = {"wood": "목재", "iron": "철괴", "magic": "마력", "sorcery": "주술"}
-        cost = "\n".join(
-            f"{'✅' if int(guild.get('token_' + key, 0)) >= need else '❌'} "
-            f"{labels[key]} {int(guild.get('token_' + key, 0)):,}/{need:,}"
-            for key, need in info["cost"].items()
-        )
-        return discord.Embed(
-            title=f"🛠️ 길드 제작 — {self.selected}",
-            description=f"{info['description']}\n\n**필요 공용 자원**\n{cost}",
-            color=discord.Color.blurple(),
-        )
-
-    async def on_select(self, interaction):
-        self.selected = interaction.data["values"][0]
-        await interaction.response.edit_message(embed=await self.get_embed(), view=self)
-
-    @discord.ui.button(label="1개 제작", style=discord.ButtonStyle.success, row=1)
-    async def btn_make(self, interaction, button):
-        info = GUILD_CRAFT_RECIPES[self.selected]
-        success, message = await craft_guild_item(
-            interaction.user.id,
-            self.guild_info["guild_id"],
-            self.selected,
-            "consumable",
-            info["cost"],
-        )
-        if success:
-            await advance_guild_mission(interaction.user, "craft")
-        await interaction.response.edit_message(
-            content=("✅ " if success else "❌ ") + message,
-            embed=await self.get_embed(),
-            view=self,
-        )
-
-    @discord.ui.button(label="미션으로 돌아가기", style=discord.ButtonStyle.secondary, row=1)
-    async def btn_back(self, interaction, button):
-        await interaction.response.edit_message(embed=await self.parent_view.get_embed(), view=self.parent_view)
+    @discord.ui.button(label="새로고침", style=discord.ButtonStyle.secondary)
+    async def btn_refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=await self.get_embed())
 
 # ==================================================================================
 # 3. 길드 창고 및 아티팩트
@@ -399,7 +203,6 @@ class ArtifactDepositSelectView(discord.ui.View):
         self.guild_id = guild_id
         self.parent_view = parent_view
         self.artifacts = self.user_data.get("artifacts", [])
-        self.page = 0
         self.add_select()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -414,24 +217,14 @@ class ArtifactDepositSelectView(discord.ui.View):
             return
 
         options = []
-        start = self.page * 8
-        for i, art in enumerate(self.artifacts[start:start + 8], start=start):
+        for i, art in enumerate(self.artifacts[:25]):
             label = f"{art['name']} (+{art.get('level', 0)})"
-            desc = f"{art.get('rank', art.get('rank_level', 1))}성 | {art.get('prefix', '')}"
+            desc = f"Rank: {art.get('rank_level', 1)} | {art.get('prefix', '')}"
             options.append(discord.SelectOption(label=label, description=desc, value=str(i)))
 
         select = discord.ui.Select(placeholder="길드 창고에 넣을 아티팩트 선택", options=options)
         select.callback = self.callback
         self.add_item(select)
-        if len(self.artifacts) > 8:
-            prev = Button(label="이전", disabled=self.page == 0, row=1)
-            nxt = Button(label="다음", disabled=(self.page + 1) * 8 >= len(self.artifacts), row=1)
-            async def move(interaction, delta):
-                self.page += delta; self.clear_items(); self.add_select()
-                await interaction.response.edit_message(view=self)
-            prev.callback = lambda i: move(i, -1)
-            nxt.callback = lambda i: move(i, 1)
-            self.add_item(prev); self.add_item(nxt)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.author.id: return
@@ -457,23 +250,6 @@ class GuildWarehouseView(discord.ui.View):
         self.author = author
         self.guild_info = guild_info
         self.category = "consumable"
-        self.clear_items()
-        category = Select(
-            placeholder="창고 분류 선택",
-            options=[
-                discord.SelectOption(label="소모품", value="consumable"),
-                discord.SelectOption(label="재료·제작품", value="material"),
-                discord.SelectOption(label="아티팩트", value="artifact"),
-            ],
-        )
-        category.callback = self.select_category
-        self.add_item(category)
-        self.add_item(self.btn_deposit_art)
-        self.add_item(self.btn_logs)
-
-    async def select_category(self, interaction):
-        self.category = interaction.data["values"][0]
-        await self.refresh(interaction)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.author.id:
@@ -548,12 +324,7 @@ class GuildWarehouseView(discord.ui.View):
         if not logs: return await interaction.response.send_message("기록이 없습니다.", ephemeral=True)
         text = ""
         for l in logs:
-            action = {
-                "deposit": "입고",
-                "withdraw": "출고",
-                "deposit_artifact": "보관",
-                "craft": "제작",
-            }.get(l["action_type"], "활동")
+            action = "입고" if l['action_type'] == 'deposit' else "출고" if l['action_type'] == 'withdraw' else "보관"
             text += f"• [{action}] **{l['item_name']}** x{l['count']} ({l.get('user_name', '알수없음')})\n"
         await interaction.response.send_message(embed=discord.Embed(title="📋 최근 활동", description=text), ephemeral=True)
 
@@ -565,28 +336,14 @@ class RaidCardSelectView(discord.ui.View):
         super().__init__(timeout=60)
         self.author = author
         self.callback_func = callback_func
-        self.cards = list(cards)
-        self.page = 0
-        self.rebuild()
-
-    def rebuild(self):
-        self.clear_items()
         options = []
-        for card_name in self.cards[self.page * 8:self.page * 8 + 8]:
+        for card_name in cards:
             card_obj = get_card(card_name)
             desc = card_obj.description[:90] if card_obj else "효과 없음"
             options.append(discord.SelectOption(label=card_name, description=desc, value=card_name))
-        self.select = discord.ui.Select(placeholder="카드 선택", options=options)
+        self.select = discord.ui.Select(placeholder="카드 선택", options=options[:25])
         self.select.callback = self.on_select
         self.add_item(self.select)
-        if len(self.cards) > 8:
-            prev = Button(label="이전", disabled=self.page == 0, row=1)
-            nxt = Button(label="다음", disabled=(self.page + 1) * 8 >= len(self.cards), row=1)
-            async def move(interaction, delta):
-                self.page += delta; self.rebuild()
-                await interaction.response.edit_message(view=self)
-            prev.callback = lambda i: move(i, -1); nxt.callback = lambda i: move(i, 1)
-            self.add_item(prev); self.add_item(nxt)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.author.id:
@@ -859,7 +616,7 @@ class RaidLobbyView(discord.ui.View):
             return True
 
     def get_embed(self):
-        embed = discord.Embed(title=f"🛡️ [{self.guild_info['name']}] 레이드 모집", description="혼자 바로 출발하거나, 최대 4명의 길드원과 함께할 수 있습니다.", color=discord.Color.orange())
+        embed = discord.Embed(title=f"🛡️ [{self.guild_info['name']}] 레이드 모집", description="같은 길드원만 참여 가능", color=discord.Color.orange())
         members = [f"{i+1}. {p['user'].display_name} (Lv.{p['char'].attack+p['char'].defense})" for i, p in enumerate(self.participants.values())]
         embed.add_field(name=f"파티원 ({len(self.participants)}/4)", value="\n".join(members), inline=False)
         return embed
@@ -880,36 +637,18 @@ class RaidLobbyView(discord.ui.View):
         async with self.state_lock:
             if self.started:
                 return await interaction.response.send_message("이미 출발한 레이드입니다.", ephemeral=True)
-            if len(self.participants) < 1:
-                return await interaction.response.send_message("참가자가 필요합니다.", ephemeral=True)
+            if len(self.participants) < 2:
+                return await interaction.response.send_message("최소 2명 필요", ephemeral=True)
             if not self.boss_data:
                 return await interaction.response.send_message("레이드 보스 데이터를 찾지 못했습니다.", ephemeral=True)
             self.started = True
-
-        for participant in self.participants.values():
-            await advance_guild_mission(participant["user"], "raid")
-
-        supplies = await consume_guild_raid_supplies(self.guild_info["guild_id"])
-        for participant in self.participants.values():
-            char = participant["char"]
-            if "길드 응급상자" in supplies:
-                char.current_hp = min(char.max_hp, char.current_hp + 20)
-            if "길드 전투도구" in supplies:
-                char.runtime_cooldowns["guild_attack_bonus"] = 3
-            if "길드 보호부적" in supplies:
-                char.runtime_cooldowns["guild_defense_bonus"] = 3
 
         boss = Monster(self.boss_data['name'], self.boss_data['hp'], self.boss_data['atk'], self.boss_data['def'], card_deck=self.boss_data['deck'])
         boss.reward_tokens = self.boss_data.get('reward_tokens', {})
         boss.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
         
         view = RaidBattleView(self, boss, interaction.message)
-        supply_text = ", ".join(supplies) if supplies else "사용한 보급품 없음"
-        await interaction.response.edit_message(
-            content=f"⚔️ **전투 시작!**\n📦 {supply_text}",
-            embed=view.get_status_embed(),
-            view=view,
-        )
+        await interaction.response.edit_message(content="⚔️ **전투 시작!**", embed=view.get_status_embed(), view=view)
 
     async def on_timeout(self):
         if self.started:
@@ -985,7 +724,7 @@ class GuildMainView(discord.ui.View):
             title=f"🛡️ {g['name']}",
             description=(
                 "모든 조사원이 함께 성장시키는 공용 길드입니다.\n"
-                f"등급: {RANK_NAMES.get(g['level'], '브론즈')}\n"
+                f"등급: {RANK_NAMES.get(g['level'], 'Bronze')}\n"
                 f"개인 공헌도: {g.get('contribution', 0):,}"
             ),
             color=discord.Color.gold(),
@@ -1001,7 +740,18 @@ class GuildMainView(discord.ui.View):
         embed.set_footer(text="생성·검색·탈퇴 없이 모든 이용자가 자동 소속됩니다.")
         return embed
 
-    # 공용 길드는 자동 가입이므로 생성·검색·탈퇴 버튼을 노출하지 않는다.
+    # --- 버튼 정의 (초기엔 모두 정의해두고 get_embed에서 add_item으로 선택적 추가) ---
+    
+    # [미가입용]
+    @discord.ui.button(label="📝 가입", style=discord.ButtonStyle.primary, custom_id="guild_btn_join_create")
+    async def btn_join_create(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await GuildJoinListView(interaction.user, self).load_and_update(interaction)
+
+    @discord.ui.button(label="✨ 생성", style=discord.ButtonStyle.success, custom_id="guild_btn_create")
+    async def btn_create(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(GuildCreateModal(self))
+
+    # [가입자용]
     @discord.ui.button(label="🎯 미션", style=discord.ButtonStyle.success, custom_id="guild_btn_mission")
     async def btn_mission(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_info = await get_user_guild_info(interaction.user.id)
@@ -1020,7 +770,7 @@ class GuildMainView(discord.ui.View):
     async def btn_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_info = await get_user_guild_info(interaction.user.id)
         if not guild_info: return
-        boss_rank = RAID_RANK_KEYS.get(guild_info['level'], "Bronze")
+        boss_rank = RANK_NAMES.get(guild_info['level'], "Bronze")
         boss_data = RAID_BOSS_DATA.get(boss_rank) or RAID_BOSS_DATA.get("Gold")
         if not boss_data:
             return await interaction.response.send_message("레이드 보스 데이터를 찾지 못했습니다.", ephemeral=True)

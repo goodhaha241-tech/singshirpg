@@ -1,6 +1,5 @@
 # info.py
 # appraisal-gem-affixes-v8.1
-# gem-visibility-tools-v8.3
 import discord
 from character import (
     Character,
@@ -10,7 +9,6 @@ from character import (
 from items import ITEM_CATEGORIES
 from data_manager import get_user_data
 from decorators import auto_defer
-from gem_manager import gem_detail_text
 
 class InventoryPaginationView(discord.ui.View):
     """인벤토리 페이지 넘김을 담당하는 뷰"""
@@ -378,19 +376,6 @@ class InfoView(discord.ui.View):
             e_desc = engraved_art.get('description', '설명 없음')
             engraved_str = f"**{e_name}**\n{e_desc}"
         embed.add_field(name="🔮 각인 아티팩트", value=engraved_str, inline=False)
-
-        # 장착한 모든 젬의 실제 수치와 3성·5성 해금 내용을 상태창에서도 확인한다.
-        for artifact_label, artifact in (("일반", art), ("각인", engraved_art)):
-            if not isinstance(artifact, dict):
-                continue
-            for socket_index, gem in enumerate(artifact.get("gems", [])):
-                if not isinstance(gem, dict):
-                    continue
-                embed.add_field(
-                    name=f"💎 {artifact_label} {socket_index + 1}번 · {gem.get('name', '젬')}",
-                    value=gem_detail_text(gem)[:1024],
-                    inline=False,
-                )
         
         # 활성화된 버프 목록 표시
         if buffs:

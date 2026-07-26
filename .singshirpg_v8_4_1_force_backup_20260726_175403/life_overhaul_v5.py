@@ -56,53 +56,43 @@ class LifeSupplyShopView(discord.ui.View):
         self.author, self.user_data, self.save_func = author, user_data, save_func
         self.selected_item = None
         self.quantity = 1
-        self.page = 0
-        self._rebuild()
-
-    def _rebuild(self):
-        self.clear_items()
-        inventory = self.user_data.setdefault("inventory", {})
-        entries = list(SUPPLY_PRICES.items())
-        visible = entries[self.page * 8:self.page * 8 + 8]
+        inventory = user_data.setdefault("inventory", {})
         select = discord.ui.Select(
-            placeholder=f"구매할 씨앗·치어 선택 ({self.page + 1}/{max(1, (len(entries) + 7) // 8)})",
+            placeholder="구매할 씨앗·치어 선택",
             options=[
+                discord.SelectOption(
+                    label=name,
+                    value=name,
+                    description=f"재고 {int(inventory.get(name, 0))}개 · 개당 {price:,}원",
+                )
+                for name, price in list(SUPPLY_PRICES.items())[:25]
+            ],
+        )
+        select.callback = self.select_item
+        self.add_item(select)
+
+        for label, delta in (("-10", -10), ("-1", -1), ("+1", 1), ("+10", 10)):
+            button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, row=1)
+            button.callback = self._quantity_callback(delta)
+            self.add_item(button)
+        buy_button = discord.ui.Button(label="선택 수량 구매", style=discord.ButtonStyle.success, row=2)
+        buy_button.callback = self.buy
+        self.add_item(buy_button)
+
+    def _refresh_stock_descriptions(self):
+        inventory = self.user_data.setdefault("inventory", {})
+        for child in self.children:
+            if not isinstance(child, discord.ui.Select):
+                continue
+            child.options = [
                 discord.SelectOption(
                     label=name,
                     value=name,
                     description=f"재고 {int(inventory.get(name, 0))}개 · 개당 {price:,}원",
                     default=name == self.selected_item,
                 )
-                for name, price in visible
-            ],
-            row=0,
-        )
-        select.callback = self.select_item
-        self.add_item(select)
-        quantity = discord.ui.Select(
-            placeholder=f"구매 수량: {self.quantity}개",
-            options=[
-                discord.SelectOption(label="1개", value="1", default=self.quantity == 1),
-                discord.SelectOption(label="5개", value="5", default=self.quantity == 5),
-                discord.SelectOption(label="10개", value="10", default=self.quantity == 10),
-                discord.SelectOption(label="50개", value="50", default=self.quantity == 50),
-            ],
-            row=1,
-        )
-        quantity.callback = self.select_quantity
-        self.add_item(quantity)
-        buy_button = discord.ui.Button(label="선택 수량 구매", style=discord.ButtonStyle.success, row=2)
-        buy_button.callback = self.buy
-        self.add_item(buy_button)
-        if len(entries) > 8:
-            prev = discord.ui.Button(label="이전", disabled=self.page == 0, row=2)
-            nxt = discord.ui.Button(label="다음", disabled=(self.page + 1) * 8 >= len(entries), row=2)
-            prev.callback = self.prev_page
-            nxt.callback = self.next_page
-            self.add_item(prev); self.add_item(nxt)
-
-    def _refresh_stock_descriptions(self):
-        self._rebuild()
+                for name, price in list(SUPPLY_PRICES.items())[:25]
+            ]
 
     async def _save(self):
         try:
@@ -115,18 +105,11 @@ class LifeSupplyShopView(discord.ui.View):
         self.quantity = 1
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    async def select_quantity(self, interaction):
-        self.quantity = int(interaction.data["values"][0])
-        self._rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def prev_page(self, interaction):
-        self.page = max(0, self.page - 1); self._rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def next_page(self, interaction):
-        self.page += 1; self._rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+    def _quantity_callback(self, delta):
+        async def callback(interaction):
+            self.quantity = max(1, min(999, self.quantity + delta))
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        return callback
 
     async def buy(self, interaction):
         if not self.selected_item:

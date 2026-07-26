@@ -2,7 +2,6 @@
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
 # pve-gem-runtime-v8.2
-# gem-visibility-tools-v8.3
 from __future__ import annotations
 
 import copy
@@ -23,7 +22,7 @@ from gem_effects import (
     gem_final_aux_value,
     gem_final_effect_value,
     gem_final_main_value,
-    gem_star_progression_lines,
+    gem_star_unlock_lines,
 )
 from navigation_v7 import attach_navigation
 
@@ -119,8 +118,7 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
         "격화의 젬": [f"맹렬한 발동의 추가 주사위 위력 **+{effect}**"],
         "도화선의 젬": [
             "맹렬한 발동 간격 **2턴**"
-            + (" → **1턴**" if star >= 3 else ""),
-            *([f"5성: 맹렬 추가 위력에 **+{effect}**"] if star >= 5 else []),
+            + (" → **1턴**" if star >= 3 else "")
         ],
         "잔불의 젬": [f"맹렬한 추가 위력의 **{min(80, effect)}%**를 다음 턴 잔불 피해로 전환"],
         "맥박의 젬": [f"견고한 발동의 체력 회복량 **+{effect}**"],
@@ -185,8 +183,16 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
 
     if name == "정화의 젬" and gem.get("category") == "combat_common":
         lines.append(f"받는 상태이상 지속시간 **{min(75, effect)}% 감소**")
+        if star >= 3:
+            lines.append("3성: 감소 계산 후 지속시간 **추가 -1턴**")
+        if star >= 5:
+            lines.append("5성: 전투당 1회 현재 상태이상 **전부 제거**")
     elif name == "정화의 젬" and gem.get("category") == "dedicated":
         lines.append(f"부활 시 상태이상 지속시간 **{min(90, effect)}% 감소**")
+        if star >= 3:
+            lines.append("3성: 부활 시 상태이상 **전부 제거**")
+        if star >= 5:
+            lines.append("5성: 부활 후 **1턴 상태이상 면역**")
     elif not lines:
         lines.append(f"고유 효과 최종 적용값 **{effect}**")
 
@@ -196,7 +202,7 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
             f"보조 능력 **+{auxiliary}**: 장착한 아티팩트의 "
             "주 능력치에 상수로 먼저 적용"
         )
-    lines.extend(gem_star_progression_lines(gem))
+    lines.extend(gem_star_unlock_lines(gem))
     corrections = []
     if effect != raw_effect:
         corrections.append(f"고유 {raw_effect}→{effect}")

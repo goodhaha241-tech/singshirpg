@@ -1,49 +1,6 @@
 # cards.py
 import random
 
-EFFECT_DESCRIPTIONS = {
-    "bleed_synergy": "대상의 출혈만큼 위력 증가",
-    "destroy_next_on_hit": "적중 시 다음 상대 주사위 파괴",
-    "lock_others": "이후 상대 주사위를 잠금",
-    "absorb_hp": "준 피해 일부를 체력으로 흡수",
-    "time_accel": "시간 가속 효과 발동",
-    "morning_glory": "특수 조건에서 위력 강화",
-    "self_major": "자신에게 메이저 부여: 주는 피해와 받는 피해 25% 증가",
-    "self_minor": "자신에게 마이너 부여: 주는 피해와 받는 피해 25% 감소",
-}
-
-
-def describe_dice_effect(effect):
-    """카드의 내부 효과 키를 이용자용 한국어 설명으로 변환한다."""
-    if not effect:
-        return ""
-    if effect in EFFECT_DESCRIPTIONS:
-        return EFFECT_DESCRIPTIONS[effect]
-    parts = effect.split("_")
-    if effect.startswith("bleed_") and parts[1].isdigit():
-        target = "자신에게" if "self" in parts else "상대에게"
-        condition = " (승리 시)" if "on" in parts and "win" in parts else ""
-        return f"{target} 출혈 {parts[1]} 부여{condition}"
-    if effect.startswith("paralysis_") and parts[1].isdigit():
-        target = "자신에게" if "self" in parts else "상대에게"
-        condition = " (승리 시)" if "on" in parts and "win" in parts else ""
-        return f"{target} 마비 {parts[1]} 부여{condition}"
-    if effect.startswith("stun_") and parts[1].isdigit():
-        chance = ""
-        if "prob" in parts:
-            chance = f" ({parts[parts.index('prob') + 1]}% 확률)"
-        return f"상대에게 기절 {parts[1]} 부여{chance}"
-    if effect.startswith("dmg_by_para_"):
-        return f"대상 마비 1당 고정 피해 {parts[-1]}"
-    if effect.startswith("atk_boost_para_"):
-        return f"대상 마비 1당 주사위 위력 +{parts[-1]}"
-    if effect.startswith("self_dmg_by_para_"):
-        return f"자신의 마비 1당 자해 피해 {parts[-1]}"
-    if effect.startswith("self_dmg_") and len(parts) >= 4:
-        return f"자신에게 {parts[2]}~{parts[3]} 피해"
-    return effect
-
-
 class Dice:
     """개별 행동(주사위)을 정의하는 클래스"""
     def __init__(self, action_type, d_min, d_max, effect=None):
@@ -81,18 +38,18 @@ class SkillCard:
     @property
     def description(self):
         desc_parts = []
-        effect_lines = []
         for d in self.dice_list:
             emoji = {"attack": "⚔️", "defense": "🛡️", "counter": "⚡", "heal": "💚", "mental_heal": "🔮"}.get(d.action_type, "🎲")
-            effect_desc = describe_dice_effect(d.effect)
-            marker = " ✦" if effect_desc else ""
-            desc_parts.append(f"{emoji}({d.d_min}~{d.d_max}){marker}")
-            if effect_desc and effect_desc not in effect_lines:
-                effect_lines.append(effect_desc)
+            eff_text = ""
+            if d.effect:
+                if "bleed" in d.effect: eff_text = "🩸"
+                elif "destroy" in d.effect: eff_text = "💥"
+                elif "lock" in d.effect: eff_text = "🔒"
+                elif "absorb" in d.effect: eff_text = "🧛"
+                elif "time_accel" in d.effect: eff_text = "⌛"
+            desc_parts.append(f"{emoji}({d.d_min}~{d.d_max}){eff_text}")
         desc = " ➔ ".join(desc_parts)
         if self.is_aoe: desc = "📢 [광역] " + desc
-        if effect_lines:
-            desc += "\n" + "\n".join(f"• {line}" for line in effect_lines)
         return desc
 
     def use_card(self, attack_stat=0, defense_stat=0, current_mental=0, **kwargs):
@@ -307,8 +264,6 @@ SKILL_CARDS = {
     "기본방어": SkillCard("기본방어", [Dice("defense", 3, 5)]),
     "기본회복": SkillCard("기본회복", [Dice("heal", 15, 20)]),
     "기본반격": SkillCard("기본반격", [Dice("counter", 4, 6)]),
-    "메이저 체인지": SkillCard("메이저 체인지", [Dice("defense", 1, 5, effect="self_major")]),
-    "마이너 체인지": SkillCard("마이너 체인지", [Dice("defense", 1, 5, effect="self_minor")]),
 
     
     "복합공격": SkillCard("복합공격", [Dice("attack", 3, 5), Dice("attack", 2, 4)]),
@@ -484,7 +439,6 @@ def get_card(name):
 
 CARD_PRICES = {
     "기본공격": 700, "기본방어": 700, "기본회복": 1000, "기본반격": 1000,
-    "메이저 체인지": 1800, "마이너 체인지": 1800,
     "복합공격": 1600, "복합반격": 1600, "숨고르기": 2000,
     "기본집중": 1600, "깊은집중": 2000, "강한참격": 2500, "회전베기": 2500,
     "회피기동": 2700, "육참골단": 2700, "집중반격": 2000,

@@ -244,27 +244,12 @@ class CraftAmountView(discord.ui.View):
         self.key = recipe_key
         self.info = recipe_info
         self.parent_view = parent_view 
-        self.amount = 1
-        amount_select = discord.ui.Select(
-            placeholder="제작 수량 선택",
-            options=[
-                discord.SelectOption(label="1개", value="1", default=True),
-                discord.SelectOption(label="5개", value="5"),
-                discord.SelectOption(label="10개", value="10"),
-                discord.SelectOption(label="최대 제작", value="all"),
-            ],
-            row=0,
-        )
-        amount_select.callback = self.select_amount
-        self.add_item(amount_select)
-        self.add_item(discord.ui.Button(label="제작", style=discord.ButtonStyle.success, row=1, custom_id="craft"))
-        self.add_item(discord.ui.Button(label="부족 재료 바로 제작", style=discord.ButtonStyle.primary, row=1, custom_id="subcraft"))
+        
+        self.add_item(discord.ui.Button(label="1개", style=discord.ButtonStyle.primary, custom_id="c1"))
+        self.add_item(discord.ui.Button(label="5개", style=discord.ButtonStyle.primary, custom_id="c5"))
+        self.add_item(discord.ui.Button(label="10개", style=discord.ButtonStyle.primary, custom_id="c10"))
+        self.add_item(discord.ui.Button(label="최대", style=discord.ButtonStyle.success, custom_id="c_all"))
         self.add_item(discord.ui.Button(label="취소", style=discord.ButtonStyle.secondary, row=1, custom_id="cancel"))
-
-    async def select_amount(self, interaction):
-        value = interaction.data["values"][0]
-        self.amount = value if value == "all" else int(value)
-        await interaction.response.defer()
 
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user != self.author: return False
@@ -274,43 +259,11 @@ class CraftAmountView(discord.ui.View):
             await self.parent_view.reload_data()
             self.parent_view.update_components()
             await interaction.response.edit_message(content=f"🔨 **[{self.parent_view.region_name}]** 제작 목록", embed=None, view=self.parent_view)
-        elif cid == "craft":
-            await self.process_craft(interaction, self.amount)
-        elif cid == "subcraft":
-            await self.open_subcraft(interaction)
+        elif cid == "c1": await self.process_craft(interaction, 1)
+        elif cid == "c5": await self.process_craft(interaction, 5)
+        elif cid == "c10": await self.process_craft(interaction, 10)
+        elif cid == "c_all": await self.process_craft(interaction, "all")
         return True
-
-    def requested_count(self, inventory):
-        if self.amount != "all":
-            return int(self.amount)
-        maximum = 9999
-        for item, required in self.info["need"].items():
-            maximum = min(maximum, inventory.get(item, 0) // required)
-        return max(1, maximum)
-
-    async def open_subcraft(self, interaction):
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
-        inventory = self.user_data.setdefault("inventory", {})
-        count = self.requested_count(inventory)
-        missing = {
-            item: required * count - inventory.get(item, 0)
-            for item, required in self.info["need"].items()
-            if inventory.get(item, 0) < required * count
-        }
-        craftable = {}
-        for missing_item, shortage in missing.items():
-            for key, recipe in CRAFT_RECIPES.items():
-                if recipe.get("result") == missing_item and missing_item not in recipe.get("need", {}):
-                    craftable[key] = (recipe, shortage)
-        if not missing:
-            return await interaction.response.send_message("✅ 필요한 재료를 이미 모두 보유하고 있습니다.", ephemeral=True)
-        if not craftable:
-            detail = "\n".join(f"• {item} **{amount}개 부족**" for item, amount in missing.items())
-            return await interaction.response.send_message(f"바로 제작할 수 있는 부족 재료가 없습니다.\n{detail}", ephemeral=True)
-        view = MissingMaterialCraftView(
-            self.author, self.user_data, self.save_func, craftable, self
-        )
-        await interaction.response.edit_message(embed=view.get_embed(), view=view)
 
     async def process_craft(self, interaction, amount):
         self.user_data = await get_user_data(self.author.id, self.author.display_name)
@@ -365,88 +318,6 @@ class CraftAmountView(discord.ui.View):
             embed=embed,
             view=self 
         )
-
-
-class MissingMaterialCraftView(discord.ui.View):
-    """부족한 중간 재료를 현재 제작 흐름에서 바로 만든다."""
-    def __init__(self, author, user_data, save_func, craftable, parent_view):
-        super().__init__(timeout=90)
-        self.author, self.user_data, self.save_func = author, user_data, save_func
-        self.craftable, self.parent_view = craftable, parent_view
-        self.selected_key = next(iter(craftable))
-        select = discord.ui.Select(
-            placeholder="바로 만들 부족 재료 선택",
-            options=[
-                discord.SelectOption(
-                    label=recipe["result"],
-                    description=f"{shortage}개 부족",
-                    value=key,
-                )
-                for key, (recipe, shortage) in list(craftable.items())[:8]
-            ],
-            row=0,
-        )
-        select.callback = self.select_recipe
-        self.add_item(select)
-        make = discord.ui.Button(label="필요량 제작", style=discord.ButtonStyle.success, row=1)
-        back = discord.ui.Button(label="원래 제작으로", style=discord.ButtonStyle.secondary, row=1)
-        make.callback, back.callback = self.make_needed, self.go_back
-        self.add_item(make); self.add_item(back)
-
-    def _selected(self):
-        return self.craftable[self.selected_key]
-
-    def get_embed(self):
-        recipe, shortage = self._selected()
-        batch = max(1, int(recipe.get("count", 1)))
-        crafts = (shortage + batch - 1) // batch
-        inv = self.user_data.get("inventory", {})
-        lines = [
-            f"{'✅' if inv.get(item, 0) >= amount * crafts else '❌'} "
-            f"{item}: {inv.get(item, 0)}/{amount * crafts}"
-            for item, amount in recipe["need"].items()
-        ]
-        return discord.Embed(
-            title=f"🧩 {recipe['result']} 바로 제작",
-            description=f"부족량 {shortage}개를 채우려면 **{crafts}회** 제작해야 합니다.\n\n" + "\n".join(lines),
-            color=discord.Color.orange(),
-        )
-
-    async def select_recipe(self, interaction):
-        self.selected_key = interaction.data["values"][0]
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def make_needed(self, interaction):
-        self.user_data = await get_user_data(self.author.id, self.author.display_name)
-        recipe, shortage = self._selected()
-        output_count = max(1, int(recipe.get("count", 1)))
-        crafts = (shortage + output_count - 1) // output_count
-        inv = self.user_data.setdefault("inventory", {})
-        missing = {
-            item: amount * crafts - inv.get(item, 0)
-            for item, amount in recipe["need"].items()
-            if inv.get(item, 0) < amount * crafts
-        }
-        if missing:
-            detail = "\n".join(f"• {item} **{amount}개 부족**" for item, amount in missing.items())
-            return await interaction.response.send_message(f"하위 재료가 더 필요합니다.\n{detail}", ephemeral=True)
-        for item, amount in recipe["need"].items():
-            inv[item] -= amount * crafts
-            if inv[item] <= 0:
-                inv.pop(item, None)
-        result = recipe["result"]
-        made = output_count * crafts
-        inv[result] = inv.get(result, 0) + made
-        await self.save_func(self.author.id, self.user_data)
-        self.parent_view.user_data = self.user_data
-        await interaction.response.edit_message(
-            content=f"✅ **{result}** {made}개를 바로 만들었습니다.",
-            embed=None,
-            view=self.parent_view,
-        )
-
-    async def go_back(self, interaction):
-        await interaction.response.edit_message(content=None, embed=None, view=self.parent_view)
 
 
 # --- 상자깡 뷰 ---

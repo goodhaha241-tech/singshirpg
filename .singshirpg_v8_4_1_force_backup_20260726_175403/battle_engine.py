@@ -13,7 +13,6 @@ from gem_effects import (
     gem_state,
     low_mental_bonus,
     multi_attack_bonus,
-    pop_gem_activation_log,
     record_balance_loss,
     record_fierce_aftereffect,
     reflection_damage,
@@ -193,14 +192,6 @@ def apply_dice_effect(dice, attacker, defender, is_win, is_self=False):
     
     if random.randint(1, 100) > prob: return ""
 
-    if is_self and eff in {"self_major", "self_minor"}:
-        runtime = runtime_cooldowns(attacker)
-        state = "major" if eff == "self_major" else "minor"
-        runtime["change_state"] = state
-        label = "메이저" if state == "major" else "마이너"
-        detail = "주는·받는 피해 +25%" if state == "major" else "주는·받는 피해 -25%"
-        return f" 🎼{label}({detail})"
-
     # 값 추출 (paralysis_X, bleed_X)
     val = 0
     if len(parts) > 1 and parts[1].isdigit():
@@ -316,14 +307,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         t1, v1 = d1["type"], d1["value"]
         t2, v2 = d2["type"], d2["value"]
-        if t1 == "attack":
-            v1 += int(runtime1.get("guild_attack_bonus", 0))
-        elif t1 in {"defense", "counter"}:
-            v1 += int(runtime1.get("guild_defense_bonus", 0))
-        if t2 == "attack":
-            v2 += int(runtime2.get("guild_attack_bonus", 0))
-        elif t2 in {"defense", "counter"}:
-            v2 += int(runtime2.get("guild_defense_bonus", 0))
         if t1 != "none":
             v1 += consume_balance_bonus(char1) + consume_chain_bonus(char1)
             v1 += consume_guardian_defense_bonus(char1, t1)
@@ -522,23 +505,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
             if getattr(char2, "defense_rate", 0) > 0: dmg2 = int(dmg2 * (1 - char2.defense_rate / 100))
             dmg2 = max(0, dmg2 - int(char2.defense / 3))
 
-        # 메이저/마이너는 일반 합 피해에만 적용한다. 서로 배타적이며
-        # 다른 체인지 카드를 사용하거나 전투가 끝날 때까지 유지된다.
-        if dmg1 > 0:
-            outgoing = runtime2.get("change_state")
-            incoming = runtime1.get("change_state")
-            if outgoing == "major": dmg1 = max(1, round(dmg1 * 1.25))
-            elif outgoing == "minor": dmg1 = max(0, round(dmg1 * 0.75))
-            if incoming == "major": dmg1 = max(1, round(dmg1 * 1.25))
-            elif incoming == "minor": dmg1 = max(0, round(dmg1 * 0.75))
-        if dmg2 > 0:
-            outgoing = runtime1.get("change_state")
-            incoming = runtime2.get("change_state")
-            if outgoing == "major": dmg2 = max(1, round(dmg2 * 1.25))
-            elif outgoing == "minor": dmg2 = max(0, round(dmg2 * 0.75))
-            if incoming == "major": dmg2 = max(1, round(dmg2 * 1.25))
-            elif incoming == "minor": dmg2 = max(0, round(dmg2 * 0.75))
-
         if "reflection" in effs1 and dmg1 > 0:
             dmg1 = reflection_incoming_damage(art1, char1, dmg1)
         if "reflection" in effs2 and dmg2 > 0:
@@ -671,12 +637,5 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if heal > 0:
             char2.current_hp = min(char2.max_hp, char2.current_hp + heal)
             log += f"\n🛡️ **[{char2.name}:믿음]** 믿는 자에게 빛이 있나니(+{heal})"
-
-    gem_log1 = pop_gem_activation_log(char1)
-    gem_log2 = pop_gem_activation_log(char2)
-    if gem_log1:
-        log += f"\n💎 **{char1.name} 젬 발동** — {gem_log1}"
-    if gem_log2:
-        log += f"\n💎 **{char2.name} 젬 발동** — {gem_log2}"
 
     return log, damage_taken1, damage_taken2

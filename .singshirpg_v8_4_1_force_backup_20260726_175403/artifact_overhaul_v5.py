@@ -1,7 +1,6 @@
 # life-artifact-v7.3-manager
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
-# gem-visibility-tools-v8.3
 from __future__ import annotations
 
 import random
@@ -24,7 +23,6 @@ from gem_manager import (
     artifact_owner,
     artifact_socket_count,
     gem_applied_effect_summary,
-    gem_detail_text,
 )
 from navigation_v7 import attach_navigation
 
@@ -434,14 +432,5 @@ class ArtifactHubView(discord.ui.View):
                 ),
                 inline=False,
             )
-            for index, gem in enumerate(sockets[:artifact_socket_count(selected)]):
-                if not isinstance(gem, dict):
-                    continue
-                detail = gem_detail_text(gem)
-                embed.add_field(
-                    name=f"💎 {index + 1}번 소켓 · {gem.get('name', '젬')}",
-                    value=detail[:1024],
-                    inline=False,
-                )
         embed.set_footer(text="장착 중인 아티팩트도 숨기지 않으며 장착자를 함께 표시합니다.")
         return embed

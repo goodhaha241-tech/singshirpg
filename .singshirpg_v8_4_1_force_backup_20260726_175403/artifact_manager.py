@@ -1,7 +1,6 @@
 # artifact_manager.py
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
-# gem-visibility-tools-v8.3
 import discord
 import random
 import re
@@ -17,7 +16,6 @@ from artifacts import _make_description, apply_upgrade_bonus
 from fishing import FISH_TIERS
 from data_manager import get_user_data
 from decorators import auto_defer
-from gem_manager import gem_detail_text
 
 DATA_FILE = "user_data.json"
 
@@ -25,19 +23,6 @@ DATA_FILE = "user_data.json"
 PREFIX_KEYWORDS = [
     "맹렬한", "견고한", "꼼꼼한", "앙심품은", "고조된", "불멸의"
 ]
-
-
-def _add_gem_detail_fields(embed, artifact, label):
-    if not isinstance(artifact, dict):
-        return
-    for socket_index, gem in enumerate(artifact.get("gems", [])):
-        if not isinstance(gem, dict):
-            continue
-        embed.add_field(
-            name=f"💎 {label} {socket_index + 1}번 · {gem.get('name', '젬')}",
-            value=gem_detail_text(gem)[:1024],
-            inline=False,
-        )
 
 # --- 강화 비용 테이블 ---
 # level: (0->1, 1->2, 2->3, 3->4, 4->5)
@@ -710,7 +695,6 @@ class ArtifactManageView(discord.ui.View):
                 if lvl > 0: name += f" (+{lvl})"
                 desc = equipped.get("description", "설명없음")
                 embed.add_field(name="💍 장착 중", value=f"**{name}**\n{desc}", inline=False)
-                _add_gem_detail_fields(embed, equipped, "일반")
             else:
                 embed.add_field(name="💍 장착 중", value="없음", inline=False)
             
@@ -722,7 +706,6 @@ class ArtifactManageView(discord.ui.View):
                 if lvl > 0: name += f" (+{lvl})"
                 desc = engraved.get("description", "설명없음")
                 embed.add_field(name="🔮 각인", value=f"**{name}**\n{desc}", inline=False)
-                _add_gem_detail_fields(embed, engraved, "각인")
             else:
                 embed.add_field(name="🔮 각인", value="없음", inline=False)
                 
@@ -761,7 +744,6 @@ class ArtifactManageView(discord.ui.View):
         desc = art.get("description", "")
         if desc:
             embed.add_field(name="📜 효과 및 설명", value=desc, inline=False)
-        _add_gem_detail_fields(embed, art, "선택")
 
         max_level = 3 if is_engraved else 5
         

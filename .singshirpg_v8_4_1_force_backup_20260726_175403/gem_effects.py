@@ -1,7 +1,6 @@
 # gem-link-v4-effects
 # rollback-guard-appraisal-gems-v8
 # pve-gem-runtime-v8.2
-# gem-visibility-tools-v8.3
 """Runtime helpers for combat, artifact, and gem effects.
 
 All displayed gem numbers and all runtime calculations use the same final
@@ -146,41 +145,6 @@ def gem_state(source):
     return runtime_cooldowns(source).setdefault("gem_state", {})
 
 
-def record_gem_activation(source, name, detail):
-    """Queue a compact, player-facing record that a gem changed a calculation."""
-    if source is None or not name:
-        return
-    state = gem_state(source)
-    events = state.setdefault("activation_log", [])
-    entry = f"{name.replace('의 젬', '')} {detail}".strip()
-    if entry and entry not in events:
-        events.append(entry)
-        del events[:-12]
-
-
-def pop_gem_activation_log(source):
-    """Return and clear calculation records made during the current clash."""
-    events = gem_state(source).pop("activation_log", [])
-    return " · ".join(str(event) for event in events if event)
-
-
-def equipped_gem_start_summary(source):
-    """Show once per battle which crafted gems were recognized by the runtime."""
-    gems = equipped_gems(source)
-    if not gems:
-        return ""
-    state = gem_state(source)
-    if state.get("loadout_summary_shown"):
-        return ""
-    state["loadout_summary_shown"] = True
-    parts = []
-    for gem in gems:
-        name = str(gem.get("name", "젬")).replace("의 젬", "")
-        star = _star(gem.get("star"))
-        parts.append(f"{name}★{star}")
-    return "💎 적용 젬: " + " · ".join(parts)
-
-
 def status_store(source):
     if source is None:
         return {}
@@ -205,16 +169,12 @@ def turn_first_dice_bonus(source, valid_index=0):
     value = gem_effect_total(source, "선봉의 젬")
     star = gem_max_star(source, "선봉의 젬")
     if valid_index == 0:
-        result = value
-    elif valid_index == 1 and star >= 3:
-        result = math.ceil(value / 2)
-    elif valid_index >= 2 and star >= 5:
-        result = math.ceil(value / 3)
-    else:
-        result = 0
-    if result:
-        record_gem_activation(source, "선봉의 젬", f"주사위 +{result}")
-    return result
+        return value
+    if valid_index == 1 and star >= 3:
+        return math.ceil(value / 2)
+    if valid_index >= 2 and star >= 5:
+        return math.ceil(value / 3)
+    return 0
 
 
 def single_dice_bonus(source, dice_type=None):
@@ -224,8 +184,6 @@ def single_dice_bonus(source, dice_type=None):
         value = math.ceil(value * 1.5)
     elif star >= 3:
         value = math.ceil(value * 1.25)
-    if value:
-        record_gem_activation(source, "집중의 젬", f"단일 주사위 +{value}")
     return value
 
 
@@ -235,13 +193,10 @@ def multi_attack_bonus(source, attack_index):
     value = gem_effect_total(source, "연격의 젬")
     star = gem_max_star(source, "연격의 젬")
     if attack_index >= 4 and star >= 5:
-        result = value * 2
-    elif attack_index >= 3 and star >= 3:
-        result = value + math.ceil(value / 2)
-    else:
-        result = value
-    record_gem_activation(source, "연격의 젬", f"{attack_index}번째 공격 +{result}")
-    return result
+        return value * 2
+    if attack_index >= 3 and star >= 3:
+        return value + math.ceil(value / 2)
+    return value
 
 
 def low_mental_bonus(source, current, maximum):
@@ -249,17 +204,11 @@ def low_mental_bonus(source, current, maximum):
         return 0
     star = gem_max_star(source, "결의의 젬")
     threshold = 0.60 if star >= 5 else (0.50 if star >= 3 else 0.40)
-    result = gem_effect_total(source, "결의의 젬") if current / maximum <= threshold else 0
-    if result:
-        record_gem_activation(source, "결의의 젬", f"저정신 주사위 +{result}")
-    return result
+    return gem_effect_total(source, "결의의 젬") if current / maximum <= threshold else 0
 
 
 def consume_balance_bonus(source):
-    result = max(0, int(gem_state(source).pop("balance_bonus", 0) or 0))
-    if result:
-        record_gem_activation(source, "균형의 젬", f"예약 보너스 +{result}")
-    return result
+    return max(0, int(gem_state(source).pop("balance_bonus", 0) or 0))
 
 
 def record_balance_loss(source):
@@ -273,15 +222,11 @@ def record_balance_loss(source):
         value = math.ceil(value * 1.5)
     state = gem_state(source)
     state["balance_bonus"] = max(int(state.get("balance_bonus", 0) or 0), value)
-    record_gem_activation(source, "균형의 젬", f"다음 주사위 +{value} 예약")
     return value
 
 
 def consume_chain_bonus(source):
-    result = max(0, int(gem_state(source).pop("chain_bonus", 0) or 0))
-    if result:
-        record_gem_activation(source, "연쇄의 젬", f"전달 보너스 +{result}")
-    return result
+    return max(0, int(gem_state(source).pop("chain_bonus", 0) or 0))
 
 
 def record_escalation_chain(source, rolled_bonus):
@@ -322,22 +267,14 @@ def reduce_turn_first_damage(source, damage, state=None):
         absorbed = min(shield, damage)
         damage -= absorbed
         state["artifact_shield"] = shield - absorbed
-        if absorbed:
-            record_gem_activation(source, "축성의 젬", f"보호막 {absorbed} 흡수")
 
     revive_guard = max(0, int(state.pop("revive_guard_pct", 0) or 0))
     if revive_guard:
-        before = damage
         damage = _apply_percent_reduction(damage, revive_guard)
-        if before != damage:
-            record_gem_activation(source, "회귀의 젬", f"피해 {before}→{damage}")
 
     endurance = max(0, int(state.pop("endurance_pct", 0) or 0))
     if endurance:
-        before = damage
         damage = _apply_percent_reduction(damage, endurance)
-        if before != damage:
-            record_gem_activation(source, "인내의 젬", f"피해 {before}→{damage}")
 
     if (
         not gems_named(source, "수호의 젬")
@@ -353,10 +290,7 @@ def reduce_turn_first_damage(source, damage, state=None):
             int(state.get("guardian_defense_bonus", 0) or 0),
             max(1, math.ceil(pct / 2)),
         )
-    reduced = _apply_percent_reduction(damage, pct)
-    if reduced != damage:
-        record_gem_activation(source, "수호의 젬", f"첫 피해 {damage}→{reduced}")
-    return reduced
+    return _apply_percent_reduction(damage, pct)
 
 
 def reduce_guardian_mental_damage(source, mental_damage, state=None):
@@ -369,10 +303,7 @@ def reduce_guardian_mental_damage(source, mental_damage, state=None):
 def consume_guardian_defense_bonus(source, dice_type):
     if dice_type != "defense":
         return 0
-    result = max(0, int(gem_state(source).pop("guardian_defense_bonus", 0) or 0))
-    if result:
-        record_gem_activation(source, "수호의 젬", f"방어 주사위 +{result}")
-    return result
+    return max(0, int(gem_state(source).pop("guardian_defense_bonus", 0) or 0))
 
 
 def status_amount_after_resistance(source, amount):
@@ -384,10 +315,7 @@ def status_amount_after_resistance(source, amount):
     if gem_max_star_category(source, "정화의 젬", "combat_common") >= 3:
         reduced = max(0, reduced - 1)
     if gem_state(source).get("status_immunity_turns", 0) > 0:
-        record_gem_activation(source, "정화의 젬", f"상태이상 {amount}→0")
         return 0
-    if reduced != amount:
-        record_gem_activation(source, "정화의 젬", f"지속시간 {amount}→{reduced}")
     return reduced
 
 
@@ -410,10 +338,6 @@ def process_gem_turn_start(source, target, turn_count, card_name=""):
     """Apply delayed and per-turn gem effects and return a compact battle log."""
     state = gem_state(source)
     logs = []
-
-    loadout = equipped_gem_start_summary(source)
-    if loadout:
-        logs.append(loadout)
 
     if state.get("guardian_turn") != turn_count:
         state["guardian_turn"] = turn_count
@@ -570,10 +494,7 @@ def reflection_incoming_damage(artifact, source, damage):
             int(state.get("balance_bonus", 0) or 0),
             dedicated_value(artifact, "응보의 젬"),
         )
-    reduced = _apply_percent_reduction(damage, min(50, value))
-    if reduced != damage:
-        record_gem_activation(source, "응보의 젬", f"피해 {damage}→{reduced}")
-    return reduced
+    return _apply_percent_reduction(damage, min(50, value))
 
 
 def reflection_damage(artifact, source, base_damage):
@@ -642,7 +563,7 @@ GEM_STAR_UNLOCKS = {
     "교정의 젬": ("교정 보너스 최대 2회 누적", "교정 보너스 최대 3회 누적"),
     "여백의 젬": ("빈 구간 방어 보정 150%", "빈 구간 방어 보정 200%"),
     "격화의 젬": ("맹렬 추가 위력 성급 증폭", "맹렬 추가 위력 최대 증폭"),
-    "도화선의 젬": ("맹렬 발동 간격 1턴", "맹렬 추가 위력에 도화선 최종 수치 추가"),
+    "도화선의 젬": ("맹렬 발동 간격 1턴", "맹렬 발동 후 잔불 연계 강화"),
     "잔불의 젬": ("잔불 전환율 성급 증폭", "잔불 전환율 최대 증폭"),
     "맥박의 젬": ("회복량 성급 증폭", "회복량 최대 증폭"),
     "축성의 젬": ("초과 회복 보호막 효율 강화", "초과 회복이 없어도 회복량 10% 보호막"),
@@ -686,30 +607,3 @@ def gem_star_unlock_lines(gem):
     if star >= 5:
         result.append(f"5성: {unlocks[1]}")
     return result
-
-
-def gem_star_progression_lines(gem):
-    """Describe both future unlocks, marking which ones are currently active."""
-    if not isinstance(gem, dict):
-        return []
-    name = gem.get("name")
-    category = gem.get("category")
-    star = _star(gem.get("star"))
-    if name == "정화의 젬" and category == "combat_common":
-        unlocks = (
-            "감소 계산 후 상태이상 지속시간 추가 -1턴",
-            "전투당 1회 현재 상태이상 전부 제거",
-        )
-    elif name == "정화의 젬" and category == "dedicated":
-        unlocks = (
-            "부활 시 상태이상 전부 제거",
-            "부활 후 1턴 동안 상태이상 면역",
-        )
-    else:
-        unlocks = GEM_STAR_UNLOCKS.get(name)
-    if not unlocks:
-        return []
-    return [
-        f"{'✅' if star >= 3 else '🔒'} 3성 고유 효과: {unlocks[0]}",
-        f"{'✅' if star >= 5 else '🔒'} 5성 고유 효과: {unlocks[1]}",
-    ]

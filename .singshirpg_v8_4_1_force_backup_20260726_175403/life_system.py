@@ -2,7 +2,6 @@
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
 # pve-gem-runtime-v8.2
-# gem-visibility-tools-v8.3
 from __future__ import annotations
 
 import asyncio
@@ -104,7 +103,6 @@ STONE_NAMES = tuple(STONE_GEMS)
 TOOL_DEFS = {
     "정령 화로": {
         "rarity": "일반",
-        "description": "달구기 직후의 다음 성공을 크게 키우는 연계형 화로입니다. 실패하면 효과가 사라지지 않습니다.",
         "effects": [
             "달구기 후 다음 마법부여·불순물 제거 성공 효과 +10%",
             "달구기 후 다음 마법부여·불순물 제거 성공 효과 +15%",
@@ -114,7 +112,6 @@ TOOL_DEFS = {
     },
     "흑철 화로": {
         "rarity": "고급",
-        "description": "초반 달구기를 두 배로 올려 고열 구간에 빠르게 진입합니다. 높은 실패율도 함께 감수해야 합니다.",
         "effects": [
             "세공 중 첫 달구기는 달굼 +2",
             "처음 2회의 달구기가 달굼 +2",
@@ -124,7 +121,6 @@ TOOL_DEFS = {
     },
     "서리 집게": {
         "rarity": "일반",
-        "description": "한 번의 식히기로 더 많은 달굼을 내리고, 돌파 시 다음 가공의 성공률도 보조합니다.",
         "effects": [
             "식히기 시 달굼 -3",
             "달굼 -3, 다음 가공 성공률 +5%p",
@@ -134,7 +130,6 @@ TOOL_DEFS = {
     },
     "빙정 냉각판": {
         "rarity": "희귀",
-        "description": "식히기 전 달굼을 다음 행동의 효과량에만 남겨, 낮아진 위험도로 고열 효과를 사용합니다.",
         "effects": [
             "세공당 1회, 식히기 전 달굼을 다음 행동 효과량 계산에 사용",
             "세공당 2회 발동",
@@ -144,17 +139,15 @@ TOOL_DEFS = {
     },
     "마력 붓": {
         "rarity": "일반",
-        "description": "마법부여로 오르는 고유 효과와 주 능력을 함께 강화하는 안정적인 도구입니다.",
         "effects": [
             "마법부여 강화량 +10%",
             "마법부여 강화량 +15%",
-            "강화량 +20%, 동반 주 능력 상승량 +1",
-            "강화량 +30%, 동반 주 능력 상승량 +2",
+            "강화량 +20%, 동반 보조 수치 +1",
+            "강화량 +30%, 동반 보조 수치 +2",
         ],
     },
     "폭주 촉매": {
         "rarity": "희귀",
-        "description": "마법부여 성공률을 낮추는 대신 고유 효과와 주 능력의 상승량을 크게 증폭합니다.",
         "effects": [
             "마법부여 강화량 +50%, 성공률 -15%p",
             "강화량 +55%, 성공률 -13%p",
@@ -164,7 +157,6 @@ TOOL_DEFS = {
     },
     "별무늬 세공망치": {
         "rarity": "일반",
-        "description": "현재 성급과 달굼에 관계없이 모양 내기 성공률을 고정 수치로 올립니다.",
         "effects": [
             "모양 내기 성공률 +5%p",
             "성공률 +8%p",
@@ -174,7 +166,6 @@ TOOL_DEFS = {
     },
     "유성 망치": {
         "rarity": "고급",
-        "description": "모양 내기 실패가 이어질수록 다음 시도의 성공률을 누적해 보완합니다. 성공하면 누적이 초기화됩니다.",
         "effects": [
             "모양 내기 실패 시 다음 성공률 +8%p, 최대 1중첩",
             "실패당 +8%p, 최대 2중첩",
@@ -184,7 +175,6 @@ TOOL_DEFS = {
     },
     "순백의 체": {
         "rarity": "일반",
-        "description": "불순물 제거 성공 시 아티팩트 주 능력치를 보조하는 상수 상승량을 키웁니다.",
         "effects": [
             "불순물 제거 상승량 +15%",
             "상승량 +20%",
@@ -194,7 +184,6 @@ TOOL_DEFS = {
     },
     "결정 추출기": {
         "rarity": "고급",
-        "description": "불순물 제거에 성공한 뒤 추가 판정으로 해당 상승량을 두 배로 만듭니다.",
         "effects": [
             "불순물 제거 성공 시 10% 확률로 상승량 2배",
             "2배 확률 15%",
@@ -204,62 +193,20 @@ TOOL_DEFS = {
     },
     "장인의 확대경": {
         "rarity": "고급",
-        "description": "현재 성공률과 예상 상승량을 보여주며, 돌파할수록 세 가지 가공 행동의 성공률도 직접 높입니다.",
         "effects": [
             "각 행동의 정확한 성공률 표시",
-            "정확한 성공률 표시, 모든 가공 성공률 +3%p",
-            "성공률·현재 예상 상승량 표시, 모든 가공 성공률 +5%p",
-            "성공률·현재 예상 상승량 표시, 모든 가공 성공률 +8%p",
+            "성공 시 상승량 범위도 표시",
+            "성공·실패 후 예상 상태 표시",
+            "각 행동의 현재 기대 상승량 표시",
         ],
     },
     "안정의 균형추": {
         "rarity": "희귀",
-        "description": "달굼이 발생시키는 실패율 페널티만 완화합니다. 달굼으로 높아진 행동 효과는 그대로 유지됩니다.",
         "effects": [
             "달굼 성공률 페널티 5%p 완화",
             "페널티 7%p 완화",
             "페널티 10%p 완화",
             "페널티 12%p 완화",
-        ],
-    },
-    "예열 코일": {
-        "rarity": "고급",
-        "description": "세공 시작부터 달굼을 확보합니다. 높은 돌파에서는 첫 가공 행동의 성공률도 보조합니다.",
-        "effects": [
-            "세공 시작 시 달굼 +1",
-            "시작 달굼 +1, 첫 가공 행동 성공률 +5%p",
-            "세공 시작 시 달굼 +2",
-            "시작 달굼 +2, 첫 가공 행동 성공률 +10%p",
-        ],
-    },
-    "안정 룬펜": {
-        "rarity": "고급",
-        "description": "상승량을 바꾸지 않고 마법부여 성공률만 안정적으로 높이는 정밀 도구입니다.",
-        "effects": [
-            "마법부여 성공률 +6%p",
-            "마법부여 성공률 +9%p",
-            "마법부여 성공률 +12%p",
-            "마법부여 성공률 +15%p",
-        ],
-    },
-    "별자리 자": {
-        "rarity": "희귀",
-        "description": "낮은 성급의 형태를 빠르게 잡아 줍니다. 3성 이상에서는 성공률 보너스가 절반만 적용됩니다.",
-        "effects": [
-            "모양 내기 성공률 +10%p, 3성 이상 +5%p",
-            "성공률 +14%p, 3성 이상 +7%p",
-            "성공률 +18%p, 3성 이상 +9%p",
-            "성공률 +24%p, 3성 이상 +12%p",
-        ],
-    },
-    "결점 표본함": {
-        "rarity": "고급",
-        "description": "불순물 제거 실패 원인을 보존해 다음 불순물 제거 성공률을 누적합니다. 성공하면 누적이 초기화됩니다.",
-        "effects": [
-            "실패당 다음 불순물 제거 성공률 +8%p, 최대 1중첩",
-            "실패당 +8%p, 최대 2중첩",
-            "실패당 +10%p, 최대 2중첩",
-            "실패당 +10%p, 최대 3중첩",
         ],
     },
 }
@@ -268,11 +215,11 @@ TOOL_DEFS = {
 TOOL_RARITY_WEIGHT = {"일반": 60, "고급": 30, "희귀": 10}
 
 TOOL_CATEGORIES = {
-    "heating": {"label": "달구기", "tools": ("정령 화로", "흑철 화로", "예열 코일")},
+    "heating": {"label": "달구기", "tools": ("정령 화로", "흑철 화로")},
     "cooling": {"label": "식히기", "tools": ("서리 집게", "빙정 냉각판")},
-    "enchanting": {"label": "마법부여", "tools": ("마력 붓", "폭주 촉매", "안정 룬펜")},
-    "shaping": {"label": "모양 내기", "tools": ("별무늬 세공망치", "유성 망치", "별자리 자")},
-    "purifying": {"label": "불순물 제거", "tools": ("순백의 체", "결정 추출기", "결점 표본함")},
+    "enchanting": {"label": "마법부여", "tools": ("마력 붓", "폭주 촉매")},
+    "shaping": {"label": "모양 내기", "tools": ("별무늬 세공망치", "유성 망치")},
+    "purifying": {"label": "불순물 제거", "tools": ("순백의 체", "결정 추출기")},
     "general": {"label": "범용", "tools": ("장인의 확대경", "안정의 균형추")},
 }
 
@@ -694,27 +641,12 @@ def start_gem_crafting(
         "frost_success_bonus": 0,
         "effect_heat_override": None,
         "ice_plate_uses": 0,
-        "preheat_action_bonus": 0,
-        "specimen_stacks": 0,
         "last_log": (
             f"0성 젬 세공을 시작했습니다. "
             f"주 능력: {gem_main_stat_text(rolled_affixes)} · "
             f"보조 능력: 아티팩트 주 능력치 +{rolled_affixes['aux_stat_value']}"
         ),
     }
-    coil_level = _tool_level(craft, "예열 코일")
-    if coil_level is not None:
-        craft["heat"] = 2 if coil_level >= 2 else 1
-        craft["max_heat"] = craft["heat"]
-        if coil_level in (1, 3):
-            craft["preheat_action_bonus"] = 5 if coil_level == 1 else 10
-        craft["last_log"] += (
-            f" · 예열 코일: 시작 달굼 {craft['heat']}"
-            + (
-                f", 첫 가공 성공률 +{craft['preheat_action_bonus']}%p"
-                if craft["preheat_action_bonus"] else ""
-            )
-        )
     life["gem_crafting"] = craft
     return True, f"{gem_def['name']} 세공을 시작했습니다."
 
@@ -755,56 +687,23 @@ def _meteor_rule(craft: dict[str, Any]) -> tuple[int, int]:
     return per_stack, max_stack
 
 
-def _magnifier_success_bonus(craft: dict[str, Any]) -> int:
-    level = _tool_level(craft, "장인의 확대경")
-    return [0, 3, 5, 8][level] if level is not None else 0
-
-
-def _rune_pen_bonus(craft: dict[str, Any]) -> int:
-    level = _tool_level(craft, "안정 룬펜")
-    return [6, 9, 12, 15][level] if level is not None else 0
-
-
-def _constellation_bonus(craft: dict[str, Any]) -> int:
-    level = _tool_level(craft, "별자리 자")
-    if level is None:
-        return 0
-    value = [10, 14, 18, 24][level]
-    return value // 2 if int(craft.get("star", 0)) >= 3 else value
-
-
-def _specimen_rule(craft: dict[str, Any]) -> tuple[int, int]:
-    level = _tool_level(craft, "결점 표본함")
-    if level is None:
-        return 0, 0
-    return [8, 8, 10, 10][level], [1, 2, 2, 3][level]
-
-
 def _craft_chances(user_data: dict[str, Any], craft: dict[str, Any]) -> dict[str, int]:
     heat = int(craft.get("heat", 0))
     worker = _craft_worker_bonus(user_data, craft)
     relief = _balance_relief(craft)
-    regular_relief = min(relief, heat * 4)
-    shape_relief = min(relief, heat * 5)
     frost = _frost_bonus(craft)
-    magnifier = _magnifier_success_bonus(craft)
-    first_action = int(craft.get("preheat_action_bonus", 0) or 0)
 
-    enchant = 75 - heat * 4 + regular_relief + frost + worker + magnifier + first_action
+    enchant = 75 - heat * 4 + relief + frost + worker
     catalyst = _tool_level(craft, "폭주 촉매")
     if catalyst is not None:
         enchant -= [15, 13, 10, 8][catalyst]
-    enchant += _rune_pen_bonus(craft)
 
-    shape = 82 - int(craft.get("star", 0)) * 11 - heat * 5 + shape_relief + frost + worker + magnifier + first_action
+    shape = 82 - int(craft.get("star", 0)) * 11 - heat * 5 + relief + frost + worker
     shape += _shape_tool_bonus(craft)
-    shape += _constellation_bonus(craft)
     per_stack, _ = _meteor_rule(craft)
     shape += per_stack * int(craft.get("meteor_stacks", 0))
 
-    purify = 78 - heat * 4 + regular_relief + frost + worker + magnifier + first_action
-    specimen_per_stack, _ = _specimen_rule(craft)
-    purify += specimen_per_stack * int(craft.get("specimen_stacks", 0))
+    purify = 78 - heat * 4 + relief + frost + worker
     return {
         "enchant": max(5, min(95, enchant)),
         "shape": max(5, min(95, shape)),
@@ -815,7 +714,6 @@ def _craft_chances(user_data: dict[str, Any], craft: dict[str, Any]) -> dict[str
 def _consume_next_action_bonuses(craft: dict[str, Any]) -> None:
     craft["frost_success_bonus"] = 0
     craft["effect_heat_override"] = None
-    craft["preheat_action_bonus"] = 0
 
 
 def _main_stat_craft_gain(craft: dict[str, Any], heat: int) -> int:
@@ -830,48 +728,6 @@ def _main_stat_craft_gain(craft: dict[str, Any], heat: int) -> int:
     if stat in ("max_hp", "max_mental"):
         return 2 + heat
     return 1 + heat // 2
-
-
-def _craft_gain_preview(craft: dict[str, Any]) -> str:
-    """Return the exact non-random gain used if each current action succeeds."""
-    heat = int(craft.get("heat", 0))
-    effect_heat = craft.get("effect_heat_override")
-    effect_heat = heat if effect_heat is None else int(effect_heat)
-
-    enchant = 1 + (effect_heat * 3 + 3) // 4
-    main = _main_stat_craft_gain(craft, effect_heat)
-    spirit = _tool_level(craft, "정령 화로")
-    if craft.get("spirit_furnace_pending") and spirit is not None:
-        enchant = max(1, round(enchant * [1.10, 1.15, 1.20, 1.30][spirit]))
-        main = max(1, round(main * [1.10, 1.15, 1.20, 1.30][spirit]))
-    brush = _tool_level(craft, "마력 붓")
-    if brush is not None:
-        enchant = max(1, round(enchant * [1.10, 1.15, 1.20, 1.30][brush]))
-        if brush >= 2:
-            main += 1 if brush == 2 else 2
-    catalyst = _tool_level(craft, "폭주 촉매")
-    if catalyst is not None:
-        enchant = max(1, round(enchant * [1.50, 1.55, 1.65, 1.80][catalyst]))
-        main = max(1, round(main * [1.25, 1.30, 1.40, 1.50][catalyst]))
-
-    purify = 1 + (effect_heat * 2 + 2) // 3
-    if craft.get("spirit_furnace_pending") and spirit is not None:
-        purify = max(1, round(purify * [1.10, 1.15, 1.20, 1.30][spirit]))
-    sieve = _tool_level(craft, "순백의 체")
-    if sieve is not None:
-        purify = max(1, round(purify * [1.15, 1.20, 1.30, 1.40][sieve]))
-
-    shape = 1 + effect_heat // 2
-    extractor = _tool_level(craft, "결정 추출기")
-    extractor_text = (
-        f" · 추출기 { [10, 15, 20, 25][extractor] }%로 ×2"
-        if extractor is not None else ""
-    )
-    return (
-        f"마법부여: 고유 +{enchant}, 주 능력 +{main}\n"
-        f"모양 내기: +{shape}성(최대 5성)\n"
-        f"불순물 제거: 보조 +{purify}{extractor_text}"
-    )
 
 
 def _finish_craft_if_needed(user_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -1046,23 +902,9 @@ def perform_craft_action(user_data: dict[str, Any], action: str) -> tuple[bool, 
 
             craft["aux_stat_value"] = int(craft["aux_stat_value"]) + gain
             craft["stat_value"] = int(craft["aux_stat_value"])
-            if int(craft.get("specimen_stacks", 0)) > 0:
-                log += f" · 결점 보정 {craft['specimen_stacks']}중첩 소모"
-            craft["specimen_stacks"] = 0
             log += f": 아티팩트 주 능력치 보조 +{gain}"
         else:
-            per_stack, max_stack = _specimen_rule(craft)
-            if per_stack > 0:
-                craft["specimen_stacks"] = min(
-                    max_stack,
-                    int(craft.get("specimen_stacks", 0)) + 1,
-                )
-                log = (
-                    "🔷 불순물 제거 실패: 수치 변화 없음 · "
-                    f"결점 보정 {craft['specimen_stacks']}중첩"
-                )
-            else:
-                log = "🔷 불순물 제거 실패: 수치 변화 없음"
+            log = "🔷 불순물 제거 실패: 수치 변화 없음"
         _consume_next_action_bonuses(craft)
 
     else:
@@ -1070,10 +912,6 @@ def perform_craft_action(user_data: dict[str, Any], action: str) -> tuple[bool, 
 
     if not valid:
         return False, log, None
-    if action in {"enchant", "shape", "purify"}:
-        worker_bonus = _craft_worker_bonus(user_data, craft)
-        if worker_bonus:
-            log += f" · 💎 장인의 젬 성공률 +{worker_bonus}%p 적용"
 
     craft["turn"] = int(craft.get("turn", 0)) + 1
     craft["last_log"] = log
@@ -1143,8 +981,6 @@ def perform_crop_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
         if _life_gem_star(user_data, worker, "관개의 젬") >= 5:
             plot["health"] = _clamp(int(plot["health"]) + 2)
         log = "💧 물을 주었습니다."
-        if bonus:
-            log += f" · 💎 관개의 젬 수분 +{bonus}"
     elif action == "fertilize":
         plot["nutrition"] = _clamp(int(plot["nutrition"]) + 20)
         plot["stress"] = _clamp(int(plot["stress"]) + 5)
@@ -1229,7 +1065,6 @@ def claim_crop(user_data: dict[str, Any]) -> tuple[bool, str]:
         + farming_unlock
     )
     amount = random.randint(*crop["yield"])
-    base_amount = amount
     abundance = _life_gem_value(user_data, worker, "풍요의 젬", 0)
     for _ in range(amount):
         if random.randint(1, 100) <= abundance:
@@ -1255,14 +1090,7 @@ def claim_crop(user_data: dict[str, Any]) -> tuple[bool, str]:
     except ImportError:
         pass
     garden["plot"] = None
-    gem_notes = []
-    farming = _life_gem_value(user_data, worker, "경작의 젬", 0)
-    if farming or farming_unlock:
-        gem_notes.append(f"경작 품질 +{farming + farming_unlock}")
-    if amount > base_amount:
-        gem_notes.append(f"풍요 추가 수확 +{amount - base_amount}")
-    suffix = f"\n💎 젬 적용: {' · '.join(gem_notes)}" if gem_notes else ""
-    return True, f"{item} ×{amount}{suffix}"
+    return True, f"{item} ×{amount}"
 
 
 def start_fish_farm(user_data: dict[str, Any], species: str, worker_index: int) -> tuple[bool, str]:
@@ -1315,24 +1143,18 @@ def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
         water_loss = 8
         if _life_gem_star(user_data, worker, "양식의 젬") >= 3 and tank.get("first_feed"):
             water_loss = 0
-            gem_note = " · 💎 양식의 젬 첫 먹이 수질 감소 방지"
         elif _life_gem_star(user_data, worker, "양식의 젬") >= 3:
             water_loss = 6
-            gem_note = " · 💎 양식의 젬 수질 감소 완화"
-        else:
-            gem_note = ""
         tank["first_feed"] = False
         tank["water_quality"] = _clamp(int(tank["water_quality"]) - water_loss)
         if int(tank["satiety"]) > 90:
             tank["stress"] = _clamp(int(tank["stress"]) + 5)
-        log = "🍽️ 먹이를 주었습니다." + gem_note
+        log = "🍽️ 먹이를 주었습니다."
     elif action == "water":
         bonus = _life_gem_value(user_data, worker, "청류의 젬", 0)
         tank["water_quality"] = _clamp(int(tank["water_quality"]) + 30 + bonus)
         tank["stress"] = _clamp(int(tank["stress"]) + 5)
         log = "💧 물갈이를 했습니다."
-        if bonus:
-            log += f" · 💎 청류의 젬 수질 +{bonus}"
     elif action == "oxygen":
         tank["water_quality"] = _clamp(int(tank["water_quality"]) + 10)
         tank["stress"] = _clamp(int(tank["stress"]) - 8)
@@ -1343,8 +1165,6 @@ def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
         tank["water_quality"] = _clamp(int(tank["water_quality"]) + 15 + bonus)
         tank["satiety"] = _clamp(int(tank["satiety"]) - 5)
         log = "🧹 수조를 청소했습니다."
-        if bonus:
-            log += f" · 💎 청류의 젬 수질 +{bonus}"
     elif action == "observe":
         tank["quality"] = _clamp(int(tank["quality"]) + 2)
         log = "👀 상태를 관찰했습니다."
@@ -1366,10 +1186,7 @@ def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
         growth += 7
     if low <= int(tank["water_quality"]) <= high:
         growth += 3
-        growth_bonus = _life_gem_value(user_data, worker, "양식의 젬", 0)
-        growth += growth_bonus
-        if growth_bonus:
-            log += f" · 💎 양식의 젬 성장 +{growth_bonus}"
+        growth += _life_gem_value(user_data, worker, "양식의 젬", 0)
     if int(tank["water_quality"]) < 20:
         if _life_gem_star(user_data, worker, "청류의 젬") >= 3 and not tank.get("disease_guard_used"):
             tank["disease_guard_used"] = True
@@ -1397,14 +1214,9 @@ def claim_fish(user_data: dict[str, Any]) -> tuple[bool, str]:
     worker = int(tank.get("worker_index", -1))
     species = FISH_SPECIES[tank["species"]]
     score = _clamp(int(tank["quality"]) - int(tank["disease"]) // 4)
-    clearwater_quality_bonus = (
-        _life_gem_star(user_data, worker, "청류의 젬") >= 5
-        and int(tank["water_quality"]) >= 75
-    )
-    if clearwater_quality_bonus:
+    if _life_gem_star(user_data, worker, "청류의 젬") >= 5 and int(tank["water_quality"]) >= 75:
         score = _clamp(score + 6)
     amount = random.randint(*species["yield"])
-    base_amount = amount
     abundance = _life_gem_value(user_data, worker, "풍요의 젬", 0)
     for _ in range(amount):
         if random.randint(1, 100) <= abundance:
@@ -1432,13 +1244,7 @@ def claim_fish(user_data: dict[str, Any]) -> tuple[bool, str]:
     except ImportError:
         pass
     farm["tank"] = None
-    gem_notes = []
-    if clearwater_quality_bonus:
-        gem_notes.append("청류 출하 품질 +6")
-    if amount > base_amount:
-        gem_notes.append(f"풍요·양식 추가 출하 +{amount - base_amount}")
-    suffix = f"\n💎 젬 적용: {' · '.join(gem_notes)}" if gem_notes else ""
-    return True, f"{item} ×{amount}{suffix}"
+    return True, f"{item} ×{amount}"
 
 
 async def _defer(interaction: discord.Interaction) -> None:
@@ -1539,33 +1345,6 @@ class LifeSystemView(discord.ui.View):
         self.user_data = user_data
         self.save_func = save_func
         ensure_life_data(self.user_data)
-        self.page = 0
-        self._rebuild_menu()
-
-    def _rebuild_menu(self):
-        self.clear_items()
-        entries = [self.garden, self.fish, self.appraisal, self.crafting, self.tools]
-        start = self.page * 3
-        for item in entries[start:start + 3]:
-            self.add_item(item)
-        if self.page:
-            prev = discord.ui.Button(label="이전 메뉴", style=discord.ButtonStyle.secondary, row=3)
-            prev.callback = self._previous_menu
-            self.add_item(prev)
-        elif len(entries) > 3:
-            nxt = discord.ui.Button(label="다음 메뉴", style=discord.ButtonStyle.secondary, row=3)
-            nxt.callback = self._next_menu
-            self.add_item(nxt)
-
-    async def _next_menu(self, interaction):
-        self.page = 1
-        self._rebuild_menu()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def _previous_menu(self, interaction):
-        self.page = 0
-        self._rebuild_menu()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
     def get_embed(self) -> discord.Embed:
         life = ensure_life_data(self.user_data)
@@ -1579,7 +1358,6 @@ class LifeSystemView(discord.ui.View):
         embed.add_field(name="순수한 희망", value=f"{inv.get(PURE_HOPE_ITEM, 0)}개", inline=True)
         embed.add_field(name="세공 도구", value=f"{len(life['tools'])}/{len(TOOL_DEFS)}종", inline=True)
         embed.add_field(name="완성 젬", value=f"{len(life['gems'])}개", inline=True)
-        embed.set_footer(text=f"메뉴 {self.page + 1}/2 · 한 화면에 최대 4개 버튼")
         return embed
 
     @discord.ui.button(label="채소밭", emoji="🥕", style=discord.ButtonStyle.success)
@@ -1847,20 +1625,14 @@ class ToolGachaView(_LifeChildView):
         if self.selected_tool:
             level = life["tools"].get(self.selected_tool)
             effect_level = int(level) if level is not None else 0
-            definition = TOOL_DEFS[self.selected_tool]
-            progression = "\n".join(
-                f"{'▶' if index == effect_level else '•'} {index}돌파: {effect}"
-                for index, effect in enumerate(definition["effects"])
-            )
             embed.add_field(
                 name=self.selected_tool,
                 value=(
                     f"분류: {next((data['label'] for data in TOOL_CATEGORIES.values() if self.selected_tool in data['tools']), '범용')}\n"
-                    f"희귀도: {definition['rarity']}\n"
+                    f"희귀도: {TOOL_DEFS[self.selected_tool]['rarity']}\n"
                     f"보유: {f'{level}돌파' if level is not None else '미보유'}\n"
-                    f"설명: {definition.get('description', '세공을 보조하는 영구 도구입니다.')}\n\n"
-                    f"**돌파별 효과**\n{progression}"
-                )[:1024],
+                    f"효과: {TOOL_DEFS[self.selected_tool]['effects'][effect_level]}"
+                ),
                 inline=False,
             )
         result_text = message or self.last_result
@@ -1965,29 +1737,14 @@ class VegetableGardenView(_LifeChildView):
         for item in list(self.children):
             if isinstance(item, discord.ui.Button) and item.label in self._ACTION_LABELS:
                 self.remove_item(item)
-            if isinstance(item, discord.ui.Select) and item.custom_id == "garden_action":
-                self.remove_item(item)
         plot = ensure_life_data(self.user_data)["vegetable_garden"].get("plot")
         if not plot:
             self.add_item(self.start)
         elif plot.get("complete"):
             self.add_item(self.claim)
         else:
-            select = discord.ui.Select(
-                placeholder="재배 행동 선택",
-                custom_id="garden_action",
-                options=[
-                    discord.SelectOption(label=label, value=value)
-                    for label, value in (
-                        ("물주기", "water"), ("비료", "fertilize"), ("흙 고르기", "soil"),
-                        ("가지치기", "prune"), ("햇빛", "sunlight"), ("방치", "wait"),
-                    )
-                ],
-            )
-            async def act(interaction):
-                await self._act(interaction, interaction.data["values"][0])
-            select.callback = act
-            self.add_item(select)
+            for item in (self.water, self.fertilize, self.soil, self.prune, self.sunlight, self.wait):
+                self.add_item(item)
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         garden = ensure_life_data(self.user_data)["vegetable_garden"]
@@ -2153,29 +1910,14 @@ class FishFarmView(_LifeChildView):
         for item in list(self.children):
             if isinstance(item, discord.ui.Button) and item.label in self._ACTION_LABELS:
                 self.remove_item(item)
-            if isinstance(item, discord.ui.Select) and item.custom_id == "fish_action":
-                self.remove_item(item)
         tank = ensure_life_data(self.user_data)["fish_farm"].get("tank")
         if not tank:
             self.add_item(self.start)
         elif tank.get("complete"):
             self.add_item(self.claim)
         else:
-            select = discord.ui.Select(
-                placeholder="양식 행동 선택",
-                custom_id="fish_action",
-                options=[
-                    discord.SelectOption(label=label, value=value)
-                    for label, value in (
-                        ("먹이", "feed"), ("물갈이", "water"), ("산소", "oxygen"),
-                        ("청소", "clean"), ("관찰", "observe"), ("방치", "wait"),
-                    )
-                ],
-            )
-            async def act(interaction):
-                await self._act(interaction, interaction.data["values"][0])
-            select.callback = act
-            self.add_item(select)
+            for item in (self.feed, self.water, self.oxygen, self.clean, self.observe, self.wait):
+                self.add_item(item)
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         farm = ensure_life_data(self.user_data)["fish_farm"]
@@ -2338,27 +2080,12 @@ class GemCraftingView(_LifeChildView):
         for item in list(self.children):
             if isinstance(item, discord.ui.Button) and item.label in self._ACTION_LABELS:
                 self.remove_item(item)
-            if isinstance(item, discord.ui.Select) and item.custom_id == "gem_craft_action":
-                self.remove_item(item)
         craft = ensure_life_data(self.user_data).get("gem_crafting")
         if not craft:
             self.add_item(self.start)
         else:
-            select = discord.ui.Select(
-                placeholder="세공 행동 선택",
-                custom_id="gem_craft_action",
-                options=[
-                    discord.SelectOption(label=label, value=value)
-                    for label, value in (
-                        ("달구기", "heat"), ("식히기", "cool"), ("마법부여", "enchant"),
-                        ("모양 내기", "shape"), ("불순물 제거", "purify"),
-                    )
-                ],
-            )
-            async def act(interaction):
-                await self._act(interaction, interaction.data["values"][0])
-            select.callback = act
-            self.add_item(select)
+            for item in (self.heat, self.cool, self.enchant, self.shape, self.purify):
+                self.add_item(item)
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         life = ensure_life_data(self.user_data)
@@ -2392,25 +2119,12 @@ class GemCraftingView(_LifeChildView):
         embed.add_field(name="담당", value=craft.get("worker_name", "-"), inline=True)
         tools = [f"{name} {level}돌파" for name, level in craft.get("tools", {}).items()]
         embed.add_field(name="도구", value="\n".join(tools) or "미사용", inline=False)
-        magnifier_level = _tool_level(craft, "장인의 확대경")
-        if magnifier_level is not None:
-            worker_bonus = _craft_worker_bonus(self.user_data, craft)
+        if _tool_level(craft, "장인의 확대경") is not None:
             embed.add_field(
                 name="성공률",
-                value=(
-                    f"마법부여 {chances['enchant']}% · "
-                    f"모양 내기 {chances['shape']}% · "
-                    f"불순물 제거 {chances['purify']}%"
-                    + (f"\n💎 장인의 젬 적용: 성공률 +{worker_bonus}%p" if worker_bonus else "")
-                ),
+                value=f"마법부여 {chances['enchant']}% · 모양 내기 {chances['shape']}% · 불순물 제거 {chances['purify']}%",
                 inline=False,
             )
-            if magnifier_level >= 2:
-                embed.add_field(
-                    name="확대경 예상 성공 효과",
-                    value=_craft_gain_preview(craft),
-                    inline=False,
-                )
         embed.add_field(name="직전 결과", value=craft.get("last_log", "-"), inline=False)
         return embed
 

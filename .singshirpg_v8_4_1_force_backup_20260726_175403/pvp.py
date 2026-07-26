@@ -226,13 +226,6 @@ class PVPBattleView(discord.ui.View):
             status_embed = self.make_status_embed("⚔️ **1vs1 대전 시작!**\n기술을 선택하세요.")
             action_embed = discord.Embed(title="🕹️ 기술 선택", description="아래 버튼을 눌러 기술을 선택하세요.", color=discord.Color.greyple())
 
-            # 준비 단계의 버튼을 메시지에 다시 붙이기 전에 전투용 버튼으로 교체한다.
-            # discord.py는 edit() 시점의 View 상태를 전송하므로, 순서가 뒤집히면
-            # 화면에는 계속 '준비 완료' 버튼만 남는다.
-            self.selection_mode = None
-            self.card_page = 0
-            self.update_main_buttons()
-
             # 기존 메시지가 있으면 수정, 없으면 새로 전송
             if self.action_message:
                 # 캐릭터 선택 단계에서 사용하던 메시지를 action_message로 재활용
@@ -242,6 +235,8 @@ class PVPBattleView(discord.ui.View):
                 # /pvp 명령어로 바로 시작된 경우 (이 분기는 현재 사용되지 않음)
                 self.status_message = await interaction.channel.send(embed=status_embed)
                 self.action_message = await interaction.channel.send(embed=action_embed, view=self)
+            
+            self.update_main_buttons()
         else:
             # 아직 준비 중인 경우
             self.update_setup_buttons()
