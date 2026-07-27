@@ -341,22 +341,18 @@ class GuildDungeonLobbyView(discord.ui.View):
         back = Button(label="수련장으로", style=discord.ButtonStyle.secondary, row=2)
 
         async def join_callback(interaction):
-            await interaction.response.defer()
             async with self.lock:
                 if self.started:
-                    return await interaction.followup.send(
+                    return await interaction.response.send_message(
                         "이미 출발한 파티입니다.",
                         ephemeral=True,
                     )
                 ok, message = await self._add_participant(interaction.user)
                 self._rebuild()
             if ok:
-                self.public_message = await interaction.edit_original_response(
-                    embed=self.get_embed(),
-                    view=self,
-                )
+                await interaction.response.edit_message(embed=self.get_embed(), view=self)
             else:
-                await interaction.followup.send(message, ephemeral=True)
+                await interaction.response.send_message(message, ephemeral=True)
 
         async def leave_callback(interaction):
             async with self.lock:
@@ -467,16 +463,15 @@ class GuildDungeonLobbyView(discord.ui.View):
                     "이미 탐사가 시작되었습니다.",
                     ephemeral=True,
                 )
-            await interaction.response.defer()
             self._release_all()
             self.stop()
             if self.parent_view is not None:
-                await interaction.edit_original_response(
+                await interaction.response.edit_message(
                     embed=await self.parent_view.get_embed(),
                     view=self.parent_view,
                 )
             else:
-                await interaction.edit_original_response(
+                await interaction.response.edit_message(
                     embed=discord.Embed(
                         title="길드 던전 로비 종료",
                         description="로비를 닫았습니다.",

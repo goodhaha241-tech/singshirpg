@@ -1,0 +1,17 @@
+{
+  "patch_version": "guild-dungeon-v8.8.1",
+  "files": {
+    "guild.py": {
+      "original_exists": true,
+      "original_hash": "655b9902a0114c60272917225c93695b41f5bb0054798b871080d30f19b3a8fb",
+      "target_hash": "350d1c6ab34a6457912096a4e1605faedab9cb48739edc9f24a088991c13f59b",
+      "was_already_applied": false
+    },
+    "guild_dungeon.py": {
+      "original_exists": true,
+      "original_hash": "999733d251f0d8e3817564d03f6236ceb9af12578723442f5d15bbf13d1d1f0c",
+      "target_hash": "111f5f944998e21b8197993fd42ade0aa71a3236e4be673593b98966f587440f",
+      "was_already_applied": false
+    }
+  }
+}

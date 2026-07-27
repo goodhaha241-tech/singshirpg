@@ -2051,23 +2051,20 @@ class GuildTrainingView(discord.ui.View):
 
     @discord.ui.button(label="🗺️ 길드 던전", style=discord.ButtonStyle.secondary, row=0)
     async def btn_dungeon(self, interaction, button):
-        # Guild membership lookup can occasionally approach Discord's
-        # three-second acknowledgement deadline.  Acknowledge the component
-        # immediately, then replace the same public embed when setup finishes.
-        await interaction.response.defer()
         guild_info = await get_user_guild_info(interaction.user.id)
         if not guild_info:
-            return await interaction.followup.send(
+            return await interaction.response.send_message(
                 "길드 정보를 불러오지 못했습니다.",
                 ephemeral=True,
             )
         lobby = GuildDungeonLobbyView(interaction.user, guild_info, self)
         await lobby.setup()
-        lobby.public_message = await interaction.edit_original_response(
+        await interaction.response.edit_message(
             content=None,
             embed=lobby.get_embed(),
             view=lobby,
         )
+        lobby.public_message = interaction.message
 
     @discord.ui.button(label="🥊 수련 시작", style=discord.ButtonStyle.success, row=0)
     async def btn_start(self, interaction, button):
