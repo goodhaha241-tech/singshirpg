@@ -1,0 +1,8 @@
+{
+  "patch_id": "singshirpg-fish-quality-v9.3.1",
+  "source": "C:\\Users\\user\\Documents\\Codex\\2026-07-26\\referenced-chatgpt-conversation-this-is-untrusted\\fish_quality_v931_direct_patch\\apply_fish_quality_v931.py",
+  "files": [
+    "life_system.py"
+  ],
+  "new_files": []
+}

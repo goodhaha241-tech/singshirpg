@@ -1,4 +1,3 @@
-# cafe-rewards-v9.3.2
 # cafe-tycoon-v9.3
 """Persistent 2-4 player café tycoon run by shared turns."""
 
@@ -13,17 +12,18 @@ import aiomysql
 import discord
 
 from data_manager import get_db_pool
-from items import ITEM_CATEGORIES
 
 
 MIN_PLAYERS = 2
 MAX_PLAYERS = 4
 LOBBIES_PER_PAGE = 8
-RARE_REWARDS = tuple(
-    sorted(
-        name for name, info in ITEM_CATEGORIES.items()
-        if info.get("type") == "rare_mat"
-    )
+RARE_REWARDS = (
+    "형상각인기",
+    "생명의 정수",
+    "천년얼음",
+    "악몽 파편",
+    "중급 마력석",
+    "상급 마력석",
 )
 MACHINE_LABELS = {
     "coffee": "커피 머신",
@@ -122,13 +122,6 @@ STARTER_TYCOON_RECIPES = tuple(
 RESEARCH_COST = {1: 25_000, 2: 60_000, 3: 120_000}
 _schema_lock = asyncio.Lock()
 _schema_ready = False
-
-
-def settlement_reward_candidates(session_id: int, user_id: int) -> tuple[str, ...]:
-    """Return eight stable rare-material choices for one member's settlement."""
-    count = min(8, len(RARE_REWARDS))
-    picker = random.Random(f"cafe-settlement:{int(session_id)}:{int(user_id)}")
-    return tuple(picker.sample(list(RARE_REWARDS), count))
 
 
 def _loads(value: Any, fallback: Any) -> Any:
@@ -304,7 +297,6 @@ def _serve_order(
     state: dict[str, Any],
     order_id: int,
     recipe_name: str | None = None,
-    recipe_allocations: dict[str, int] | None = None,
 ) -> tuple[bool, int, int, str]:
     order = next(
         (item for item in state.get("orders", []) if int(item["id"]) == int(order_id)),
@@ -318,52 +310,39 @@ def _serve_order(
         name for name in state.get("unlocked_recipes", [])
         if RECIPE_CATALOG.get(name, {}).get("kind") == kind
     ]
-    allocations = {
-        name: max(0, int(count))
-        for name, count in (recipe_allocations or {}).items()
-        if int(count) > 0
-    }
-    if not allocations and recipe_name:
-        allocations = {recipe_name: quantity}
-    if not allocations:
-        # 자동 서빙은 싼 메뉴부터 조합해 고급 메뉴 재고를 가능한 한 보존한다.
-        remaining = quantity
-        for name in sorted(
-            compatible, key=lambda item: int(RECIPE_CATALOG[item]["price"])
-        ):
-            used = min(remaining, int(state["products"].get(name, 0)))
-            if used > 0:
-                allocations[name] = used
-                remaining -= used
-            if remaining <= 0:
-                break
-    if not allocations or any(name not in compatible for name in allocations):
-        return False, 0, 0, f"{PRODUCT_LABELS[kind]} 카테고리의 메뉴만 납품할 수 있습니다."
-    supplied = sum(allocations.values())
-    if supplied != quantity:
-        return False, 0, 0, f"주문 수량을 정확히 채워주세요. ({supplied}/{quantity})"
-    for name, count in allocations.items():
-        have = int(state["products"].get(name, 0))
-        if have < count:
-            return False, 0, 0, f"{name} 재고가 부족합니다. ({have}/{count})"
-
-    earned_cash = 0
-    earned_score = 0
-    supplied_lines = []
-    for name, count in allocations.items():
-        state["products"][name] -= count
-        recipe = RECIPE_CATALOG[name]
-        earned_cash += int(recipe["price"]) * count
-        earned_score += int(recipe["score"]) * count
-        supplied_lines.append(f"{name} ×{count}")
+    if recipe_name is None:
+        # 자동 서빙은 조건을 만족하는 메뉴 중 가장 싼 것을 먼저 사용한다.
+        recipe_name = next(
+            (
+                name for name in sorted(
+                    compatible, key=lambda item: int(RECIPE_CATALOG[item]["price"])
+                )
+                if int(state["products"].get(name, 0)) >= quantity
+            ),
+            None,
+        )
+    if recipe_name not in compatible:
+        return False, 0, 0, f"{PRODUCT_LABELS[kind]} 카테고리의 메뉴를 선택하세요."
+    if int(state["products"].get(recipe_name, 0)) < quantity:
+        return (
+            False,
+            0,
+            0,
+            f"{recipe_name} 재고가 부족합니다. "
+            f"({int(state['products'].get(recipe_name, 0))}/{quantity})",
+        )
+    state["products"][recipe_name] -= quantity
     state["orders"].remove(order)
     state["served"] = int(state.get("served", 0)) + 1
+    recipe = RECIPE_CATALOG[recipe_name]
+    earned_cash = int(recipe["price"]) * quantity
+    earned_score = int(recipe["score"]) * quantity
     return (
         True,
         earned_cash,
         earned_score,
         (
-            f"{PRODUCT_LABELS[kind]} 주문에 {', '.join(supplied_lines)}을(를) 납품해 "
+            f"{PRODUCT_LABELS[kind]} 주문에 {recipe_name} {quantity}개를 납품해 "
             f"{earned_cash:,}원과 {earned_score}점을 얻었습니다."
         ),
     )
@@ -393,11 +372,11 @@ def _resolve_automatic_turn(state: dict[str, Any]) -> tuple[int, int, list[str]]
             (
                 item
                 for item in state.get("orders", [])
-                if sum(
-                    int(state["products"].get(name, 0))
+                if any(
+                    RECIPE_CATALOG.get(name, {}).get("kind") == item["kind"]
+                    and int(state["products"].get(name, 0)) >= int(item["quantity"])
                     for name in state.get("unlocked_recipes", [])
-                    if RECIPE_CATALOG.get(name, {}).get("kind") == item["kind"]
-                ) >= int(item["quantity"])
+                )
             ),
             None,
         )
@@ -735,7 +714,6 @@ async def perform_action(
     order_id: int | None = None,
     machine: str | None = None,
     recipe_name: str | None = None,
-    recipe_allocations: dict[str, int] | None = None,
     category: str | None = None,
 ) -> tuple[bool, str, bool]:
     pool = await get_db_pool()
@@ -791,7 +769,7 @@ async def perform_action(
                         await conn.rollback()
                         return False, "처리할 주문을 선택하세요.", False
                     ok, cash_delta, score_delta, message = _serve_order(
-                        state, order_id, recipe_name, recipe_allocations
+                        state, order_id, recipe_name
                     )
                     if not ok:
                         await conn.rollback()
@@ -1045,9 +1023,8 @@ async def claim_settlement(
     choices: list[str],
 ) -> tuple[bool, str]:
     choices = list(dict.fromkeys(choices))
-    candidates = settlement_reward_candidates(session_id, user_id)
-    if len(choices) != 2 or any(item not in candidates for item in choices):
-        return False, "이번 정산 후보 8종 중 서로 다른 희귀 재료 2종을 선택하세요."
+    if len(choices) != 2 or any(item not in RARE_REWARDS for item in choices):
+        return False, "서로 다른 희귀 재료 2종을 선택하세요."
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -1837,8 +1814,6 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
         self.page = 0
         self.selected_order_id = None
         self.selected_recipe = None
-        self.allocation_order_id = None
-        self.allocations: dict[str, int] = {}
 
     def _orders(self):
         return self.session["state"].get("orders", []) if self.session else []
@@ -1873,9 +1848,6 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
         valid_ids = {int(order["id"]) for order in orders}
         if self.selected_order_id not in valid_ids:
             self.selected_order_id = int(visible[0]["id"]) if visible else None
-        if self.allocation_order_id != self.selected_order_id:
-            self.allocation_order_id = self.selected_order_id
-            self.allocations.clear()
         compatible = self._compatible_recipes()
         if self.selected_recipe not in compatible:
             self.selected_recipe = compatible[0] if compatible else None
@@ -1905,10 +1877,7 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
                 row=1,
                 options=[
                     discord.SelectOption(
-                        label=(
-                            f"{name} · 재고 {int(state['products'].get(name, 0))} "
-                            f"· 담기 {int(self.allocations.get(name, 0))}"
-                        ),
+                        label=f"{name} · 재고 {int(state['products'].get(name, 0))}",
                         value=name,
                         description=(
                             f"개당 {int(RECIPE_CATALOG[name]['price']):,}원 · "
@@ -1921,52 +1890,28 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
             )
             menu_select.callback = self.choose_recipe
             self.add_item(menu_select)
-        order = self._selected_order()
-        required = int(order["quantity"]) if order else 0
-        allocated = sum(int(count) for count in self.allocations.values())
-        selected_count = int(self.allocations.get(self.selected_recipe or "", 0))
-        selected_stock = int(
-            self.session["state"]["products"].get(self.selected_recipe or "", 0)
+        previous = discord.ui.Button(
+            label="◀", style=discord.ButtonStyle.secondary,
+            disabled=self.page <= 0, row=2,
         )
-        add = discord.ui.Button(
-            label="선택 메뉴 +1",
-            style=discord.ButtonStyle.primary,
-            disabled=(
-                self.disabled
-                or self.selected_recipe is None
-                or allocated >= required
-                or selected_count >= selected_stock
-            ),
-            row=2,
-        )
-        remove = discord.ui.Button(
-            label="선택 메뉴 -1",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.disabled or self.selected_recipe is None or selected_count <= 0,
-            row=2,
-        )
-        clear = discord.ui.Button(
-            label="구성 초기화",
-            style=discord.ButtonStyle.secondary,
-            disabled=self.disabled or allocated <= 0,
-            row=2,
+        following = discord.ui.Button(
+            label="▶", style=discord.ButtonStyle.secondary,
+            disabled=self.page >= pages - 1, row=2,
         )
         deliver = discord.ui.Button(
             label="선택 주문 납품", style=discord.ButtonStyle.success,
             disabled=(
                 self.disabled
                 or self.selected_order_id is None
-                or allocated != required
+                or self.selected_recipe is None
             ),
             row=2,
         )
-        add.callback = self.add_recipe
-        remove.callback = self.remove_recipe
-        clear.callback = self.clear_recipes
+        previous.callback = self.previous
+        following.callback = self.following
         deliver.callback = self.deliver
-        self.add_item(add)
-        self.add_item(remove)
-        self.add_item(clear)
+        self.add_item(previous)
+        self.add_item(following)
         self.add_item(deliver)
         back = discord.ui.Button(label="작업창", style=discord.ButtonStyle.secondary, row=3)
         refresh = discord.ui.Button(label="새로고침", style=discord.ButtonStyle.secondary, row=3)
@@ -1988,9 +1933,10 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
                 name for name in state["unlocked_recipes"]
                 if RECIPE_CATALOG.get(name, {}).get("kind") == order["kind"]
             ]
-            ready = "✅" if sum(
-                int(state["products"].get(name, 0)) for name in compatible
-            ) >= int(order["quantity"]) else "❌"
+            ready = "✅" if any(
+                int(state["products"].get(name, 0)) >= int(order["quantity"])
+                for name in compatible
+            ) else "❌"
             marker = "▶ " if int(order["id"]) == self.selected_order_id else ""
             lines.append(
                 f"{marker}{ready} **#{order['id']} {PRODUCT_LABELS[order['kind']]} "
@@ -2002,27 +1948,16 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
             color=discord.Color.blurple(),
         )
         order = self._selected_order()
-        if order:
+        if order and self.selected_recipe:
+            recipe = RECIPE_CATALOG[self.selected_recipe]
             quantity = int(order["quantity"])
-            allocation_lines = [
-                f"{name} ×{count}"
-                for name, count in self.allocations.items()
-                if int(count) > 0
-            ]
-            earned_cash = sum(
-                int(RECIPE_CATALOG[name]["price"]) * int(count)
-                for name, count in self.allocations.items()
-            )
-            earned_score = sum(
-                int(RECIPE_CATALOG[name]["score"]) * int(count)
-                for name, count in self.allocations.items()
-            )
-            allocated = sum(int(count) for count in self.allocations.values())
             embed.add_field(
-                name=f"납품 구성 · {allocated}/{quantity}",
+                name="선택한 납품",
                 value=(
-                    ("\n".join(allocation_lines) or "아직 담은 메뉴가 없습니다.")
-                    + f"\n예상 보상: {earned_cash:,}원 · {earned_score}점"
+                    f"**{self.selected_recipe} ×{quantity}** · "
+                    f"재고 {int(state['products'].get(self.selected_recipe, 0))}/{quantity}\n"
+                    f"예상 보상: {int(recipe['price']) * quantity:,}원 · "
+                    f"{int(recipe['score']) * quantity}점"
                 ),
                 inline=False,
             )
@@ -2033,8 +1968,6 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
     async def choose(self, interaction):
         self.selected_order_id = int(interaction.data["values"][0])
         self.selected_recipe = None
-        self.allocation_order_id = self.selected_order_id
-        self.allocations.clear()
         self.rebuild()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
@@ -2043,26 +1976,13 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
         self.rebuild()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    async def add_recipe(self, interaction):
-        if self.selected_recipe:
-            self.allocations[self.selected_recipe] = (
-                int(self.allocations.get(self.selected_recipe, 0)) + 1
-            )
+    async def previous(self, interaction):
+        self.page -= 1
         self.rebuild()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    async def remove_recipe(self, interaction):
-        if self.selected_recipe:
-            current = int(self.allocations.get(self.selected_recipe, 0))
-            if current <= 1:
-                self.allocations.pop(self.selected_recipe, None)
-            else:
-                self.allocations[self.selected_recipe] = current - 1
-        self.rebuild()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def clear_recipes(self, interaction):
-        self.allocations.clear()
+    async def following(self, interaction):
+        self.page += 1
         self.rebuild()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
@@ -2071,7 +1991,7 @@ class CafeTycoonDeliveryView(_CafeTycoonSubView):
         ok, message, _ = await perform_action(
             interaction.user, self.session_id, "serve",
             order_id=self.selected_order_id,
-            recipe_allocations=dict(self.allocations),
+            recipe_name=self.selected_recipe,
         )
         await self.load()
         await interaction.edit_original_response(embed=self.get_embed(message), view=self)
@@ -2241,22 +2161,11 @@ class CafeTycoonSettlementView(discord.ui.View):
         self.session_id = int(session_id)
         self.public_message = public_message
         self.choices: list[str] = []
-        self.candidates = settlement_reward_candidates(session_id, author.id)
         select = discord.ui.Select(
             placeholder="받을 희귀 재료 2종 선택",
             min_values=2,
             max_values=2,
-            options=[
-                discord.SelectOption(
-                    label=item,
-                    value=item,
-                    description=(
-                        f"희귀 재료 · 기준가 "
-                        f"{int(ITEM_CATEGORIES.get(item, {}).get('price', 0)):,}원"
-                    ),
-                )
-                for item in self.candidates
-            ],
+            options=[discord.SelectOption(label=item, value=item) for item in RARE_REWARDS],
         )
         select.callback = self.choose
         self.add_item(select)
@@ -2274,8 +2183,7 @@ class CafeTycoonSettlementView(discord.ui.View):
             description=(
                 f"최종 점수: **{score:,}점**\n"
                 f"예상 보상: **{money:,}원 · {points:,}pt · 희귀 재료 총 {total}개**\n\n"
-                "무작위로 제시된 희귀 재료 8종 중 서로 다른 2종을 선택하세요.\n"
-                "후보는 화면을 다시 열어도 바뀌지 않습니다."
+                "서로 다른 희귀 재료 2종을 선택한 뒤 정산을 확정하세요."
             ),
             color=discord.Color.gold(),
         )

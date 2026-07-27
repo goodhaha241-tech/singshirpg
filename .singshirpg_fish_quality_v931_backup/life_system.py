@@ -1,4 +1,3 @@
-# fish-quality-v9.3.1
 # cafe-tycoon-v9.2
 # ripple-artifact-v8.7
 # cumulative-v3-life-system
@@ -1383,8 +1382,8 @@ def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
         if bonus:
             log += f" · 💎 청류의 젬 수질 +{bonus}"
     elif action == "observe":
-        tank["quality"] = _clamp(int(tank["quality"]) + 4)
-        log = "👀 상태를 세심하게 관찰했습니다. · 품질 +4"
+        tank["quality"] = _clamp(int(tank["quality"]) + 2)
+        log = "👀 상태를 관찰했습니다."
     elif action == "wait":
         log = "⏳ 한 턴 지켜보았습니다."
     else:
@@ -1399,26 +1398,14 @@ def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, s
     tank["water_quality"] = _clamp(int(tank["water_quality"]) - water_decay)
 
     growth = 2
-    satiety_stable = 30 <= int(tank["satiety"]) <= 85
-    water_stable = low <= int(tank["water_quality"]) <= high
-    if satiety_stable:
+    if 30 <= int(tank["satiety"]) <= 85:
         growth += 7
-    if water_stable:
+    if low <= int(tank["water_quality"]) <= high:
         growth += 3
         growth_bonus = _life_gem_value(user_data, worker, "양식의 젬", 0)
         growth += growth_bonus
         if growth_bonus:
             log += f" · 💎 양식의 젬 성장 +{growth_bonus}"
-    if int(tank["disease"]) < 50:
-        if satiety_stable and water_stable:
-            tank["quality"] = _clamp(int(tank["quality"]) + 2)
-            log += " · 🌊 안정된 환경 품질 +2"
-        elif (
-            (satiety_stable or water_stable)
-            and int(tank["stress"]) < 70
-        ):
-            tank["quality"] = _clamp(int(tank["quality"]) + 1)
-            log += " · 🌊 양호한 환경 품질 +1"
     if int(tank["water_quality"]) < 20:
         if _life_gem_star(user_data, worker, "청류의 젬") >= 3 and not tank.get("disease_guard_used"):
             tank["disease_guard_used"] = True
@@ -1445,7 +1432,7 @@ def claim_fish(user_data: dict[str, Any]) -> tuple[bool, str]:
         return False, "아직 출하할 수 없습니다."
     worker = int(tank.get("worker_index", -1))
     species = FISH_SPECIES[tank["species"]]
-    score = _clamp(int(tank["quality"]) - int(tank["disease"]) // 5)
+    score = _clamp(int(tank["quality"]) - int(tank["disease"]) // 4)
     clearwater_quality_bonus = (
         _life_gem_star(user_data, worker, "청류의 젬") >= 5
         and int(tank["water_quality"]) >= 75
