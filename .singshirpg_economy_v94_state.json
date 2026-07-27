@@ -1,0 +1,10 @@
+{
+  "patch_id": "singshirpg-economy-exchange-v9.4",
+  "source": "C:\\Users\\user\\Documents\\Codex\\2026-07-26\\referenced-chatgpt-conversation-this-is-untrusted\\singshirpg_economy_exchange_v9_4_direct_patch\\apply_economy_v94.py",
+  "files": [
+    "life_system.py",
+    "artifact_overhaul_v5.py",
+    "artifact_manager.py",
+    "shop.py"
+  ]
+}

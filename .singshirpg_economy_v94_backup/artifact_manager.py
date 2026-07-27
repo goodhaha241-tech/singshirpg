@@ -1,4 +1,3 @@
-# economy-exchange-v9.4
 # ripple-artifact-v8.7
 # artifact_manager.py
 # rollback-guard-appraisal-gems-v8
@@ -488,17 +487,38 @@ class ArtifactManageView(discord.ui.View):
             if idx >= len(self.user_data["artifacts"]):
                 return await interaction.followup.send("❌ 아티팩트 정보가 변경되었습니다.", ephemeral=True)
             art = self.user_data["artifacts"][idx]
-            from artifact_overhaul_v5 import dismantle_artifact
-            ok, message = dismantle_artifact(self.user_data, art.get("id"))
-            if not ok:
-                return await interaction.followup.send(f"❌ {message}", ephemeral=True)
+            
+            # 장착 체크
+            is_equipped = False
+            for c in self.user_data.get("characters", []):
+                eq = c.get("equipped_artifact")
+                if eq and eq.get("id") == art.get("id"):
+                    is_equipped = True
+                    break
+            if is_equipped:
+                return await interaction.followup.send("❌ 장착 중인 아티팩트는 분해할 수 없습니다.", ephemeral=True)
+
+            del self.user_data["artifacts"][idx]
+            rank = self.get_artifact_rank(art)
+            rewards = []
+            inv = self.user_data.setdefault("inventory", {})
+            
+            # [수정] 분해 시 물고기 제외
+            all_fish = set()
+            for tier_list in FISH_TIERS.values():
+                all_fish.update(tier_list)
+            valid_rewards = [i for i in RARE_ITEMS if i not in all_fish and i not in GUILD_ITEMS]
+            if not valid_rewards: valid_rewards = ["사랑나무 가지"]
+
+            for _ in range(rank):
+                mat = random.choice(valid_rewards)
+                inv[mat] = inv.get(mat, 0) + 1
+                rewards.append(mat)
+            
             await self.save_func(self.author.id, self.user_data)
             self.update_view_components()
-            await interaction.edit_original_response(
-                content=f"🔨 **{art['name']}** 분해 완료! {message}",
-                embed=self.make_base_embed("🔨 분해 모드", message),
-                view=self,
-            )
+            msg = f"🔨 **{art['name']}** 분해 완료! (획득: {', '.join(rewards)})"
+            await interaction.edit_original_response(content=msg, embed=self.make_base_embed("🔨 분해 모드", msg), view=self)
 
         elif self.mode == "enhance":
             idx = int(val)
@@ -638,26 +658,51 @@ class ArtifactManageView(discord.ui.View):
 
     @auto_defer(reload_data=True)
     async def bulk_dismantle(self, interaction: discord.Interaction):
-        from artifact_overhaul_v5 import (
-            _artifact_dismantle_block_reason,
-            artifact_socket_count,
-            dismantle_artifacts,
-        )
-        ids = [
-            art.get("id")
-            for art in self.user_data.get("artifacts", [])
-            if artifact_socket_count(art) <= 2
-            and not _artifact_dismantle_block_reason(self.user_data, art)
-        ]
-        if not ids:
+        
+        artifacts = self.user_data.get("artifacts", [])
+        characters = self.user_data.get("characters", [])
+        
+        equipped_ids = set()
+        for c in characters:
+            eq = c.get("equipped_artifact")
+            if eq and eq.get("id"): equipped_ids.add(eq.get("id"))
+
+        new_artifacts = []
+        dismantled = 0
+        rewards = {}
+
+        # [수정] 분해 시 물고기 제외
+        all_fish = set()
+        for tier_list in FISH_TIERS.values():
+            all_fish.update(tier_list)
+        valid_rewards = [i for i in RARE_ITEMS if i not in all_fish and i not in GUILD_ITEMS]
+        if not valid_rewards: valid_rewards = ["사랑나무 가지"]
+
+        for art in artifacts:
+            rank = self.get_artifact_rank(art)
+            # 장착 안 된 1,2성만
+            if rank <= 2 and art.get("id") not in equipped_ids:
+                dismantled += 1
+                for _ in range(rank):
+                    mat = random.choice(valid_rewards)
+                    rewards[mat] = rewards.get(mat, 0) + 1
+            else:
+                new_artifacts.append(art)
+
+        if dismantled == 0:
             return await interaction.followup.send("❌ 분해할 1~2성 아티팩트가 없습니다.", ephemeral=True)
-        ok, message, dismantled, dust = dismantle_artifacts(self.user_data, ids)
-        if not ok:
-            return await interaction.followup.send(f"❌ {message}", ephemeral=True)
+
+        self.user_data["artifacts"] = new_artifacts
+        inv = self.user_data.setdefault("inventory", {})
+        for item, qty in rewards.items():
+            inv[item] = inv.get(item, 0) + qty
+            
         await self.save_func(self.author.id, self.user_data)
         self.update_view_components()
+        
+        r_str = ", ".join([f"{k} x{v}" for k, v in rewards.items()])
         await interaction.edit_original_response(
-            content=f"🗑️ **{dismantled}개** 분해 완료!\n획득: 유물 가루 {dust}개",
+            content=f"🗑️ **{dismantled}개** 분해 완료!\n획득: {r_str}", 
             embed=self.make_base_embed("🔨 분해 모드", "일괄 분해가 완료되었습니다."),
             view=self
         )

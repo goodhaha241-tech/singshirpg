@@ -1,4 +1,3 @@
-# economy-exchange-v9.4
 # shop.py
 # comparison-select-ui-v8.6.6
 import discord
@@ -21,22 +20,6 @@ PT_PRICES = {
     "1000pt": 8000,
     "10000pt": 75000  # 신규 고액권
 }
-ARTIFACT_GACHA_COST = 1_000
-ARTIFACT_TICKET_ITEM = "아티팩트 뽑기권"
-
-
-def consume_artifact_gacha_cost(user_data):
-    """Prefer one inventory ticket, then fall back to 1,000 points."""
-    inventory = user_data.setdefault("inventory", {})
-    tickets = int(inventory.get(ARTIFACT_TICKET_ITEM, 0))
-    if tickets > 0:
-        inventory[ARTIFACT_TICKET_ITEM] = tickets - 1
-        return True, "ticket"
-    points = int(user_data.get("pt", 0))
-    if points < ARTIFACT_GACHA_COST:
-        return False, "none"
-    user_data["pt"] = points - ARTIFACT_GACHA_COST
-    return True, "point"
 
 # [설정] 지역별 카드 해금 조건
 # 여기에 정의된 카드는 해당 지역을 해금해야만 상점에 등장합니다.
@@ -191,7 +174,7 @@ class PointShopView(discord.ui.View):
             self.add_item(btn)
         
         # 2. 뽑기 버튼
-        gacha_btn = discord.ui.Button(label="🎲 아티팩트 뽑기 (뽑기권/1,000pt)", style=discord.ButtonStyle.primary, row=1)
+        gacha_btn = discord.ui.Button(label="🎲 아티팩트 뽑기 (1,000pt)", style=discord.ButtonStyle.primary, row=1)
         gacha_btn.callback = self.artifact_gacha_callback
         self.add_item(gacha_btn)
         
@@ -211,23 +194,20 @@ class PointShopView(discord.ui.View):
     def create_shop_embed(self, desc="포인트를 충전하거나 아티팩트를 뽑아보세요."):
         money = self.user_data.get("money", 0)
         pt = self.user_data.get("pt", 0)
-        tickets = self.user_data.get("inventory", {}).get(ARTIFACT_TICKET_ITEM, 0)
         embed = discord.Embed(title="⚡ 포인트 상점", description=desc, color=discord.Color.green())
         embed.add_field(name="💰 보유 머니", value=f"{money:,}원", inline=True)
         embed.add_field(name="⚡ 보유 포인트", value=f"{pt:,}pt", inline=True)
-        embed.add_field(name="🎟️ 아티팩트 뽑기권", value=f"{tickets:,}개", inline=True)
         return embed
 
     @auto_defer(reload_data=True)
     async def artifact_gacha_callback(self, interaction: discord.Interaction):
-        paid, payment = consume_artifact_gacha_cost(self.user_data)
-        if not paid:
-            current_pt = self.user_data.get("pt", 0)
-            return await interaction.followup.send(
-                f"❌ 아티팩트 뽑기권 또는 {ARTIFACT_GACHA_COST:,}pt가 필요합니다! "
-                f"(보유: {current_pt}pt)",
-                ephemeral=True,
-            )
+        COST = 1000
+        current_pt = self.user_data.get("pt", 0)
+        
+        if current_pt < COST:
+            return await interaction.followup.send(f"❌ 포인트가 부족합니다! (보유: {current_pt}pt)", ephemeral=True)
+        
+        self.user_data["pt"] -= COST
         new_artifact = generate_artifact()
         if "artifacts" not in self.user_data:
             self.user_data["artifacts"] = []
@@ -237,11 +217,7 @@ class PointShopView(discord.ui.View):
         
         res_embed = discord.Embed(title="🎉 아티팩트 획득!", color=discord.Color.purple())
         res_embed.add_field(name=new_artifact["name"], value=new_artifact["description"], inline=False)
-        if payment == "ticket":
-            remaining = self.user_data.get("inventory", {}).get(ARTIFACT_TICKET_ITEM, 0)
-            res_embed.set_footer(text=f"뽑기권 사용 · 남은 뽑기권: {remaining}개")
-        else:
-            res_embed.set_footer(text=f"포인트 사용 · 남은 포인트: {self.user_data['pt']}pt")
+        res_embed.set_footer(text=f"남은 포인트: {self.user_data['pt']}pt")
         
         # 화면 유지
         await interaction.edit_original_response(content="🎲 뽑기 완료!", embed=res_embed, view=self)

@@ -1,4 +1,3 @@
-# economy-exchange-v9.4
 # fish-quality-v9.3.1
 # cafe-tycoon-v9.2
 # ripple-artifact-v8.7
@@ -37,8 +36,6 @@ from navigation_v7 import attach_navigation
 PURE_HOPE_ITEM = "순수한 희망"
 PURE_HOPE_PRICE = 1_000_000
 RAW_STONE_ITEM = "원석"
-TOOL_TOKEN_ITEM = "도구 증표"
-TOOL_TOKEN_PRICE = 50
 
 TOOL_GACHA_STONE_WEIGHT = 65
 TOOL_GACHA_TOOL_WEIGHT = 35
@@ -486,15 +483,10 @@ def _choose_tool_name() -> str:
     return random.choice(pool)
 
 
-def draw_crafting_tool(
-    user_data: dict[str, Any],
-    tool_name: str | None = None,
-) -> dict[str, Any]:
+def draw_crafting_tool(user_data: dict[str, Any]) -> dict[str, Any]:
     """Draw one reusable tool; every duplicate automatically breaks through."""
     life = ensure_life_data(user_data)
-    name = tool_name or _choose_tool_name()
-    if name not in TOOL_DEFS:
-        raise ValueError(f"unknown crafting tool: {name}")
+    name = _choose_tool_name()
     tools = life["tools"]
     old_level = tools.get(name)
 
@@ -507,8 +499,6 @@ def draw_crafting_tool(
     else:
         tools[name] = MAX_TOOL_BREAKTHROUGH
         life["tool_overflow_duplicates"] = int(life.get("tool_overflow_duplicates", 0)) + 1
-        inventory = _inventory(user_data)
-        inventory[TOOL_TOKEN_ITEM] = int(inventory.get(TOOL_TOKEN_ITEM, 0)) + 1
         result = "overflow"
 
     try:
@@ -529,7 +519,6 @@ def draw_crafting_tool(
         "result": result,
         "old_level": old_level,
         "level": int(tools[name]),
-        "tool_tokens": int(_inventory(user_data).get(TOOL_TOKEN_ITEM, 0)),
     }
 
 
@@ -565,52 +554,8 @@ def format_tool_result(result: dict[str, Any], index: int | None = None) -> str:
     elif result["result"] == "breakthrough":
         status = f"자동 돌파 {result['old_level']}→{result['level']}"
     else:
-        status = "이미 3돌파 · 도구 증표 +1"
+        status = "이미 3돌파 · 초과 중복 기록"
     return f"{prefix}🛠️ **[{rarity}] {name}** — {status}"
-
-
-def buy_tool_token_offer(
-    user_data: dict[str, Any],
-    offer_key: str,
-) -> tuple[bool, str, dict[str, Any] | None]:
-    """Exchange 50 tool tokens for one deterministic shop offer."""
-    inventory = _inventory(user_data)
-    tokens = int(inventory.get(TOOL_TOKEN_ITEM, 0))
-    if tokens < TOOL_TOKEN_PRICE:
-        return False, f"도구 증표가 부족합니다. 필요: {TOOL_TOKEN_PRICE}개 / 보유: {tokens}개", None
-
-    life = ensure_life_data(user_data)
-    if offer_key == "tool":
-        eligible = [
-            name
-            for name in TOOL_DEFS
-            if int(life["tools"].get(name, -1)) < MAX_TOOL_BREAKTHROUGH
-        ]
-        if not eligible:
-            return False, "모든 세공 도구가 최고 돌파라서 이 상품을 구매할 수 없습니다.", None
-        name = random.choices(
-            eligible,
-            weights=[TOOL_RARITY_WEIGHT[TOOL_DEFS[name]["rarity"]] for name in eligible],
-            k=1,
-        )[0]
-        inventory[TOOL_TOKEN_ITEM] = tokens - TOOL_TOKEN_PRICE
-        result = draw_crafting_tool(user_data, name)
-        return True, f"🎟️ {format_tool_result(result)}", result
-
-    rewards = {
-        "stone": (RAW_STONE_ITEM, 5),
-        "hope": (PURE_HOPE_ITEM, 3),
-        "money": ("money", 3_000_000),
-    }
-    if offer_key not in rewards:
-        return False, "알 수 없는 교환 상품입니다.", None
-    item, count = rewards[offer_key]
-    inventory[TOOL_TOKEN_ITEM] = tokens - TOOL_TOKEN_PRICE
-    if item == "money":
-        user_data["money"] = int(user_data.get("money", 0)) + count
-        return True, f"💰 머니 {count:,}원을 받았습니다.", {"kind": "money", "count": count}
-    inventory[item] = int(inventory.get(item, 0)) + count
-    return True, f"✅ {item} ×{count}을(를) 받았습니다.", {"kind": "item", "name": item, "count": count}
 
 
 def _appraisal_slots(user_data: dict[str, Any]) -> list[dict[str, Any] | None]:
@@ -1939,112 +1884,6 @@ class _PagedButtonMixin:
             self.add_item(following)
 
 
-class ToolTokenShopView(_LifeChildView):
-    """Exchange overflow-duplicate tokens for useful crafting resources."""
-
-    OFFERS = (
-        ("tool", "미완성 도구 랜덤권", "최고 돌파가 아닌 도구 1개를 무작위 획득·돌파"),
-        ("stone", "원석 ×5", "감정할 수 있는 원석 5개"),
-        ("hope", "순수한 희망 ×3", "세공 도구 뽑기 재화 3개"),
-        ("money", "머니 3,000,000원", "머니 300만 원"),
-    )
-
-    def __init__(self, author, user_data, save_func):
-        super().__init__(author, user_data, save_func, timeout=180)
-        self.selected_offer = "tool"
-        self.last_message = None
-        self._rebuild_components()
-
-    def _rebuild_components(self):
-        self.clear_items()
-        options = []
-        life = ensure_life_data(self.user_data)
-        all_maxed = all(
-            int(life["tools"].get(name, -1)) >= MAX_TOOL_BREAKTHROUGH
-            for name in TOOL_DEFS
-        )
-        for key, label, description in self.OFFERS:
-            disabled_note = " · 모두 최고 돌파" if key == "tool" and all_maxed else ""
-            options.append(discord.SelectOption(
-                label=label,
-                value=key,
-                description=f"{description}{disabled_note}"[:100],
-                default=key == self.selected_offer,
-            ))
-        select = discord.ui.Select(
-            placeholder="도구 증표 교환 상품",
-            row=0,
-            options=options,
-        )
-        select.callback = self._select_offer
-        self.add_item(select)
-        buy = discord.ui.Button(
-            label=f"{TOOL_TOKEN_PRICE}개로 교환",
-            style=discord.ButtonStyle.success,
-            row=1,
-        )
-        buy.callback = self._buy
-        self.add_item(buy)
-        back = discord.ui.Button(label="세공 도구로", style=discord.ButtonStyle.secondary, row=1)
-        back.callback = self._back_to_tools
-        self.add_item(back)
-        attach_navigation(
-            self,
-            self.author,
-            self._life_hub_factory,
-            back_label="생활 관리로",
-        )
-
-    async def _select_offer(self, interaction):
-        await _defer(interaction)
-        self.selected_offer = interaction.data["values"][0]
-        self.last_message = None
-        self._rebuild_components()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _buy(self, interaction):
-        await _defer(interaction)
-        ok, message, _ = buy_tool_token_offer(self.user_data, self.selected_offer)
-        if ok:
-            await _save(self.save_func, self.author, self.user_data)
-        self.last_message = message
-        self._rebuild_components()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
-
-    async def _back_to_tools(self, interaction):
-        await _defer(interaction)
-        view = ToolGachaView(self.author, self.user_data, self.save_func)
-        await interaction.edit_original_response(embed=view.get_embed(), view=view)
-
-    def get_embed(self):
-        inventory = _inventory(self.user_data)
-        selected = next(
-            (offer for offer in self.OFFERS if offer[0] == self.selected_offer),
-            self.OFFERS[0],
-        )
-        embed = discord.Embed(
-            title="🎟️ 도구 증표 상점",
-            description=(
-                self.last_message
-                or "최고 돌파 도구가 다시 나오면 도구 증표를 1개 받습니다."
-            ),
-            color=discord.Color.gold(),
-        )
-        embed.add_field(
-            name="보유 도구 증표",
-            value=f"{int(inventory.get(TOOL_TOKEN_ITEM, 0)):,}개",
-            inline=True,
-        )
-        embed.add_field(name="모든 상품 가격", value=f"{TOOL_TOKEN_PRICE}개", inline=True)
-        embed.add_field(
-            name=selected[1],
-            value=selected[2],
-            inline=False,
-        )
-        embed.set_footer(text="랜덤권은 최고 돌파가 아닌 도구만 후보에 포함합니다.")
-        return embed
-
-
 class ToolGachaView(_LifeChildView):
     """Crafting-tool collection and gacha, categorized with eight tools per page."""
 
@@ -2159,20 +1998,12 @@ class ToolGachaView(_LifeChildView):
         draw_ten = discord.ui.Button(label="10회 뽑기", style=discord.ButtonStyle.danger, row=3)
         draw_ten.callback = lambda interaction: self._draw(interaction, 10)
         self.add_item(draw_ten)
-        token_shop = discord.ui.Button(label="도구 증표 상점", emoji="🎟️", style=discord.ButtonStyle.success, row=3)
-        token_shop.callback = self._open_token_shop
-        self.add_item(token_shop)
         attach_navigation(
             self,
             self.author,
             self._life_hub_factory,
             back_label="생활 관리로",
         )
-
-    async def _open_token_shop(self, interaction):
-        await _defer(interaction)
-        view = ToolTokenShopView(self.author, self.user_data, self.save_func)
-        await interaction.edit_original_response(embed=view.get_embed(), view=view)
 
     def _category_count(self, key):
         old = self.category
@@ -2255,8 +2086,7 @@ class ToolGachaView(_LifeChildView):
             name="보유 현황",
             value=(
                 f"도구 {len(life['tools'])}/{len(TOOL_DEFS)}종 · "
-                f"순수한 희망 {inv.get(PURE_HOPE_ITEM, 0)}개 · "
-                f"도구 증표 {inv.get(TOOL_TOKEN_ITEM, 0)}개\n"
+                f"순수한 희망 {inv.get(PURE_HOPE_ITEM, 0)}개\n"
                 f"등장: 원석 {TOOL_GACHA_STONE_WEIGHT}% · 도구 {TOOL_GACHA_TOOL_WEIGHT}%"
             ),
             inline=False,
