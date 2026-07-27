@@ -1,0 +1,11 @@
+{
+  "patch_version": "guild-dungeon-v8.9-private-panels",
+  "files": {
+    "guild_dungeon.py": {
+      "original_exists": true,
+      "original_hash": "111f5f944998e21b8197993fd42ade0aa71a3236e4be673593b98966f587440f",
+      "target_hash": "a244c19450f91375502f04559ec4dd05ffb7fcf809c305e2788b2a098216995b",
+      "was_already_applied": false
+    }
+  }
+}

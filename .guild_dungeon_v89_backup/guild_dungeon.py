@@ -1,4 +1,4 @@
-# guild-dungeon-v8.9
+# guild-dungeon-v8.8
 """Two-to-three player cooperative guild dungeon.
 
 The active run is intentionally kept in memory because Discord views and votes
@@ -551,9 +551,6 @@ class GuildDungeonRun:
         self.finished = False
         self.forced_room: str | None = None
         self.lock = asyncio.Lock()
-        self.active_view = None
-        self.current_embed = None
-        self.private_messages: dict[int, discord.Message] = {}
 
     def living_ids(self) -> list[int]:
         return [
@@ -577,110 +574,25 @@ class GuildDungeonRun:
         )
 
     async def edit_public(self, interaction, *, embed, view) -> None:
-        """Update the shared status board, never the caller's private panel.
-
-        A participant usually reaches this method through an ephemeral panel.
-        Editing ``interaction.original_response`` there would replace that
-        participant's panel and could accidentally save it as the public
-        message.  The run therefore owns one explicit public message and edits
-        it independently from every participant interaction.
-        """
-        self.active_view = view
-        self.current_embed = embed
-        public_view = GuildDungeonPublicStatusView(self) if view is not None else None
         if not interaction.response.is_done():
-            await interaction.response.defer()
-        try:
-            if self.public_message is None:
-                self.public_message = await interaction.channel.send(
-                    embed=embed,
-                    view=public_view,
-                )
-                await self.refresh_private_panels()
-                return
-            await self.public_message.edit(
+            await interaction.response.edit_message(
                 content=None,
                 embed=embed,
-                view=public_view,
+                view=view,
             )
-        except (discord.NotFound, discord.HTTPException):
-            self.public_message = await interaction.channel.send(
-                embed=embed,
-                view=public_view,
-            )
-        await self.refresh_private_panels()
-
-    def private_panel(self, user_id: int):
-        """Build a fresh personal embed/view pair for the current phase."""
-        participant = self.participants.get(int(user_id))
-        if participant is None:
-            return (
-                discord.Embed(
-                    title="길드 던전",
-                    description="이 원정의 참가자가 아닙니다.",
-                    color=discord.Color.red(),
-                ),
-                None,
-            )
-        if self.finished or self.active_view is None:
-            return self.current_embed, None
-
-        phase = self.active_view
-        if isinstance(phase, GuildDungeonVoteView):
-            return phase.get_private_embed(user_id), GuildDungeonPrivateVoteView(
-                phase,
-                user_id,
-            )
-        if isinstance(phase, GuildDungeonContinueView):
-            return phase.get_private_embed(user_id), GuildDungeonPrivateContinueView(
-                phase,
-                user_id,
-            )
-        if isinstance(phase, GuildDungeonItemRoomView):
-            if participant.get("item_decided"):
-                return phase.get_private_embed(user_id), GuildDungeonItemWaitingView(
-                    phase,
-                    user_id,
-                )
-            decision = GuildDungeonItemDecisionView(phase, participant)
-            return decision.get_embed(), decision
-        if isinstance(phase, GuildDungeonBattleView):
-            if participant["char"].current_hp <= 0:
-                return phase.get_private_embed(user_id), None
-            if user_id in phase.selected_cards:
-                return phase.get_private_embed(user_id), GuildDungeonBattleWaitingView(
-                    phase,
-                    user_id,
-                )
-            panel = GuildDungeonCardView(phase, user_id, phase.turn)
-            return panel.get_embed(), panel
-        return self.current_embed, None
-
-    async def open_private_panel(self, interaction) -> None:
-        user_id = int(interaction.user.id)
-        if user_id not in self.participants:
-            return await interaction.response.send_message(
-                "원정 참가자만 개인 화면을 열 수 있습니다.",
-                ephemeral=True,
-            )
-        embed, view = self.private_panel(user_id)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-        try:
-            self.private_messages[user_id] = await interaction.original_response()
-        except (discord.NotFound, discord.HTTPException):
-            pass
-
-    async def refresh_private_panels(self) -> None:
-        """Refresh every opened private panel with a distinct View instance."""
-        stale = []
-        for user_id, message in list(self.private_messages.items()):
-            embed, view = self.private_panel(user_id)
             try:
-                await message.edit(content=None, embed=embed, view=view)
+                self.public_message = await interaction.original_response()
             except (discord.NotFound, discord.HTTPException):
-                stale.append(user_id)
-        for user_id in stale:
-            self.private_messages.pop(user_id, None)
+                pass
+            return
+        try:
+            self.public_message = await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=view,
+            )
+        except (discord.NotFound, discord.HTTPException):
+            self.public_message = await interaction.channel.send(embed=embed, view=view)
 
     async def show_vote(self, interaction, message: str) -> None:
         if self.finished:
@@ -809,7 +721,7 @@ class GuildDungeonRun:
             description=(
                 f"{vote_summary}\n\n"
                 f"각 참가자가 **{loot_text}**을 즉시 획득했습니다.\n"
-                "각자의 던전 도구는 `내 원정 화면 열기`에서 따로 결정합니다."
+                "각자의 던전 도구는 `내 도구 확인`에서 따로 결정합니다."
             ),
             color=discord.Color.gold(),
         )
@@ -918,48 +830,6 @@ class GuildDungeonRun:
         await self.edit_public(interaction, embed=embed, view=None)
 
 
-class GuildDungeonPublicStatusView(discord.ui.View):
-    """Read-only shared board; actual commands live in personal panels."""
-
-    def __init__(self, run: GuildDungeonRun):
-        super().__init__(timeout=None)
-        self.run = run
-
-    @discord.ui.button(label="내 원정 화면 열기", style=discord.ButtonStyle.primary)
-    async def open_panel(self, interaction, button):
-        await self.run.open_private_panel(interaction)
-
-    @discord.ui.button(label="현황 새로고침", style=discord.ButtonStyle.secondary)
-    async def refresh_status(self, interaction, button):
-        if interaction.user.id not in self.run.participants:
-            return await interaction.response.send_message(
-                "원정 참가자만 새로고침할 수 있습니다.",
-                ephemeral=True,
-            )
-        await interaction.response.defer()
-        if self.run.public_message and self.run.current_embed:
-            try:
-                await self.run.public_message.edit(
-                    embed=self.run.current_embed,
-                    view=GuildDungeonPublicStatusView(self.run),
-                )
-            except (discord.NotFound, discord.HTTPException):
-                pass
-
-    @discord.ui.button(label="원정 종료", style=discord.ButtonStyle.danger)
-    async def stop_run(self, interaction, button):
-        if interaction.user.id != self.run.host.id:
-            return await interaction.response.send_message(
-                "호스트만 원정을 종료할 수 있습니다.",
-                ephemeral=True,
-            )
-        await interaction.response.defer()
-        active = self.run.active_view
-        if isinstance(active, GuildDungeonBattleView):
-            active.finished = True
-        await self.run.finish(interaction, "호스트가 원정을 종료했습니다.")
-
-
 class GuildDungeonVoteView(discord.ui.View):
     ROOM_TEXT = {
         "monster": "불길한 기운이 느껴진다.",
@@ -1033,24 +903,7 @@ class GuildDungeonVoteView(discord.ui.View):
                         f"{participant['user'].display_name}: 선택 {selected + 1}"
                     )
             embed.add_field(name="현재 투표", value="\n".join(vote_lines), inline=False)
-        embed.set_footer(
-            text="공용 현황판입니다. 각 참가자는 `내 원정 화면 열기`에서 투표합니다."
-        )
-        return embed
-
-    def get_private_embed(self, user_id: int) -> discord.Embed:
-        embed = self.get_embed("내 선택 화면")
-        selected = self.votes.get(int(user_id))
-        embed.add_field(
-            name="내 선택",
-            value=(
-                f"선택 {selected + 1} · 다시 누르면 변경할 수 있습니다."
-                if selected is not None
-                else "아직 선택하지 않았습니다."
-            ),
-            inline=False,
-        )
-        embed.set_footer(text="선택은 생존한 원정대원 전원이 투표하면 확정됩니다.")
+        embed.set_footer(text="생존한 참가자 전원이 투표하면 즉시 결정됩니다.")
         return embed
 
     async def cast_vote(self, interaction, selected: int):
@@ -1098,51 +951,14 @@ class GuildDungeonVoteView(discord.ui.View):
         self.stop()
 
 
-class GuildDungeonPrivateVoteView(discord.ui.View):
-    def __init__(self, vote: GuildDungeonVoteView, user_id: int):
-        super().__init__(timeout=None)
-        self.vote = vote
-        self.user_id = int(user_id)
-        for index, room_type in enumerate(vote.choices):
-            style = (
-                discord.ButtonStyle.danger
-                if room_type == "boss"
-                else discord.ButtonStyle.primary
-            )
-            button = Button(
-                label=f"선택 {index + 1}",
-                style=style,
-                row=0,
-            )
-
-            async def callback(interaction, selected=index):
-                await self.vote.cast_vote(interaction, selected)
-
-            button.callback = callback
-            self.add_item(button)
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id == self.user_id:
-            return True
-        await interaction.response.send_message(
-            "본인의 원정 화면만 조작할 수 있습니다.",
-            ephemeral=True,
-        )
-        return False
-
-
 class GuildDungeonContinueView(discord.ui.View):
     def __init__(self, run: GuildDungeonRun):
         super().__init__(timeout=300)
         self.run = run
         self.used = False
 
-    def get_private_embed(self, user_id: int) -> discord.Embed:
-        embed = self.run.current_embed.copy()
-        embed.set_footer(text="준비되었다면 다음 방으로 진행할 수 있습니다.")
-        return embed
-
-    async def continue_private(self, interaction):
+    @discord.ui.button(label="다음 방으로", style=discord.ButtonStyle.success)
+    async def continue_button(self, interaction, button):
         if interaction.user.id not in self.run.participants:
             return await interaction.response.send_message(
                 "원정 참가자만 진행할 수 있습니다.",
@@ -1158,30 +974,6 @@ class GuildDungeonContinueView(discord.ui.View):
         await interaction.response.defer()
         await self.run.show_vote(interaction, "원정대가 다음 길을 살핍니다.")
         self.stop()
-
-    @discord.ui.button(label="다음 방으로", style=discord.ButtonStyle.success)
-    async def continue_button(self, interaction, button):
-        await self.continue_private(interaction)
-
-
-class GuildDungeonPrivateContinueView(discord.ui.View):
-    def __init__(self, phase: GuildDungeonContinueView, user_id: int):
-        super().__init__(timeout=None)
-        self.phase = phase
-        self.user_id = int(user_id)
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id == self.user_id:
-            return True
-        await interaction.response.send_message(
-            "본인의 원정 화면만 조작할 수 있습니다.",
-            ephemeral=True,
-        )
-        return False
-
-    @discord.ui.button(label="다음 방으로", style=discord.ButtonStyle.success)
-    async def continue_button(self, interaction, button):
-        await self.phase.continue_private(interaction)
 
 
 class GuildDungeonItemDecisionView(discord.ui.View):
@@ -1240,7 +1032,18 @@ class GuildDungeonItemDecisionView(discord.ui.View):
                 _replace_tool(self.participant, new_item)
             self.participant["pending_item"] = None
             self.participant["item_decided"] = True
-        await interaction.response.defer()
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="✅ 도구 결정 완료",
+                description=(
+                    "새 도구로 교체했습니다."
+                    if replace
+                    else "현재 도구를 유지했습니다."
+                ),
+                color=discord.Color.green(),
+            ),
+            view=None,
+        )
         await self.parent.refresh_public()
 
     @discord.ui.button(label="새 도구로 교체", style=discord.ButtonStyle.success)
@@ -1265,58 +1068,26 @@ class GuildDungeonItemRoomView(discord.ui.View):
             for participant in self.run.participants.values()
         )
 
-    def get_private_embed(self, user_id: int) -> discord.Embed:
-        participant = self.run.participants[int(user_id)]
-        item = participant.get("dungeon_item")
-        pending = [
-            other["user"].display_name
-            for other in self.run.participants.values()
-            if not other.get("item_decided")
-        ]
-        embed = discord.Embed(
-            title=f"🎒 {self.run.depth}층 · 내 던전 도구",
-            description=(
-                f"현재 도구: **{item['name']}**\n{item['desc']}"
-                if item
-                else "현재 보유한 던전 도구가 없습니다."
-            ),
-            color=discord.Color.gold(),
-        )
-        embed.add_field(
-            name="원정대 결정 상태",
-            value=("대기: " + ", ".join(pending)) if pending else "모두 결정 완료",
-            inline=False,
-        )
-        embed.set_footer(text="모두 결정했다면 누구든 다음 방으로 진행할 수 있습니다.")
-        return embed
-
     async def refresh_public(self):
+        if not self.public_message:
+            return
         pending = [
             participant["user"].display_name
             for participant in self.run.participants.values()
             if not participant.get("item_decided")
         ]
-        if self.run.current_embed:
-            embed = self.run.current_embed.copy()
-        else:
-            embed = discord.Embed(title=f"💎 {self.run.depth}층 · 보물방")
-        embed.set_footer(
-            text=(
-                "모든 참가자의 도구 결정 완료"
-                if not pending
-                else "도구 결정 대기: " + ", ".join(pending)
-            )
-        )
-        self.run.current_embed = embed
         try:
-            if self.run.public_message:
-                await self.run.public_message.edit(
-                    embed=embed,
-                    view=GuildDungeonPublicStatusView(self.run),
+            embed = self.public_message.embeds[0].copy()
+            embed.set_footer(
+                text=(
+                    "모든 참가자의 도구 결정 완료"
+                    if not pending
+                    else "도구 결정 대기: " + ", ".join(pending)
                 )
-        except (discord.NotFound, discord.HTTPException):
+            )
+            await self.public_message.edit(embed=embed, view=self)
+        except (discord.NotFound, discord.HTTPException, IndexError):
             pass
-        await self.run.refresh_private_panels()
 
     @discord.ui.button(label="내 도구 확인", style=discord.ButtonStyle.primary)
     async def inspect_button(self, interaction, button):
@@ -1345,9 +1116,6 @@ class GuildDungeonItemRoomView(discord.ui.View):
 
     @discord.ui.button(label="결정 완료 후 진행", style=discord.ButtonStyle.success)
     async def continue_button(self, interaction, button):
-        await self.continue_private(interaction)
-
-    async def continue_private(self, interaction):
         if interaction.user.id not in self.run.participants:
             return await interaction.response.send_message(
                 "원정 참가자만 진행할 수 있습니다.",
@@ -1386,47 +1154,9 @@ class GuildDungeonItemRoomView(discord.ui.View):
         await self.refresh_public()
 
 
-class GuildDungeonItemWaitingView(discord.ui.View):
-    def __init__(self, phase: GuildDungeonItemRoomView, user_id: int):
-        super().__init__(timeout=None)
-        self.phase = phase
-        self.user_id = int(user_id)
-        self.continue_button.disabled = not phase.all_decided()
-        self.force_keep_button.disabled = self.user_id != phase.run.host.id
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id == self.user_id:
-            return True
-        await interaction.response.send_message(
-            "본인의 원정 화면만 조작할 수 있습니다.",
-            ephemeral=True,
-        )
-        return False
-
-    @discord.ui.button(label="다음 방으로", style=discord.ButtonStyle.success)
-    async def continue_button(self, interaction, button):
-        await self.phase.continue_private(interaction)
-
-    @discord.ui.button(label="미응답 자동 유지", style=discord.ButtonStyle.secondary)
-    async def force_keep_button(self, interaction, button):
-        if interaction.user.id != self.phase.run.host.id:
-            return await interaction.response.send_message(
-                "호스트만 미응답 결정을 마감할 수 있습니다.",
-                ephemeral=True,
-            )
-        async with self.phase.run.lock:
-            for participant in self.phase.run.participants.values():
-                if participant.get("item_decided"):
-                    continue
-                participant["pending_item"] = None
-                participant["item_decided"] = True
-        await interaction.response.defer()
-        await self.phase.refresh_public()
-
-
 class GuildDungeonCardView(discord.ui.View):
     def __init__(self, battle, user_id: int, turn: int):
-        super().__init__(timeout=None)
+        super().__init__(timeout=120)
         self.battle = battle
         self.user_id = user_id
         self.turn = turn
@@ -1495,14 +1225,11 @@ class GuildDungeonCardView(discord.ui.View):
             lines.append(
                 f"**{card_name}**\n{card.description if card else '효과 정보 없음'}"
             )
-        embed = self.battle.get_private_embed(self.user_id)
-        embed.add_field(
-            name=f"내 기술 선택 · {self.page + 1}페이지",
-            value=("\n\n".join(lines) or "사용 가능한 카드가 없습니다.")[:1024],
-            inline=False,
+        return discord.Embed(
+            title=f"🎴 길드 던전 커맨드 · {self.turn}턴",
+            description="\n\n".join(lines),
+            color=discord.Color.blurple(),
         )
-        embed.set_footer(text="아래 버튼에서 이번 턴에 사용할 기술을 선택하세요.")
-        return embed
 
 
 class GuildDungeonBattleView(discord.ui.View):
@@ -1553,26 +1280,7 @@ class GuildDungeonBattleView(discord.ui.View):
         if self.logs:
             text = "\n".join(self.logs[-5:])
             embed.add_field(name="최근 전투 기록", value=text[-1000:], inline=False)
-        embed.set_footer(
-            text="공용 현황판입니다. 각 참가자는 `내 원정 화면 열기`에서 행동합니다."
-        )
-        return embed
-
-    def get_private_embed(self, user_id: int):
-        embed = self.get_embed("내 전투 화면")
-        selected = self.selected_cards.get(int(user_id))
-        if selected:
-            embed.add_field(
-                name="내 선택",
-                value=f"**{selected}** · 다른 원정대원의 선택을 기다리는 중",
-                inline=False,
-            )
-        elif self.run.participants[int(user_id)]["char"].current_hp <= 0:
-            embed.add_field(
-                name="내 상태",
-                value="전투 불능 상태라 이번 턴에는 행동할 수 없습니다.",
-                inline=False,
-            )
+        embed.set_footer(text="각 참가자는 `내 커맨드 열기`에서 카드를 선택합니다.")
         return embed
 
     @discord.ui.button(label="내 커맨드 열기", style=discord.ButtonStyle.primary)
@@ -1644,18 +1352,47 @@ class GuildDungeonBattleView(discord.ui.View):
             self.selected_cards[user_id] = card_name
             alive = self.run.living_ids()
             should_resolve = all(uid in self.selected_cards for uid in alive)
-        await interaction.response.defer()
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title=f"✅ {self.turn}턴 선택 완료",
+                description=f"**{card_name}**을 선택했습니다.",
+                color=discord.Color.green(),
+            ),
+            view=None,
+        )
         if should_resolve:
             await self.resolve_turn(interaction)
-        else:
-            await self.run.edit_public(
-                interaction,
-                embed=self.get_embed("원정대원의 커맨드를 기다리고 있습니다."),
-                view=self,
-            )
+        elif self.public_message:
+            try:
+                await self.public_message.edit(embed=self.get_embed(), view=self)
+            except (discord.NotFound, discord.HTTPException):
+                pass
 
     async def refresh_command_panels(self):
-        await self.run.refresh_private_panels()
+        for user_id, message in list(self.command_messages.items()):
+            participant = self.run.participants.get(user_id)
+            try:
+                if self.finished or self.run.finished:
+                    await message.edit(
+                        embed=discord.Embed(
+                            title="길드 던전 전투 종료",
+                            description="커맨드 입력이 끝났습니다.",
+                        ),
+                        view=None,
+                    )
+                elif not participant or participant["char"].current_hp <= 0:
+                    await message.edit(
+                        embed=discord.Embed(
+                            title="전투 불능",
+                            description="이번 턴에는 행동할 수 없습니다.",
+                        ),
+                        view=None,
+                    )
+                else:
+                    view = GuildDungeonCardView(self, user_id, self.turn)
+                    await message.edit(embed=view.get_embed(), view=view)
+            except (discord.NotFound, discord.HTTPException):
+                self.command_messages.pop(user_id, None)
 
     def _tool_after_clash(self, participant, before_hp, before_enemy_hp, damage_enemy):
         character = participant["char"]
@@ -1833,11 +1570,18 @@ class GuildDungeonBattleView(discord.ui.View):
             self.turn += 1
             self.selected_cards = {}
 
-        await self.run.edit_public(
-            interaction,
-            embed=self.get_embed("다음 커맨드를 선택하세요."),
-            view=self,
-        )
+        if self.public_message:
+            try:
+                await self.public_message.edit(
+                    embed=self.get_embed("다음 커맨드를 선택하세요."),
+                    view=self,
+                )
+            except (discord.NotFound, discord.HTTPException):
+                self.public_message = await interaction.channel.send(
+                    embed=self.get_embed("다음 커맨드를 선택하세요."),
+                    view=self,
+                )
+        await self.refresh_command_panels()
 
     async def on_timeout(self):
         if self.finished or self.run.finished:
@@ -1854,24 +1598,3 @@ class GuildDungeonBattleView(discord.ui.View):
         for user_id in self.run.participants:
             _ACTIVE_GUILD_DUNGEON_USERS.discard(int(user_id))
         await self.refresh_command_panels()
-
-
-class GuildDungeonBattleWaitingView(discord.ui.View):
-    def __init__(self, battle: GuildDungeonBattleView, user_id: int):
-        super().__init__(timeout=None)
-        self.battle = battle
-        self.user_id = int(user_id)
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id == self.user_id:
-            return True
-        await interaction.response.send_message(
-            "본인의 원정 화면만 조작할 수 있습니다.",
-            ephemeral=True,
-        )
-        return False
-
-    @discord.ui.button(label="현황 새로고침", style=discord.ButtonStyle.secondary)
-    async def refresh_panel(self, interaction, button):
-        await interaction.response.defer()
-        await self.battle.run.refresh_private_panels()
