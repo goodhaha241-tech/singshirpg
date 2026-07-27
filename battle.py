@@ -1,3 +1,4 @@
+# ripple-artifact-v8.7
 # battle.py
 # pve-gem-runtime-v8.2
 # owner-isolated-ui-v8.6.4
@@ -10,8 +11,9 @@ from cards import get_card
 from story import update_quest_progress 
 import battle_engine
 from gem_effects import (
+    apply_escalation_to_dice,
+    apply_ripple_to_dice,
     battle_end_gem_heal,
-    escalation_roll,
     process_gem_turn_start,
     revive_gem_effects,
     runtime_cooldowns,
@@ -395,14 +397,33 @@ class BattleView(discord.ui.View):
         else:
             log += f"👾 **{target.name}** : `{m_card.name}`\n"
         
-        # [고조된] 효과
-        if "escalation" in effects and not is_stunned and len(p_res) > 0:
-            last_used = self.player.runtime_cooldowns.get("escalation", -10)
-            if self.turn_count - last_used >= 2:
-                bonus = escalation_roll(self.player)
-                p_res[-1]["value"] += bonus
-                self.player.runtime_cooldowns["escalation"] = self.turn_count
-                log += f"🔥 **[고조된]** 주사위 폭주! (+{bonus})\n"
+        # [고조된] 매 턴 모든 유효 주사위에 독립적인 -10~+100 보정.
+        if "escalation" in effects and not is_stunned:
+            escalation = apply_escalation_to_dice(self.player, p_res)
+            if escalation:
+                summary = ", ".join(
+                    f"{entry['index'] + 1}번 {entry['rolled']:+d}"
+                    + (f"(연쇄 +{entry['chained']})" if entry["chained"] else "")
+                    for entry in escalation
+                )
+                log += f"⚡ **[고조]** {summary}\n"
+
+        # [파문] 앞 주사위의 최종값 일부가 뒤 주사위로 연쇄 전이된다.
+        if "ripple" in effects and not is_stunned:
+            ripple = apply_ripple_to_dice(
+                self.player, p_res, self.turn_count
+            )
+            if ripple:
+                amounts = " → ".join(
+                    f"+{entry['amount']}" for entry in ripple["transfers"]
+                )
+                log += f"🌊 **[파문]** 전이 {amounts}"
+                if ripple["hp_heal"] or ripple["mental_heal"]:
+                    log += (
+                        f" · 회복 HP +{ripple['hp_heal']}"
+                        f" / 정신 +{ripple['mental_heal']}"
+                    )
+                log += "\n"
 
         # 합 및 데미지 계산
         clash_log, dmg_p, dmg_m = battle_engine.process_clash_loop(

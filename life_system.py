@@ -1,3 +1,4 @@
+# ripple-artifact-v8.7
 # cumulative-v3-life-system
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
@@ -70,9 +71,14 @@ STONE_GEMS = {
         {"name": "응보의 젬", "category": "dedicated", "target_special": "reflection", "range": (2, 5), "summary": "반사 발동과 함께 피해 경감 및 후속 보너스를 얻는다."},
     ],
     "격정의 원석": [
-        {"name": "고양의 젬", "category": "dedicated", "target_special": "escalation", "range": (1, 4), "summary": "고조된 무작위 보너스의 최솟값을 올린다."},
-        {"name": "폭주의 젬", "category": "dedicated", "target_special": "escalation", "range": (3, 8), "summary": "2턴마다 적용되는 고조된 보너스가 높은 구간에 도달하기 쉬워진다."},
-        {"name": "연쇄의 젬", "category": "dedicated", "target_special": "escalation", "range": (15, 25), "summary": "고조된 보너스 일부를 후속 주사위에 전달한다."},
+        {"name": "고양의 젬", "category": "dedicated", "target_special": "escalation", "range": (1, 4), "summary": "모든 주사위에 적용되는 고조 보정의 최솟값을 올린다."},
+        {"name": "폭주의 젬", "category": "dedicated", "target_special": "escalation", "range": (3, 8), "summary": "각 주사위의 고조 보정을 다시 굴려 높은 결과를 선택한다."},
+        {"name": "연쇄의 젬", "category": "dedicated", "target_special": "escalation", "range": (15, 25), "summary": "양수인 고조 보정 일부를 다음 유효 주사위에 전달한다."},
+    ],
+    "파문의 원석": [
+        {"name": "증폭의 젬", "category": "dedicated", "target_special": "ripple", "range": (5, 10), "summary": "무작위 주사위 유형의 파문 전이율을 높인다."},
+        {"name": "맥동의 젬", "category": "dedicated", "target_special": "ripple", "range": (1, 3), "summary": "파문의 발동 주기를 매 턴으로 바꾸고 전이값을 보강한다."},
+        {"name": "환류의 젬", "category": "dedicated", "target_special": "ripple", "range": (5, 15), "summary": "파문으로 전이한 수치에 비례해 체력과 정신력을 회복한다."},
     ],
     "윤회의 원석": [
         {"name": "회귀의 젬", "category": "dedicated", "target_special": "immortality", "range": (5, 10), "summary": "부활 직후의 생존력과 행동을 강화한다."},

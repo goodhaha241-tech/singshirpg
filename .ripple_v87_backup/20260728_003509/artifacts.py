@@ -1,4 +1,3 @@
-# ripple-artifact-v8.7
 # artifacts.py
 import random
 import uuid
@@ -21,7 +20,6 @@ PREFIXES = {
         "견고한",   # 방어력 비례 회복
         "앙심품은", # 피해 반사
         "고조된",   # 주사위 값 폭주
-        "번뜩이는", # 파문: 주사위 결과 연쇄 전이
         "불멸의",   # 1회 부활
         "황금의",   # (히든/각인) 영산 전용
         "악몽의",   # (히든/각인) 루우데 전용
@@ -39,7 +37,6 @@ SPECIAL_EFFECTS = {
     "견고한": "sturdy_defense",
     "앙심품은": "reflection",
     "고조된": "escalation",
-    "번뜩이는": "ripple",
     "불멸의": "immortality",
     "황금의": "youngsan_gold", # 영산 각인 전용
     "악몽의": "luude_imprint",  # 루우데 각인 전용
@@ -120,8 +117,7 @@ def _make_description(stats, special=None):
         "fierce_attack": "🔥 **[맹렬한]** 2턴마다 공격 시, 공격력만큼 추가 피해",
         "sturdy_defense": "🛡️ **[견고한]** 2턴마다 방어 시, 방어값의 2/3만큼 체력 회복",
         "reflection": "💢 **[앙심]** 받는 피해의 3/4을 상대에게 반사 (정신력 소모 없음)",
-        "escalation": "⚡ **[고조]** 매 턴 모든 유효 주사위에 -10~+100의 무작위 위력 적용",
-        "ripple": "🌊 **[파문]** 2턴마다 첫 주사위 결과의 약 1/3을 다음 주사위로 연쇄 전이",
+        "escalation": "⚡ **[고조]** 합 승리 시 일정 확률로 다음 주사위 위력 폭주 (+1~30)",
         "immortality": "👼 **[불멸]** 전투 불능 시 1회 부활 (HP 100% 회복)",
         "youngsan_gold": "💰 **[황금]** 돈 사용 기술 강화(한도 7000, 비용 50%), 누적 7만원 사용 시 고정 피해",
         "luude_imprint": "👁️ **[악몽]** 주사위 파괴 시 효과 발동 (3회 누적 시 강화 효과)",

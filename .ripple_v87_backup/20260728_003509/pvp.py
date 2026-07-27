@@ -1,4 +1,3 @@
-# ripple-artifact-v8.7
 # pvp.py
 # pve-gem-runtime-v8.2
 import discord
@@ -9,9 +8,8 @@ from character import Character
 from data_manager import mutate_user_data
 import battle_engine
 from gem_effects import (
-    apply_escalation_to_dice,
-    apply_ripple_to_dice,
     battle_end_gem_heal,
+    escalation_roll,
     process_gem_turn_start,
     revive_gem_effects,
 )
@@ -758,32 +756,16 @@ class PVPBattleView(discord.ui.View):
         log += log2
         self.p2_shayla_trigger = next_trig2
 
-        for char, results, effects, marker in (
-            (self.p1_char, p1_res, effs1, "🔵"),
-            (self.p2_char, p2_res, effs2, "🔴"),
-        ):
-            if "escalation" in effects:
-                escalation = apply_escalation_to_dice(char, results)
-                if escalation:
-                    summary = ", ".join(
-                        f"{entry['index'] + 1}번 {entry['rolled']:+d}"
-                        + (f"(연쇄 +{entry['chained']})" if entry["chained"] else "")
-                        for entry in escalation
-                    )
-                    log += f"{marker} ⚡ **{char.name}[고조]** {summary}\n"
-            if "ripple" in effects:
-                ripple = apply_ripple_to_dice(char, results, self.turn_count)
-                if ripple:
-                    amounts = " → ".join(
-                        f"+{entry['amount']}" for entry in ripple["transfers"]
-                    )
-                    log += f"{marker} 🌊 **{char.name}[파문]** {amounts}"
-                    if ripple["hp_heal"] or ripple["mental_heal"]:
-                        log += (
-                            f" · HP +{ripple['hp_heal']}"
-                            f" / 정신 +{ripple['mental_heal']}"
-                        )
-                    log += "\n"
+        if "escalation" in effs1 and p1_res:
+            last = self.p1_char.runtime_cooldowns.get("escalation", -10)
+            if self.turn_count - last >= 2:
+                p1_res[-1]["value"] += escalation_roll(self.p1_char)
+                self.p1_char.runtime_cooldowns["escalation"] = self.turn_count
+        if "escalation" in effs2 and p2_res:
+            last = self.p2_char.runtime_cooldowns.get("escalation", -10)
+            if self.turn_count - last >= 2:
+                p2_res[-1]["value"] += escalation_roll(self.p2_char)
+                self.p2_char.runtime_cooldowns["escalation"] = self.turn_count
 
         # [수정] battle_engine을 사용한 합 진행
         clash_log, dmg1, dmg2 = battle_engine.process_clash_loop(

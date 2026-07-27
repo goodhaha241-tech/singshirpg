@@ -1,4 +1,3 @@
-# ripple-artifact-v8.7
 # gem-link-v4-effects
 # rollback-guard-appraisal-gems-v8
 # pve-gem-runtime-v8.2
@@ -295,216 +294,17 @@ def record_escalation_chain(source, rolled_bonus):
 
 
 def escalation_roll(source, rng=None):
-    """Roll one 고조 modifier using the currently equipped dedicated gems."""
     rng = rng or random
-    minimum = min(40, -10 + gem_effect_total(source, "고양의 젬"))
+    minimum = min(25, 1 + gem_effect_total(source, "고양의 젬"))
     rolls = 1
     if gems_named(source, "폭주의 젬"):
         star = gem_max_star(source, "폭주의 젬")
         rolls = 3 if star >= 5 else (2 if star >= 3 else 1)
         if star < 3 and rng.randint(1, 100) <= min(75, gem_effect_total(source, "폭주의 젬")):
             rolls += 1
-    return max(rng.randint(minimum, 100) for _ in range(rolls))
-
-
-def has_artifact_special(source, special):
-    return any(
-        artifact.get("special") == special
-        for artifact in equipped_artifacts(source)
-        if isinstance(artifact, dict)
-    )
-
-
-def apply_escalation_to_dice(source, dice_results, rng=None):
-    """Apply the redesigned 고조 effect to every valid die for the current turn.
-
-    Each die independently receives -10..+100.  Negative results cannot reduce
-    a die below zero.  연쇄 transfers only a positive rolled modifier to the
-    following valid die in the same card.
-    """
-    if not has_artifact_special(source, "escalation"):
-        return []
-    rng = rng or random
-    valid_indexes = [
-        index for index, die in enumerate(dice_results or [])
-        if isinstance(die, dict) and die.get("type") != "none"
-    ]
-    if not valid_indexes:
-        return []
-
-    # The old implementation stored a delayed one-die chain.  It must not leak
-    # into the new all-dice calculation when a battle object is reused.
-    gem_state(source).pop("chain_bonus", None)
-    chain_percent = min(80, gem_effect_total(source, "연쇄의 젬"))
-    results = []
-    pending_chain = 0
-    for valid_order, index in enumerate(valid_indexes):
-        die = dice_results[index]
-        rolled = escalation_roll(source, rng)
-        chained = pending_chain
-        before = max(0, int(die.get("value", 0) or 0))
-        die["value"] = max(0, before + rolled + chained)
-        results.append({
-            "index": index,
-            "rolled": rolled,
-            "chained": chained,
-            "final": die["value"],
-        })
-        pending_chain = 0
-        if (
-            chain_percent > 0
-            and rolled > 0
-            and valid_order + 1 < len(valid_indexes)
-        ):
-            pending_chain = max(1, math.floor(rolled * chain_percent / 100))
-
-    if gems_named(source, "고양의 젬"):
-        record_gem_activation(
-            source,
-            "고양의 젬",
-            f"고조 최솟값 {-10 + gem_effect_total(source, '고양의 젬'):+d}",
-        )
-    if gems_named(source, "폭주의 젬"):
-        record_gem_activation(source, "폭주의 젬", "모든 주사위 고조 재굴림")
-    if chain_percent and any(entry["chained"] for entry in results):
-        transferred = sum(entry["chained"] for entry in results)
-        record_gem_activation(source, "연쇄의 젬", f"후속 주사위 총 +{transferred}")
-    return results
-
-
-def _ripple_boost_types(source, dice_results, rng):
-    if not gems_named(source, "증폭의 젬"):
-        return []
-    state = gem_state(source)
-    valid_types = sorted({
-        str(die.get("type"))
-        for die in dice_results or []
-        if isinstance(die, dict) and die.get("type") not in (None, "none")
-    })
-    if not valid_types:
-        return []
-    desired = 2 if gem_max_star(source, "증폭의 젬") >= 5 else 1
-    chosen = [
-        die_type for die_type in state.get("ripple_boost_types", [])
-        if die_type in valid_types
-    ]
-    if len(chosen) < min(desired, len(valid_types)):
-        chosen = rng.sample(valid_types, min(desired, len(valid_types)))
-        state["ripple_boost_types"] = chosen
-    return chosen
-
-
-def _restore_stat(source, current_name, maximum_name, amount):
-    amount = max(0, int(amount or 0))
-    if amount <= 0:
-        return 0
-    current = max(0, int(getattr(source, current_name, 0) or 0))
-    maximum = max(current, int(getattr(source, maximum_name, current) or current))
-    restored = min(amount, max(0, maximum - current))
-    if restored:
-        setattr(source, current_name, current + restored)
-    return restored
-
-
-def apply_ripple_to_dice(source, dice_results, turn_count, rng=None):
-    """Chain one third of each resolved die into the next valid die.
-
-    The receiving die becomes the basis of the following transfer, so a card
-    with three or more dice naturally accumulates overlapping ripple values.
-    """
-    if not has_artifact_special(source, "ripple"):
-        return None
-    rng = rng or random
-    valid_indexes = [
-        index for index, die in enumerate(dice_results or [])
-        if isinstance(die, dict) and die.get("type") != "none"
-    ]
-    if len(valid_indexes) < 2:
-        return None
-
-    state = gem_state(source)
-    interval = 1 if gems_named(source, "맥동의 젬") else 2
-    last_turn = int(state.get("ripple_last_turn", -10) or -10)
-    if int(turn_count) - last_turn < interval:
-        return None
-    state["ripple_last_turn"] = int(turn_count)
-
-    boost_types = _ripple_boost_types(source, dice_results, rng)
-    boost_effect = gem_effect_total(source, "증폭의 젬")
-    boost_star = gem_max_star(source, "증폭의 젬")
-    boost_percent = boost_effect
-    if boost_star >= 3:
-        boost_percent += 5
-    if boost_star >= 5:
-        boost_percent += 10
-
-    pulse_effect = gem_effect_total(source, "맥동의 젬")
-    pulse_star = gem_max_star(source, "맥동의 젬")
-    pulse_flat = pulse_effect
-    if pulse_star >= 3:
-        pulse_flat += math.ceil(pulse_effect / 2)
-    if pulse_star >= 5:
-        pulse_flat += math.ceil(pulse_effect / 2)
-
-    transfers = []
-    for order, source_index in enumerate(valid_indexes[:-1]):
-        target_index = valid_indexes[order + 1]
-        source_die = dice_results[source_index]
-        target_die = dice_results[target_index]
-        source_value = max(0, int(source_die.get("value", 0) or 0))
-        transferred = math.floor(source_value / 3)
-        if str(source_die.get("type")) in boost_types:
-            transferred += math.floor(source_value * boost_percent / 100)
-        if pulse_flat:
-            transferred += pulse_flat
-        transferred = max(0, transferred)
-        if transferred:
-            target_die["value"] = max(
-                0, int(target_die.get("value", 0) or 0) + transferred
-            )
-        transfers.append({
-            "from": source_index,
-            "to": target_index,
-            "amount": transferred,
-            "source_type": str(source_die.get("type", "")),
-        })
-
-    total = sum(entry["amount"] for entry in transfers)
-    hp_heal = mental_heal = 0
-    if total > 0 and gems_named(source, "환류의 젬"):
-        return_effect = gem_effect_total(source, "환류의 젬")
-        return_star = gem_max_star(source, "환류의 젬")
-        recovery_percent = 100 + return_effect
-        if return_star >= 3:
-            recovery_percent += 25
-        if return_star >= 5:
-            recovery_percent += 50
-        recovery = max(1, math.floor(total * recovery_percent / 100))
-        hp_heal = _restore_stat(source, "current_hp", "max_hp", recovery)
-        mental_heal = _restore_stat(
-            source, "current_mental", "max_mental", recovery
-        )
-        record_gem_activation(
-            source,
-            "환류의 젬",
-            f"체력 +{hp_heal} · 정신력 +{mental_heal}",
-        )
-    if boost_types:
-        labels = {
-            "attack": "공격", "defense": "방어", "dodge": "회피",
-            "counter": "반격", "heal": "회복", "mental": "정신",
-        }
-        shown = ", ".join(labels.get(kind, kind) for kind in boost_types)
-        record_gem_activation(source, "증폭의 젬", f"{shown} 전이율 강화")
-    if pulse_effect:
-        record_gem_activation(source, "맥동의 젬", f"매 턴 발동 · 전이 +{pulse_flat}")
-    return {
-        "transfers": transfers,
-        "total": total,
-        "hp_heal": hp_heal,
-        "mental_heal": mental_heal,
-        "boost_types": boost_types,
-    }
+    result = max(rng.randint(minimum, 30) for _ in range(rolls))
+    record_escalation_chain(source, result)
+    return result
 
 
 def _apply_percent_reduction(damage, percent):
@@ -853,9 +653,6 @@ GEM_STAR_UNLOCKS = {
     "고양의 젬": ("고조 최솟값 성급 증폭", "고조 최솟값 최대 증폭"),
     "폭주의 젬": ("고조 보너스를 2회 굴려 높은 값 선택", "3회 굴려 높은 값 선택"),
     "연쇄의 젬": ("전달 비율 성급 증폭", "전달 비율 최대 증폭"),
-    "증폭의 젬": ("선택 유형의 파문 전이율 +5%p", "무작위 강화 유형 2개·전이율 추가 +10%p"),
-    "맥동의 젬": ("파문 전이 고정 보너스 150%", "파문 전이 고정 보너스 200%"),
-    "환류의 젬": ("파문 회복률 +25%p", "파문 회복률 추가 +50%p"),
     "회귀의 젬": ("부활 후 보호 효과 강화", "부활 후 보호 효과 최대 강화"),
     "여명의 젬": ("전투 종료 회복량 150%", "전투 종료 회복량 200%"),
     "선봉의 젬": ("두 번째 유효 주사위에도 50% 적용", "세 번째 이후에도 33% 적용"),

@@ -1,3 +1,4 @@
+# ripple-artifact-v8.7
 # artifact_manager.py
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
@@ -24,7 +25,7 @@ DATA_FILE = "user_data.json"
 
 # 접두사 키워드
 PREFIX_KEYWORDS = [
-    "맹렬한", "견고한", "꼼꼼한", "앙심품은", "고조된", "불멸의"
+    "맹렬한", "견고한", "꼼꼼한", "앙심품은", "고조된", "번뜩이는", "불멸의"
 ]
 
 

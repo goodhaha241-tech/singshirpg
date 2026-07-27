@@ -32,7 +32,6 @@ from gem_effects import (
     process_gem_turn_start,
     revive_gem_effects,
 )
-from guild_dungeon import GuildDungeonLobbyView
 
 # guild-pvp-stability-v7.2
 # raid-private-command-panel-v8.5
@@ -2051,20 +2050,15 @@ class GuildTrainingView(discord.ui.View):
 
     @discord.ui.button(label="🗺️ 길드 던전", style=discord.ButtonStyle.secondary, row=0)
     async def btn_dungeon(self, interaction, button):
-        guild_info = await get_user_guild_info(interaction.user.id)
-        if not guild_info:
-            return await interaction.response.send_message(
-                "길드 정보를 불러오지 못했습니다.",
-                ephemeral=True,
-            )
-        lobby = GuildDungeonLobbyView(interaction.user, guild_info, self)
-        await lobby.setup()
-        await interaction.response.edit_message(
-            content=None,
-            embed=lobby.get_embed(),
-            view=lobby,
+        embed = discord.Embed(
+            title="🗺️ 길드 던전 — 계획 중",
+            description=(
+                "일반 던전 규칙을 바탕으로 한 **2~3인 협동 콘텐츠**입니다.\n"
+                "로비·턴 동기화·중도 이탈 복구·공동 보상 설계를 마친 뒤 별도 패치로 구현합니다."
+            ),
+            color=discord.Color.blurple(),
         )
-        lobby.public_message = interaction.message
+        await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="🥊 수련 시작", style=discord.ButtonStyle.success, row=0)
     async def btn_start(self, interaction, button):

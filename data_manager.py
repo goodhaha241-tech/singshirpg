@@ -936,7 +936,9 @@ async def store_guild_item(user_id, guild_id, item_name, count, category="materi
                 await cur.execute(
                     """INSERT INTO guild_inventory (guild_id,item_name,count,category)
                        VALUES (%s,%s,%s,%s) AS new
-                       ON DUPLICATE KEY UPDATE count=count+new.count, category=new.category""",
+                       ON DUPLICATE KEY UPDATE
+                         count=guild_inventory.count+new.count,
+                         category=new.category""",
                     (GLOBAL_GUILD_ID, item_name, count, category),
                 )
                 await cur.execute(
@@ -1045,7 +1047,8 @@ async def craft_guild_workshop_item(
                     await cur.execute(
                         """INSERT INTO inventory (user_id,item_name,quantity)
                            VALUES (%s,%s,%s) AS new
-                           ON DUPLICATE KEY UPDATE quantity=quantity+new.quantity""",
+                           ON DUPLICATE KEY UPDATE
+                             quantity=inventory.quantity+new.quantity""",
                         (str(user_id), item_name, count),
                     )
                     action_type = "workshop_personal"
@@ -1054,7 +1057,9 @@ async def craft_guild_workshop_item(
                     await cur.execute(
                         """INSERT INTO guild_inventory (guild_id,item_name,count,category)
                            VALUES (%s,%s,%s,%s) AS new
-                           ON DUPLICATE KEY UPDATE count=count+new.count, category=new.category""",
+                           ON DUPLICATE KEY UPDATE
+                             count=guild_inventory.count+new.count,
+                             category=new.category""",
                         (GLOBAL_GUILD_ID, item_name, count, category),
                     )
                     action_type = "workshop_guild"
@@ -1264,7 +1269,8 @@ async def buy_guild_shop_item(user_id, guild_id, day_key, slot_index, count=1, u
                 await cur.execute(
                     """INSERT INTO inventory (user_id,item_name,quantity)
                        VALUES (%s,%s,%s) AS new
-                       ON DUPLICATE KEY UPDATE quantity=quantity+new.quantity""",
+                       ON DUPLICATE KEY UPDATE
+                         quantity=inventory.quantity+new.quantity""",
                     (str(user_id), item["item_name"], count),
                 )
                 await cur.execute(
@@ -1341,7 +1347,8 @@ async def craft_guild_item(user_id, guild_id, item_name, category, token_costs, 
                 await cur.execute(
                     """INSERT INTO guild_inventory (guild_id,item_name,count,category)
                        VALUES (%s,%s,%s,%s) AS new
-                       ON DUPLICATE KEY UPDATE count=count+new.count""",
+                       ON DUPLICATE KEY UPDATE
+                         count=guild_inventory.count+new.count""",
                     (GLOBAL_GUILD_ID, item_name, count, category),
                 )
                 await cur.execute(

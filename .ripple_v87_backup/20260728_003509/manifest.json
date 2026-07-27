@@ -1,0 +1,14 @@
+{
+  "patch": "ripple-artifact-v8.7",
+  "files": [
+    "artifacts.py",
+    "artifact_events_v5.py",
+    "artifact_manager.py",
+    "life_system.py",
+    "gem_effects.py",
+    "gem_manager.py",
+    "battle.py",
+    "pvp.py",
+    "guild.py"
+  ]
+}

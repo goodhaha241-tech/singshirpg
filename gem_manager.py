@@ -1,3 +1,4 @@
+# ripple-artifact-v8.7
 # gem-link-v7.3-manager
 # rollback-guard-appraisal-gems-v8
 # appraisal-gem-affixes-v8.1
@@ -47,6 +48,7 @@ TARGET_SPECIAL_LABELS = {
     "sturdy_defense": "견고한",
     "reflection": "앙심품은",
     "escalation": "고조된",
+    "ripple": "번뜩이는(파문)",
     "immortality": "불멸의",
 }
 
@@ -129,15 +131,33 @@ def gem_applied_effect_lines(gem: dict[str, Any]) -> list[str]:
         "가시의 젬": [f"앙심품은 발동의 반사 피해 **+{effect}**"],
         "원한의 젬": [f"피격 후 다음 반사 피해 누적량 **+{effect}**"],
         "응보의 젬": [f"반사 대상 실피해 **{min(50, effect + (5 if star >= 3 else 0))}% 감소**"],
-        "고양의 젬": [f"고조된 보너스 최솟값 **+{effect}**"],
+        "고양의 젬": [f"모든 주사위의 고조 보정 범위 **{-10 + effect:+d}~+100**"],
         "폭주의 젬": [
             (
-                f"고조된 보너스를 **{3 if star >= 5 else 2}회** 굴려 높은 값 선택"
+                f"각 주사위의 고조 보정을 **{3 if star >= 5 else 2}회** 굴려 높은 값 선택"
                 if star >= 3
-                else f"고조된 보너스 **{min(75, effect)}% 확률로 재굴림**"
+                else f"각 주사위의 고조 보정 **{min(75, effect)}% 확률로 재굴림**"
             )
         ],
-        "연쇄의 젬": [f"고조된 보너스의 **{min(80, effect)}%**를 다음 주사위에 전달"],
+        "연쇄의 젬": [f"양수인 고조 보정의 **{min(80, effect)}%**를 같은 카드의 다음 주사위에 전달"],
+        "증폭의 젬": [
+            (
+                f"전투마다 무작위 **{2 if star >= 5 else 1}개 주사위 유형**의 "
+                f"파문 전이율 **+{effect + (5 if star >= 3 else 0) + (10 if star >= 5 else 0)}%p**"
+            )
+        ],
+        "맥동의 젬": [
+            "파문 발동 간격 **2턴 → 매 턴**",
+            (
+                f"각 파문 전이값 **+{effect if star < 3 else (effect * 2 if star >= 5 else effect + (effect + 1) // 2)}**"
+            ),
+        ],
+        "환류의 젬": [
+            (
+                f"파문 총 전이값의 **{100 + effect + (25 if star >= 3 else 0) + (50 if star >= 5 else 0)}%**만큼 "
+                "체력과 정신력을 각각 회복"
+            )
+        ],
         "회귀의 젬": [f"부활 후 다음 실피해 **{min(60, effect)}% 감소**"],
         "여명의 젬": [f"전투 종료 후 체력 **+{effect if star < 3 else (effect * 2 if star >= 5 else effect + (effect + 1) // 2)}**"],
         "선봉의 젬": [f"매 턴 첫 유효 주사위 위력 **+{effect}**"],

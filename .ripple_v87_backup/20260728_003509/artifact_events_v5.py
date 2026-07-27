@@ -1,4 +1,3 @@
-# ripple-artifact-v8.7
 # life-artifact-v5-events
 """Artifact event registry.
 
@@ -44,7 +43,6 @@ COMMON_ARTIFACT_EFFECTS = {
     "sturdy_defense": {"event": "on_defense_dice", "label": "견고한"},
     "reflection": {"event": "after_damage", "label": "앙심품은"},
     "escalation": {"event": "on_turn_dice", "label": "고조된"},
-    "ripple": {"event": "on_turn_dice", "label": "파문"},
     "immortality": {"event": "on_death", "label": "불멸의"},
 }
 
