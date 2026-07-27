@@ -497,8 +497,8 @@ async def _save_user_data_unlocked(user_id, data):
                 ))
 
                 await cur.execute(
-                    """INSERT INTO user_life_data (user_id, data) VALUES (%s, %s) AS new
-                       ON DUPLICATE KEY UPDATE data=new.data""",
+                    """INSERT INTO user_life_data (user_id, data) VALUES (%s, %s)
+                       ON DUPLICATE KEY UPDATE data=VALUES(data)""",
                     (str(user_id), json.dumps(data.get("life_data", {}), ensure_ascii=False)),
                 )
 
@@ -720,8 +720,8 @@ async def ensure_global_guild_membership(user_id):
                 await cur.execute(
                     """INSERT INTO guilds
                        (guild_id,name,owner_id,level,exp,member_count)
-                       VALUES (%s,%s,NULL,1,0,0) AS new
-                       ON DUPLICATE KEY UPDATE name=new.name""",
+                       VALUES (%s,%s,NULL,1,0,0)
+                       ON DUPLICATE KEY UPDATE name=VALUES(name)""",
                     (GLOBAL_GUILD_ID, GLOBAL_GUILD_NAME),
                 )
                 await cur.execute(
@@ -935,8 +935,8 @@ async def store_guild_item(user_id, guild_id, item_name, count, category="materi
                     )
                 await cur.execute(
                     """INSERT INTO guild_inventory (guild_id,item_name,count,category)
-                       VALUES (%s,%s,%s,%s) AS new
-                       ON DUPLICATE KEY UPDATE count=count+new.count, category=new.category""",
+                       VALUES (%s,%s,%s,%s)
+                       ON DUPLICATE KEY UPDATE count=count+VALUES(count), category=VALUES(category)""",
                     (GLOBAL_GUILD_ID, item_name, count, category),
                 )
                 await cur.execute(
@@ -1044,8 +1044,8 @@ async def craft_guild_workshop_item(
                 if source == "personal":
                     await cur.execute(
                         """INSERT INTO inventory (user_id,item_name,quantity)
-                           VALUES (%s,%s,%s) AS new
-                           ON DUPLICATE KEY UPDATE quantity=quantity+new.quantity""",
+                           VALUES (%s,%s,%s)
+                           ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity)""",
                         (str(user_id), item_name, count),
                     )
                     action_type = "workshop_personal"
@@ -1053,8 +1053,8 @@ async def craft_guild_workshop_item(
                 else:
                     await cur.execute(
                         """INSERT INTO guild_inventory (guild_id,item_name,count,category)
-                           VALUES (%s,%s,%s,%s) AS new
-                           ON DUPLICATE KEY UPDATE count=count+new.count, category=new.category""",
+                           VALUES (%s,%s,%s,%s)
+                           ON DUPLICATE KEY UPDATE count=count+VALUES(count), category=VALUES(category)""",
                         (GLOBAL_GUILD_ID, item_name, count, category),
                     )
                     action_type = "workshop_guild"
@@ -1146,14 +1146,14 @@ async def get_or_create_daily_guild_shop(guild_id, day_key, rotation_rows):
                         """INSERT INTO guild_shop_stock
                            (guild_id,day_key,slot_index,item_name,category,stock,
                             initial_stock,cost_json,description)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) AS new
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                            ON DUPLICATE KEY UPDATE
-                             item_name=new.item_name,
-                             category=new.category,
-                             stock=new.stock,
-                             initial_stock=new.initial_stock,
-                             cost_json=new.cost_json,
-                             description=new.description""",
+                             item_name=VALUES(item_name),
+                             category=VALUES(category),
+                             stock=VALUES(stock),
+                             initial_stock=VALUES(initial_stock),
+                             cost_json=VALUES(cost_json),
+                             description=VALUES(description)""",
                         (
                             GLOBAL_GUILD_ID,
                             str(day_key),
@@ -1263,8 +1263,8 @@ async def buy_guild_shop_item(user_id, guild_id, day_key, slot_index, count=1, u
                 )
                 await cur.execute(
                     """INSERT INTO inventory (user_id,item_name,quantity)
-                       VALUES (%s,%s,%s) AS new
-                       ON DUPLICATE KEY UPDATE quantity=quantity+new.quantity""",
+                       VALUES (%s,%s,%s)
+                       ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity)""",
                     (str(user_id), item["item_name"], count),
                 )
                 await cur.execute(
@@ -1340,8 +1340,8 @@ async def craft_guild_item(user_id, guild_id, item_name, category, token_costs, 
                 )
                 await cur.execute(
                     """INSERT INTO guild_inventory (guild_id,item_name,count,category)
-                       VALUES (%s,%s,%s,%s) AS new
-                       ON DUPLICATE KEY UPDATE count=count+new.count""",
+                       VALUES (%s,%s,%s,%s)
+                       ON DUPLICATE KEY UPDATE count=count+VALUES(count)""",
                     (GLOBAL_GUILD_ID, item_name, count, category),
                 )
                 await cur.execute(

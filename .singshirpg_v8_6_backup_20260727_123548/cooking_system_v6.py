@@ -440,49 +440,11 @@ class CookingView(discord.ui.View):
         )
         page_button.callback = self._toggle_page
         self.add_item(page_button)
-        life_button = discord.ui.Button(
-            label="생활 관리로",
-            emoji="🌿",
-            style=discord.ButtonStyle.success,
-            row=4,
-        )
-        life_button.callback = self._go_to_life_hub
-        self.add_item(life_button)
-        home_button = discord.ui.Button(
-            label="마이홈으로",
-            emoji="🏠",
-            style=discord.ButtonStyle.secondary,
-            row=4,
-        )
-        home_button.callback = self._go_to_myhome
-        self.add_item(home_button)
 
     async def _toggle_page(self, interaction):
         self.page = 0 if self.page else 1
         self._rebuild_menu()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def _go_to_life_hub(self, interaction):
-        # 런타임 임포트로 life_overhaul_v5 ↔ cooking_system_v6 순환 임포트를 피한다.
-        from life_overhaul_v5 import LifeHubView
-
-        view = LifeHubView(self.author, self.user_data, self.save_func)
-        await interaction.response.edit_message(
-            content=None,
-            embed=view.get_embed(),
-            view=view,
-        )
-
-    async def _go_to_myhome(self, interaction):
-        # 요리 완료 후 같은 메시지에서 기존 마이홈 화면으로 복귀한다.
-        from myhome import MyHomeView
-
-        view = MyHomeView(self.author, self.user_data, self.save_func)
-        await interaction.response.edit_message(
-            content=None,
-            embed=view.get_embed(),
-            view=view,
-        )
 
     def get_embed(self, message=None):
         c = ensure_cooking_data(self.user_data)

@@ -657,8 +657,8 @@ class TradeBoardView(View):
                     if seller_id == buyer_id:
                         await cursor.execute(
                             """INSERT INTO inventory (user_id,item_name,quantity)
-                               VALUES (%s,%s,%s) AS new
-                               ON DUPLICATE KEY UPDATE quantity=quantity+new.quantity""",
+                               VALUES (%s,%s,%s)
+                               ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity)""",
                             (seller_id, item_name, quantity),
                         )
                         await cursor.execute(
@@ -717,8 +717,8 @@ class TradeBoardView(View):
                     )
                     await cursor.execute(
                         """INSERT INTO inventory (user_id,item_name,quantity)
-                           VALUES (%s,%s,%s) AS new
-                           ON DUPLICATE KEY UPDATE quantity=quantity+new.quantity""",
+                           VALUES (%s,%s,%s)
+                           ON DUPLICATE KEY UPDATE quantity=quantity+VALUES(quantity)""",
                         (buyer_id, item_name, quantity),
                     )
                     await cursor.execute(
