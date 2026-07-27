@@ -1,4 +1,3 @@
-# cafe-guild-market-v9.1
 # rollback-guard-appraisal-gems-v8
 import discord
 from discord.ui import View, Button, Select, Modal, TextInput
@@ -10,7 +9,6 @@ import datetime
 from data_manager import get_db_pool, get_user_data
 from decorators import auto_defer
 from items import REGIONS, ITEM_CATEGORIES, CRAFT_RECIPES, COMMON_ITEMS, RARE_ITEMS
-from cafe_market_v91 import CafeMarketView
 
 # --- 카페 메뉴 데이터 설정 ---
 CAFE_MENU = [
@@ -491,8 +489,8 @@ class CafeView(View):
     async def trade_board(self, interaction: discord.Interaction, button: Button):
         # 뷰 진입 시 테이블 체크
         await check_global_tables()
-        view = CafeMarketView(self.author, self)
-        await view.open(interaction)
+        view = TradeBoardView(self.author, self.user_data, self.get_user_data_func, self.save_func)
+        await view.update_message(interaction)
 
     @discord.ui.button(label="카페 주문", style=ButtonStyle.success, emoji="☕")
     @auto_defer()

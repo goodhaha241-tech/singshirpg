@@ -1,0 +1,14 @@
+{
+  "patch_id": "singshirpg-cafe-guild-v9.1",
+  "files": [
+    "trade.py",
+    "data_manager.py",
+    "guild.py",
+    "battle.py",
+    "pvp.py",
+    "cafe_market_v91.py"
+  ],
+  "new_files": [
+    "cafe_market_v91.py"
+  ]
+}

@@ -2,7 +2,6 @@
 # battle.py
 # pve-gem-runtime-v8.2
 # owner-isolated-ui-v8.6.4
-# cafe-guild-market-v9.1
 import discord
 import random
 import json
@@ -92,12 +91,6 @@ class BattleView(discord.ui.View):
                 self.player.current_mental += val
             elif stat == "defense_rate":
                 self.player.defense_rate += val
-
-        # Standalone battles begin with the fully calculated artifact/gem
-        # maximums. Dungeon-run battles preserve resources between rooms.
-        if not self.is_dungeon_run:
-            self.player.current_hp = self.player.max_hp
-            self.player.current_mental = self.player.max_mental
         
         self.update_buttons()
 

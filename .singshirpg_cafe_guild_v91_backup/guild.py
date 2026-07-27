@@ -1,4 +1,3 @@
-# cafe-guild-market-v9.1
 # ripple-artifact-v8.7
 # rollback-guard-appraisal-gems-v8
 # pve-gem-runtime-v8.2
@@ -743,17 +742,12 @@ class GuildWorkshopView(discord.ui.View):
 
     async def get_embed(self):
         source_label = "개인 인벤토리" if self.source == "personal" else "길드 공용 창고"
-        destination = (
-            "개인 인벤토리"
-            if self.source == "personal"
-            else "길드 공용 자원 자동 납품"
-        )
+        destination = source_label
         embed = discord.Embed(
             title="🛠️ 길드 제작소",
             description=(
                 "제작 재료의 출처를 고른 뒤 레시피와 수량을 누르세요.\n"
-                "개인 재료로 만들면 개인에게 지급됩니다.\n"
-                "공용 재료로 만든 결과물은 즉시 길드 자원으로 환산되고 제작자 공헌도가 오릅니다.\n"
+                "개인 재료로 만들면 개인에게, 공용 재료로 만들면 공용 창고에 결과가 들어갑니다.\n"
                 "**두 재고를 한 제작에 섞어 쓰지는 않습니다.**"
             ),
             color=discord.Color.dark_gold(),
@@ -819,24 +813,9 @@ class GuildWorkshopView(discord.ui.View):
             self.source,
             "material",
             interaction.user.display_name,
-            ITEM_TOKEN_VALUES.get(self.selected_recipe) if self.source == "guild" else None,
         )
         if not success:
             return await interaction.response.send_message(f"❌ {message}", ephemeral=True)
-        if self.source == "guild" and self.selected_recipe in ITEM_TOKEN_VALUES:
-            base_rewards = {
-                key: int(value) * int(count)
-                for key, value in ITEM_TOKEN_VALUES[self.selected_recipe].items()
-            }
-            scaled = _scale_donation_rewards(
-                base_rewards,
-                self.guild_info.get("level", 1),
-            )
-            await advance_guild_mission(
-                interaction.user,
-                "donate",
-                sum(scaled.values()),
-            )
         await self.setup_view()
         await interaction.response.edit_message(
             content=f"✅ {message}",
@@ -1277,161 +1256,6 @@ class ArtifactDepositSelectView(discord.ui.View):
             self.artifacts.insert(idx, artifact)
             await interaction.response.send_message(f"❌ 보관 실패: {msg}", ephemeral=True)
 
-class GuildWarehouseWithdrawView(discord.ui.View):
-    PER_PAGE = 8
-
-    def __init__(self, author, guild_info, category, parent_view):
-        super().__init__(timeout=180)
-        self.author = author
-        self.guild_info = guild_info
-        self.category = category
-        self.parent_view = parent_view
-        self.items = []
-        self.page = 0
-        self.selected_item = None
-        self.quantity = 0
-
-    async def interaction_check(self, interaction):
-        if interaction.user.id == self.author.id:
-            return True
-        await interaction.response.send_message(
-            "본인이 연 출고 화면만 조작할 수 있습니다.",
-            ephemeral=True,
-        )
-        return False
-
-    async def setup_view(self):
-        rows = await get_guild_items(self.guild_info["guild_id"], self.category)
-        self.items = [
-            (row["item_name"], int(row.get("count", 0) or 0))
-            for row in rows
-            if int(row.get("count", 0) or 0) > 0
-        ]
-        total_pages = max(1, (len(self.items) + self.PER_PAGE - 1) // self.PER_PAGE)
-        self.page = max(0, min(self.page, total_pages - 1))
-        visible = self.items[self.page * self.PER_PAGE:(self.page + 1) * self.PER_PAGE]
-        if self.selected_item not in {name for name, _ in self.items}:
-            self.selected_item = visible[0][0] if visible else None
-            self.quantity = 1 if self.selected_item else 0
-
-        self.clear_items()
-        if visible:
-            select = Select(
-                placeholder=f"출고할 공용 재고 선택 ({self.page + 1}/{total_pages})",
-                row=0,
-                options=[
-                    discord.SelectOption(
-                        label=f"{name} ×{count}",
-                        value=name,
-                        default=name == self.selected_item,
-                    )
-                    for name, count in visible
-                ],
-            )
-
-            async def choose(interaction):
-                self.selected_item = interaction.data["values"][0]
-                self.quantity = 1
-                await self.setup_view()
-                await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-            select.callback = choose
-            self.add_item(select)
-
-        previous = Button(label="이전", disabled=self.page == 0, row=1)
-        counter = Button(label=f"{self.page + 1}/{total_pages}", disabled=True, row=1)
-        following = Button(label="다음", disabled=self.page >= total_pages - 1, row=1)
-        previous.callback = self.previous
-        following.callback = self.following
-        self.add_item(previous)
-        self.add_item(counter)
-        self.add_item(following)
-
-        stock = dict(self.items).get(self.selected_item, 0)
-        for label, amount in (("-10", -10), ("-1", -1), ("+1", 1), ("+10", 10)):
-            button = Button(label=label, disabled=not self.selected_item, row=2)
-
-            async def adjust(interaction, delta=amount):
-                self.quantity = max(1, min(stock, self.quantity + delta))
-                await self.setup_view()
-                await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-            button.callback = adjust
-            self.add_item(button)
-
-        confirm = Button(
-            label="개인 인벤토리로 출고",
-            style=discord.ButtonStyle.success,
-            disabled=not self.selected_item or self.quantity <= 0,
-            row=3,
-        )
-        close = Button(label="닫기", style=discord.ButtonStyle.secondary, row=3)
-        confirm.callback = self.confirm
-        close.callback = self.close
-        self.add_item(confirm)
-        self.add_item(close)
-
-    def get_embed(self):
-        stock = dict(self.items).get(self.selected_item, 0)
-        embed = discord.Embed(
-            title="📤 길드 공용 재고 출고",
-            description=(
-                "공용 창고의 실물 아이템을 내 인벤토리로 가져옵니다.\n"
-                "출고 내역은 길드 활동 로그에 기록됩니다."
-            ),
-            color=discord.Color.blue(),
-        )
-        if self.selected_item:
-            embed.add_field(
-                name=self.selected_item,
-                value=(
-                    f"공용 재고: **{stock}개**\n"
-                    f"출고 수량: **{self.quantity}개**\n"
-                    f"출고 후 공용 재고: **{max(0, stock - self.quantity)}개**"
-                ),
-                inline=False,
-            )
-        else:
-            embed.add_field(name="재고", value="출고할 공용 재고가 없습니다.", inline=False)
-        return embed
-
-    async def previous(self, interaction):
-        self.page -= 1
-        await self.setup_view()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def following(self, interaction):
-        self.page += 1
-        await self.setup_view()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    async def confirm(self, interaction):
-        success, message = await withdraw_guild_item(
-            interaction.user.id,
-            self.guild_info["guild_id"],
-            self.selected_item,
-            self.quantity,
-            interaction.user.display_name,
-        )
-        if not success:
-            return await interaction.response.send_message(f"❌ {message}", ephemeral=True)
-        self.selected_item = None
-        self.quantity = 0
-        await self.setup_view()
-        await interaction.response.edit_message(
-            content=f"✅ {message}",
-            embed=self.get_embed(),
-            view=self,
-        )
-        try:
-            await self.parent_view.refresh_background()
-        except (discord.NotFound, discord.HTTPException):
-            pass
-
-    async def close(self, interaction):
-        await interaction.response.edit_message(content="출고 화면을 닫았습니다.", embed=None, view=None)
-
-
 class GuildWarehouseView(discord.ui.View):
     def __init__(self, author, guild_info):
         super().__init__(timeout=120)
@@ -1449,10 +1273,8 @@ class GuildWarehouseView(discord.ui.View):
         )
         category.callback = self.select_category
         self.add_item(category)
-        self.add_item(self.btn_withdraw)
         self.add_item(self.btn_deposit_art)
         self.add_item(self.btn_logs)
-        self.message = None
 
     async def select_category(self, interaction):
         self.category = interaction.data["values"][0]
@@ -1507,31 +1329,6 @@ class GuildWarehouseView(discord.ui.View):
         else:
             await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
-    async def refresh_background(self):
-        if self.message:
-            await self.message.edit(embed=await self.get_embed(), view=self)
-
-    @discord.ui.button(label="📤 공용 재고 출고", style=discord.ButtonStyle.primary, row=1)
-    async def btn_withdraw(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.category == "artifact":
-            return await interaction.response.send_message(
-                "아티팩트는 별도 보관 규칙을 사용하므로 실물 재고 출고 대상이 아닙니다.",
-                ephemeral=True,
-            )
-        self.message = interaction.message
-        view = GuildWarehouseWithdrawView(
-            interaction.user,
-            self.guild_info,
-            self.category,
-            self,
-        )
-        await view.setup_view()
-        await interaction.response.send_message(
-            embed=view.get_embed(),
-            view=view,
-            ephemeral=True,
-        )
-
     @discord.ui.button(label="🍎 소모품", style=discord.ButtonStyle.secondary)
     async def btn_consumable(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.category = "consumable"; await self.refresh(interaction)
@@ -1562,7 +1359,6 @@ class GuildWarehouseView(discord.ui.View):
                 "store_item": "창고 반입",
                 "workshop_personal": "개인 제작",
                 "workshop_guild": "공용 제작",
-                "workshop_auto_donate": "공용 제작·자동 납품",
                 "withdraw": "출고",
                 "deposit_artifact": "보관",
                 "craft": "제작",
@@ -2028,8 +1824,6 @@ class RaidLobbyView(discord.ui.View):
             char.runtime_cooldowns = {}
             if hasattr(char, "apply_battle_start_buffs"):
                 char.apply_battle_start_buffs()
-                char.current_hp = char.max_hp
-                char.current_mental = char.max_mental
             self.participants[user.id] = {
                 "user": user,
                 "char": char,

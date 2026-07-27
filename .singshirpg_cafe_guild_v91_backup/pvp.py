@@ -1,7 +1,6 @@
 # ripple-artifact-v8.7
 # pvp.py
 # pve-gem-runtime-v8.2
-# cafe-guild-market-v9.1
 import discord
 import random
 import asyncio
@@ -341,8 +340,6 @@ class PVPBattleView(discord.ui.View):
         
         if hasattr(char_obj, "apply_battle_start_buffs"):
             char_obj.apply_battle_start_buffs()
-            char_obj.current_hp = char_obj.max_hp
-            char_obj.current_mental = char_obj.max_mental
             
         char_obj.runtime_cooldowns = {}
         if not hasattr(char_obj, "status_effects"): char_obj.status_effects = {"bleed": 0, "paralysis": 0}

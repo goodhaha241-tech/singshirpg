@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 # stability-v1 + cumulative-v2 + cumulative-v3 integrated baseline
 # guild-pvp-stability-v7.2
-# cafe-guild-market-v9.1
 # rollback-guard-appraisal-gems-v8
 # raid-pvp-command-panels-v8.5
 # guild-shop-training-v8.6
@@ -964,7 +963,6 @@ async def craft_guild_workshop_item(
     source="personal",
     category="material",
     user_name=None,
-    auto_donation_rewards=None,
 ):
     """개인 또는 공용 재고 한쪽만 사용해 길드 제작소 레시피를 처리한다."""
     try:
@@ -1055,48 +1053,6 @@ async def craft_guild_workshop_item(
                     )
                     action_type = "workshop_personal"
                     destination = "개인 인벤토리"
-                elif auto_donation_rewards:
-                    await cur.execute(
-                        "SELECT level FROM guilds WHERE guild_id=%s FOR UPDATE",
-                        (GLOBAL_GUILD_ID,),
-                    )
-                    guild_row = await cur.fetchone()
-                    guild_level = max(
-                        1,
-                        min(10, int((guild_row or {}).get("level", 1) or 1)),
-                    )
-                    efficiency = GUILD_DONATION_EFFICIENCY[guild_level]
-                    scaled_rewards = {
-                        str(key): (
-                            max(0, int(value)) * count * efficiency + 99
-                        ) // 100
-                        for key, value in dict(auto_donation_rewards).items()
-                        if str(key) in {"wood", "iron", "magic", "sorcery"}
-                        and int(value) > 0
-                    }
-                    if not scaled_rewards:
-                        await conn.rollback()
-                        return False, "자동 납품 환산값이 올바르지 않습니다."
-                    assignments = ", ".join(
-                        f"token_{key}=token_{key}+%s" for key in scaled_rewards
-                    )
-                    await cur.execute(
-                        f"UPDATE guilds SET {assignments} WHERE guild_id=%s",
-                        tuple(scaled_rewards.values()) + (GLOBAL_GUILD_ID,),
-                    )
-                    contribution_gain = sum(scaled_rewards.values())
-                    await cur.execute(
-                        """UPDATE guild_members
-                           SET contribution=contribution+%s
-                           WHERE guild_id=%s AND user_id=%s""",
-                        (contribution_gain, GLOBAL_GUILD_ID, str(user_id)),
-                    )
-                    await _sync_global_guild_level(cur)
-                    action_type = "workshop_auto_donate"
-                    destination = (
-                        "길드 공용 자원으로 자동 납품"
-                        f" (공헌도 +{contribution_gain})"
-                    )
                 else:
                     await cur.execute(
                         """INSERT INTO guild_inventory (guild_id,item_name,count,category)
@@ -1343,84 +1299,8 @@ async def buy_guild_shop_item(user_id, guild_id, day_key, slot_index, count=1, u
                 return False, f"길드 상점 오류: {exc}"
 
 # [신규] 길드 아이템 출고 (Withdraw)
-async def withdraw_guild_item(
-    user_id,
-    guild_id,
-    item_name,
-    count,
-    user_name=None,
-):
-    """Move tangible shared stock to one member atomically."""
-    try:
-        count = int(count)
-    except (TypeError, ValueError):
-        return False, "수량이 올바르지 않습니다."
-    if count <= 0 or int(guild_id) != GLOBAL_GUILD_ID:
-        return False, "공용 길드에서 양수 수량만 출고할 수 있습니다."
-    await ensure_global_guild_membership(user_id)
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor(aiomysql.DictCursor) as cur:
-            try:
-                await conn.begin()
-                await cur.execute(
-                    """SELECT 1 FROM guild_members
-                       WHERE guild_id=%s AND user_id=%s FOR UPDATE""",
-                    (GLOBAL_GUILD_ID, str(user_id)),
-                )
-                if not await cur.fetchone():
-                    await conn.rollback()
-                    return False, "공용 길드 소속이 아닙니다."
-                await cur.execute(
-                    """SELECT count,category FROM guild_inventory
-                       WHERE guild_id=%s AND item_name=%s FOR UPDATE""",
-                    (GLOBAL_GUILD_ID, item_name),
-                )
-                row = await cur.fetchone()
-                owned = int(row.get("count", 0)) if row else 0
-                if owned < count:
-                    await conn.rollback()
-                    return False, f"공용 재고가 부족합니다. ({owned}/{count})"
-                if owned == count:
-                    await cur.execute(
-                        """DELETE FROM guild_inventory
-                           WHERE guild_id=%s AND item_name=%s""",
-                        (GLOBAL_GUILD_ID, item_name),
-                    )
-                else:
-                    await cur.execute(
-                        """UPDATE guild_inventory SET count=count-%s
-                           WHERE guild_id=%s AND item_name=%s""",
-                        (count, GLOBAL_GUILD_ID, item_name),
-                    )
-                await cur.execute(
-                    """INSERT INTO inventory (user_id,item_name,quantity)
-                       VALUES (%s,%s,%s) AS new
-                       ON DUPLICATE KEY UPDATE
-                         quantity=inventory.quantity+new.quantity""",
-                    (str(user_id), item_name, count),
-                )
-                await cur.execute(
-                    "UPDATE users SET data_revision=data_revision+1 WHERE user_id=%s",
-                    (str(user_id),),
-                )
-                await cur.execute(
-                    """INSERT INTO guild_log
-                       (guild_id,user_id,user_name,action_type,item_name,count)
-                       VALUES (%s,%s,%s,'withdraw',%s,%s)""",
-                    (
-                        GLOBAL_GUILD_ID,
-                        str(user_id),
-                        user_name,
-                        item_name,
-                        count,
-                    ),
-                )
-                await conn.commit()
-                return True, f"{item_name} {count}개를 개인 인벤토리로 출고했습니다."
-            except Exception as exc:
-                await conn.rollback()
-                return False, f"길드 창고 출고 오류: {exc}"
+async def withdraw_guild_item(user_id, guild_id, item_name, count):
+    return False, "공용 길드 자원은 개인 인벤토리로 출고할 수 없습니다."
 
 async def craft_guild_item(user_id, guild_id, item_name, category, token_costs, count=1):
     """공용 길드 토큰을 원자적으로 소비해 길드 제작품을 만든다."""
