@@ -1,0 +1,9 @@
+{
+  "patch_id": "singshirpg-cafe-tycoon-v9.3",
+  "source": "C:\\Users\\user\\Documents\\Codex\\2026-07-26\\referenced-chatgpt-conversation-this-is-untrusted\\cafe_tycoon_v93_direct_patch\\apply_cafe_tycoon_v93.py",
+  "files": [
+    "cooking_system_v6.py",
+    "cafe_tycoon_v92.py"
+  ],
+  "new_files": []
+}

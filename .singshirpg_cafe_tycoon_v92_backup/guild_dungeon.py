@@ -79,19 +79,6 @@ def _artifact_effects(character: Character) -> list[str]:
     return result
 
 
-def _reset_battle_runtime(participant: dict) -> None:
-    """Reset effects whose lifetime is one battle, not the whole dungeon run.
-
-    Guild-dungeon characters keep their HP and mental state between rooms, but
-    each battle starts its turn counter at one.  Carrying the previous room's
-    runtime turn stamps made interval effects such as Fierce and Ripple wait
-    for turns that the new encounter might never reach.
-    """
-    character = participant["char"]
-    character.runtime_cooldowns = {}
-    participant["revived"] = False
-
-
 def _available_cards(character: Character) -> list[str]:
     cards = [
         name
@@ -762,8 +749,6 @@ class GuildDungeonRun:
 
     async def start_battle(self, interaction, *, is_boss: bool, vote_summary: str):
         monster = self._scaled_monster(is_boss=is_boss)
-        for participant in self.participants.values():
-            _reset_battle_runtime(participant)
         view = GuildDungeonBattleView(self, monster, is_boss)
         await self.edit_public(
             interaction,

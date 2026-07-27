@@ -1,4 +1,3 @@
-# cafe-tycoon-v9.2
 # cafe-guild-market-v9.1
 # rollback-guard-appraisal-gems-v8
 import discord
@@ -12,7 +11,6 @@ from data_manager import get_db_pool, get_user_data
 from decorators import auto_defer
 from items import REGIONS, ITEM_CATEGORIES, CRAFT_RECIPES, COMMON_ITEMS, RARE_ITEMS
 from cafe_market_v91 import CafeMarketView
-from cafe_tycoon_v92 import CafeTycoonEntryView
 
 # --- 카페 메뉴 데이터 설정 ---
 CAFE_MENU = [
@@ -197,9 +195,9 @@ class RewardChoiceView(discord.ui.View):
         
         # 보상 데이터 정의
         self.rewards = {
-            1: [("5000pt", "pt", 5000), ("75000원", "money", 75000), ("녹슨 철 150개", "item", ("녹슨 철", 150)), ("신전의 등불 4개", "item", ("신전의 등불", 4))],
-            2: [("10000pt", "pt", 10000), ("150000원", "money", 150000), ("눈덩이 180개", "item", ("눈덩이", 180)), ("형상각인기 4개", "item", ("형상각인기", 4))],
-            3: [("25000pt", "pt", 25000), ("350000원", "money", 350000), ("하급 마력석 60개", "item", ("하급 마력석", 60)), ("악몽 프라페 10개", "item", ("악몽 프라페", 10))]
+            1: [("3000pt", "pt", 3000), ("40000원", "money", 40000), ("녹슨 철 100개", "item", ("녹슨 철", 100)), ("신전의 등불 2개", "item", ("신전의 등불", 2))],
+            2: [("5000pt", "pt", 5000), ("70000원", "money", 70000), ("눈덩이 100개", "item", ("눈덩이", 100)), ("형상각인기 2개", "item", ("형상각인기", 2))],
+            3: [("12000pt", "pt", 12000), ("100000원", "money", 100000), ("하급 마력석 30개", "item", ("하급 마력석", 30)), ("악몽 프라페 5개", "item", ("악몽 프라페", 5))]
         }
         
         self.add_buttons()
@@ -408,25 +406,12 @@ class CafeQuestView(discord.ui.View):
 
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """UPDATE global_quests SET claimed=1
-                           WHERE id=%s AND claimed=0 AND accepted_by=%s""",
-                        (qid, self.author.id),
-                    )
-                    if cur.rowcount != 1:
-                        await conn.rollback()
-                        return await interaction.response.send_message(
-                            "❌ 이미 보상을 수령했거나 의뢰 상태가 바뀌었습니다.",
-                            ephemeral=True,
-                        )
+                    await cur.execute("UPDATE global_quests SET claimed=1 WHERE id=%s", (qid,))
                     await conn.commit()
             
             # 종류별 보상 지급
             msg = "🎁 **퀘스트 보상 획득!**\n"
             rank = quest["q_rank"]
-            hope_count = max(1, min(3, int(rank)))
-            inv["순수한 희망"] = int(inv.get("순수한 희망", 0)) + hope_count
-            msg += f"✨ 순수한 희망 ×{hope_count}\n"
             
             if quest["q_type"] == "investigation":
                 # 조사 지역 희귀 재료
@@ -522,12 +507,6 @@ class CafeView(View):
         # [수정] 비동기 초기화 호출
         await view.async_init()
         await interaction.edit_original_response(content=None, embed=view.get_embed(), view=view)
-
-    @discord.ui.button(label="카페 타이쿤", style=ButtonStyle.danger, emoji="🏪")
-    @auto_defer()
-    async def cafe_tycoon(self, interaction: discord.Interaction, button: Button):
-        view = CafeTycoonEntryView(self.author, self)
-        await view.open(interaction)
 
 # ---------------------------------------------------------
 # 1. 거래 게시판 (송금 및 거래 목록)

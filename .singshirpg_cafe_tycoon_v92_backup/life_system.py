@@ -1,4 +1,3 @@
-# cafe-tycoon-v9.2
 # ripple-artifact-v8.7
 # cumulative-v3-life-system
 # rollback-guard-appraisal-gems-v8
@@ -295,34 +294,17 @@ CROPS = {
     "시간 호박": {"turns": 24, "yield": (1, 3), "water": (30, 70)},
     "달빛 버섯": {"turns": 16, "yield": (2, 5), "water": (55, 85)},
     "악몽 고추": {"turns": 20, "yield": (1, 3), "water": (30, 60)},
-    "은하 무": {"turns": 17, "yield": (2, 5), "water": (40, 70)},
 }
 
 FISH_SPECIES = {
     "빵잉어": {"turns": 12, "yield": (2, 5), "water": (35, 90)},
-    "빵붕어": {"turns": 13, "yield": (2, 5), "water": (35, 85)},
-    "민물배스": {"turns": 16, "yield": (2, 4), "water": (45, 80)},
-    "피라미": {"turns": 11, "yield": (3, 6), "water": (40, 85)},
     "버들치": {"turns": 16, "yield": (2, 4), "water": (65, 100)},
     "모래무지": {"turns": 15, "yield": (2, 4), "water": (45, 85)},
-    "쉬리": {"turns": 19, "yield": (2, 4), "water": (60, 90)},
-    "각시붕어": {"turns": 18, "yield": (2, 4), "water": (50, 85)},
-    "구름송어": {"turns": 18, "yield": (2, 4), "water": (55, 85)},
+    "등불오징어": {"turns": 20, "yield": (1, 3), "water": (60, 100)},
+    "로운새우": {"turns": 14, "yield": (3, 7), "water": (45, 90)},
     "어름치": {"turns": 24, "yield": (1, 3), "water": (75, 100)},
-    "동사리": {"turns": 23, "yield": (1, 3), "water": (45, 75)},
-    "송사리": {"turns": 20, "yield": (2, 5), "water": (50, 85)},
-    "버들매치": {"turns": 25, "yield": (1, 3), "water": (60, 90)},
-    "가는돌고기": {"turns": 26, "yield": (1, 3), "water": (65, 95)},
     "별비늘돔": {"turns": 28, "yield": (1, 2), "water": (70, 100)},
     "악몽 메기": {"turns": 22, "yield": (1, 4), "water": (35, 60)},
-    "메롱물고기": {"turns": 16, "yield": (2, 4), "water": (45, 80)},
-    "꽁다리치": {"turns": 17, "yield": (2, 4), "water": (50, 85)},
-    "쵸비고기": {"turns": 15, "yield": (2, 5), "water": (40, 80)},
-    "밭갱어": {"turns": 18, "yield": (2, 4), "water": (45, 75)},
-    "등불오징어": {"turns": 20, "yield": (1, 3), "water": (60, 100)},
-    "명이태": {"turns": 23, "yield": (1, 3), "water": (70, 100)},
-    "로운새우": {"turns": 14, "yield": (3, 7), "water": (45, 90)},
-    "돔돌치": {"turns": 24, "yield": (1, 3), "water": (65, 95)},
 }
 
 SEED_ITEMS = {name: ("달빛 버섯 종균" if name == "달빛 버섯" else f"{name} 씨앗") for name in CROPS}
@@ -1305,21 +1287,11 @@ def start_fish_farm(user_data: dict[str, Any], species: str, worker_index: int) 
         return False, "해당 캐릭터는 이미 다른 장기 생활 작업을 담당하고 있습니다."
     inv = _inventory(user_data)
     juvenile = FINGERLING_ITEMS[species]
-    if int(inv.get(juvenile, 0)) > 0:
-        stocking_item = juvenile
-        stocking_kind = "치어 입식"
-    elif int(inv.get(species, 0)) > 0:
-        stocking_item = species
-        stocking_kind = "친어 입식"
-    else:
-        return False, f"{juvenile} 또는 {species} 1마리가 필요합니다."
-    inv[stocking_item] -= 1
-    if int(inv.get(stocking_item, 0)) <= 0:
-        inv.pop(stocking_item, None)
+    if int(inv.get(juvenile, 0)) <= 0:
+        return False, f"{juvenile}이(가) 필요합니다."
+    inv[juvenile] -= 1
     farm["tank"] = {
         "species": species,
-        "stocking_item": stocking_item,
-        "stocking_kind": stocking_kind,
         "worker_index": worker_index,
         "worker_name": chars[worker_index].get("name", f"캐릭터 {worker_index + 1}"),
         "turn": 0,
@@ -1330,10 +1302,10 @@ def start_fish_farm(user_data: dict[str, Any], species: str, worker_index: int) 
         "disease": 0,
         "quality": 50,
         "complete": False,
-        "last_log": f"{stocking_kind}을 마쳤습니다.",
+        "last_log": "입식을 마쳤습니다.",
         "first_feed": True,
     }
-    return True, f"{species} 양식을 시작했습니다. ({stocking_item} ×1 소비)"
+    return True, f"{species} 양식을 시작했습니다."
 
 
 def perform_fish_action(user_data: dict[str, Any], action: str) -> tuple[bool, str]:
@@ -2493,14 +2465,9 @@ class FishSetupView(_PagedButtonMixin, _LifeChildView):
         self.choice_page = 0
         inventory = _inventory(user_data)
         self.stocked = [
-            (
-                name,
-                data,
-                int(inventory.get(FINGERLING_ITEMS[name], 0)),
-                int(inventory.get(name, 0)),
-            )
+            (name, data, int(inventory.get(FINGERLING_ITEMS[name], 0)))
             for name, data in FISH_SPECIES.items()
-            if int(inventory.get(FINGERLING_ITEMS[name], 0)) > 0 or int(inventory.get(name, 0)) > 0
+            if int(inventory.get(FINGERLING_ITEMS[name], 0)) > 0
         ]
         self.characters = list(user_data.get("characters", []))
         self._render_buttons()
@@ -2514,9 +2481,9 @@ class FishSetupView(_PagedButtonMixin, _LifeChildView):
             self._add_paged_select(
                 self.stocked,
                 page_attr="choice_page",
-                label_func=lambda entry: f"{entry[0]} · 입식 {entry[2] + entry[3]}회",
+                label_func=lambda entry: f"{entry[0]} ×{entry[2]}",
                 description_func=lambda entry: (
-                    f"치어 {entry[2]} · 물고기 {entry[3]} · {entry[1]['turns']}턴 · "
+                    f"보유 {entry[2]}개 · {entry[1]['turns']}턴 · "
                     f"출하 {entry[1]['yield'][0]}~{entry[1]['yield'][1]} · "
                     f"적정 수질 {entry[1]['water'][0]}~{entry[1]['water'][1]}"
                 ),
@@ -2577,12 +2544,9 @@ class FishSetupView(_PagedButtonMixin, _LifeChildView):
     def get_embed(self):
         inventory = _inventory(self.user_data)
         stocks = [
-            (
-                f"• {name}: {FINGERLING_ITEMS[name]} "
-                f"{int(inventory.get(FINGERLING_ITEMS[name], 0))} · 물고기 {int(inventory.get(name, 0))}"
-            )
+            f"• {name}: {int(inventory.get(FINGERLING_ITEMS[name], 0))}개"
             for name in FISH_SPECIES
-            if int(inventory.get(FINGERLING_ITEMS[name], 0)) > 0 or int(inventory.get(name, 0)) > 0
+            if int(inventory.get(FINGERLING_ITEMS[name], 0)) > 0
         ]
         worker_name = "미선택"
         if self.worker_index is not None:
@@ -2595,7 +2559,7 @@ class FishSetupView(_PagedButtonMixin, _LifeChildView):
                 f"어종: **{self.species or '미선택'}**\n"
                 f"담당: **{worker_name}**\n\n"
                 f"현재 단계: **{'어종 선택' if self.stage == 'species' else '담당 선택' if self.stage == 'worker' else '시작 확인'}**\n\n"
-                f"**현재 입식 가능 재고**\n"
+                f"**현재 보유 치어·유생**\n"
                 f"{chr(10).join(stocks) if stocks else '보유 재고가 없습니다. 생활 상점에서 먼저 구매하세요.'}"
             ),
             color=discord.Color.blue(),

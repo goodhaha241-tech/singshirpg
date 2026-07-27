@@ -1,4 +1,3 @@
-# cafe-tycoon-v9.2
 # items.py
 # 아이템 데이터, 지역 정보, 제작 레시피, 소비 아이템 효과 정의
 
@@ -30,8 +29,8 @@ RARE_ITEMS = [
     # [길드 고급 자재]
     "양질 목재", "강화 철강", "상급 마력석", "고급 주술석", "응결 구름 블럭",
     # [물고기]
-    "모래무지", "버들치", "쉬리", "각시붕어", "구름송어",
-    "어름치", "동사리", "송사리", "버들매치", "가는돌고기", "별비늘돔", "악몽 메기",
+    "모래무지", "버들치", "쉬리", "각시붕어",
+    "어름치", "동사리", "송사리", "버들매치", "가는돌고기",
     # [노드 해역 희귀]
     "등불오징어", "명이태", "로운새우", "돔돌치"
 ]
@@ -149,15 +148,12 @@ ITEM_CATEGORIES = {
     "버들치": {"type": "fish", "tier": "rare", "price": 350},
     "쉬리": {"type": "fish", "tier": "rare", "price": 400}, 
     "각시붕어": {"type": "fish", "tier": "rare", "price": 450},
-    "구름송어": {"type": "fish", "tier": "rare", "price": 550},
     # --- [물고기 - 고급] ---
     "어름치": {"type": "fish", "tier": "advanced", "price": 1000}, 
     "동사리": {"type": "fish", "tier": "advanced", "price": 1200},
     "송사리": {"type": "fish", "tier": "advanced", "price": 1500}, 
     "버들매치": {"type": "fish", "tier": "advanced", "price": 1800},
     "가는돌고기": {"type": "fish", "tier": "advanced", "price": 2000},
-    "별비늘돔": {"type": "fish", "tier": "advanced", "price": 2400},
-    "악몽 메기": {"type": "fish", "tier": "advanced", "price": 2200},
 
     # --- [소모품 및 텃밭 아이템] ---
     "작은 회복약": {"type": "consumable", "effect": "hp", "value": 20, "price": 40},

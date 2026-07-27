@@ -1,4 +1,4 @@
-# cafe-tycoon-v9.3
+# cafe-tycoon-v9.2
 # completion-v6-cooking
 # rollback-guard-appraisal-gems-v8
 # pve-gem-runtime-v8.2
@@ -38,55 +38,9 @@ RECIPES = {
     "별비늘돔 만찬": {"ingredients": {"별비늘돔": 1, "별빛 토마토": 1}, "price": 70_000, "effect": "강력한 다음 전투 버프"},
     "은하 무 피클": {"ingredients": {"은하 무": 2}, "price": 19_000, "effect": "조사 실패율 감소"},
     "구름송어 스테이크": {"ingredients": {"구름송어": 2}, "price": 28_000, "effect": "다음 전투 방어력 증가"},
-    # 일반 제작소에서도 보았던 익숙한 메뉴를 정식 요리 레시피로 공유한다.
-    "열매 샐러드": {
-        "ingredients": {"설국 열매": 1, "무지개 열매": 1},
-        "price": 24_000, "effect": "체력·정신력 회복",
-    },
-    "간단한 다과": {
-        "ingredients": {"초코과자": 1, "사과": 1},
-        "price": 22_000, "effect": "정신력 회복",
-    },
-    "악몽 프라페": {
-        "ingredients": {"악몽 파편": 2, "하급 마력석": 1},
-        "price": 65_000, "effect": "다음 전투 공격력 증가",
-    },
-    "구름다리 스낵": {
-        "ingredients": {
-            "구름 한 줌": 2, "초코과자": 1, "바람깃펜": 3,
-            "무지개 한조각": 1, "찬란한 유리병": 3,
-        },
-        "price": 90_000, "effect": "조사 대성공률 증가",
-    },
-    "솜사탕": {
-        "ingredients": {"구름 한 줌": 3},
-        "price": 26_000, "effect": "정신력 회복",
-    },
-    "구름과자 낱개": {
-        "ingredients": {"구름다리 스낵": 1},
-        "price": 35_000, "effect": "다음 전투 첫 피해 감소",
-    },
-    "바닷물고기 회": {
-        "ingredients": {"물고기 비늘": 3, "창공마크": 1},
-        "price": 75_000, "effect": "다음 전투 공격력 증가",
-    },
-    "파티 풀세트": {
-        "ingredients": {
-            "간단한 다과": 3, "구름다리 스낵": 1,
-            "파티용 모자": 4, "눈 스프레이": 2,
-        },
-        "price": 150_000, "effect": "강력한 다음 전투 버프",
-    },
-    "다과 풀세트": {
-        "ingredients": {"간단한 다과": 3, "악몽 프라페": 2, "오렌지 주스": 6},
-        "price": 170_000, "effect": "강력한 다음 전투 버프",
-    },
 }
 
-STARTER_RECIPES = {
-    "감자 수프", "토마토 샐러드", "빵잉어 구이", "버들치 조림",
-    "열매 샐러드", "간단한 다과",
-}
+STARTER_RECIPES = {"감자 수프", "토마토 샐러드", "빵잉어 구이", "버들치 조림"}
 RESEARCH_POOLS = {
     "작물": [
         "감자 수프", "토마토 샐러드", "양파 구이", "당근 볶음",
@@ -96,11 +50,7 @@ RESEARCH_POOLS = {
         "빵잉어 구이", "버들치 조림", "모래무지 튀김", "새우 꼬치",
         "등불오징어 볶음", "별비늘돔 만찬", "구름송어 스테이크",
     ],
-    "특수": [
-        "별비늘돔 만찬", "등불오징어 볶음", "호박 스튜",
-        "악몽 프라페", "구름다리 스낵", "솜사탕", "구름과자 낱개",
-        "바닷물고기 회", "파티 풀세트", "다과 풀세트",
-    ],
+    "특수": ["별비늘돔 만찬", "등불오징어 볶음", "호박 스튜"],
 }
 INGREDIENT_QUALITY_BONUS = {
     "시든": -8,
@@ -115,10 +65,7 @@ INGREDIENT_QUALITY_BONUS = {
 def ensure_cooking_data(user_data: dict[str, Any]) -> dict[str, Any]:
     life = ensure_life_data(user_data)
     cooking = life.setdefault("cooking", {})
-    unlocked = cooking.setdefault("unlocked_recipes", sorted(STARTER_RECIPES))
-    for recipe_name in sorted(STARTER_RECIPES):
-        if recipe_name not in unlocked:
-            unlocked.append(recipe_name)
+    cooking.setdefault("unlocked_recipes", sorted(STARTER_RECIPES))
     cooking.setdefault("foods", {})
     cooking.setdefault("research_failures", {"작물": 0, "수산": 0, "특수": 0})
     cooking.setdefault("delivery", {})
