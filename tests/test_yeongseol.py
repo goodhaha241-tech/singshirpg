@@ -215,6 +215,12 @@ class YeongseolSupportTests(unittest.TestCase):
         self.assertEqual(two["sp"], 18)
         self.assertEqual(one["attack"], two["attack"])
 
+    def test_support_personality_is_documented(self):
+        self.assertIn(
+            "SP 획득량 +25%",
+            boss_training.support_personality_text("영설"),
+        )
+
     def test_stage_three_unlocks_all_three_card_hints_and_preset(self):
         run = {
             "turn": 20,

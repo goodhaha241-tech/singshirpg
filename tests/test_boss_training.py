@@ -319,6 +319,137 @@ class BossTrainingCoreTests(unittest.TestCase):
         self.assertEqual(matching_result["friendship_supports"], ["영산"])
         self.assertEqual(mismatching_result["friendship_supports"], [])
 
+    def test_luude_attack_friendship_adds_quiet_defense_growth(self):
+        class SafeRng:
+            def randint(self, low, high):
+                return high
+
+            def random(self):
+                return 1.0
+
+            def choice(self, values):
+                return values[0]
+
+        run = make_run()
+        run["support_placements"] = {key: [] for key in boss.GROWTH_KEYS}
+        run["support_placements"]["attack"] = [0]
+        run["supports"][0].update(
+            name="루우데 10%",
+            specialty="attack",
+            bond=80,
+            level=0,
+            upgrade=0,
+            event_stage=3,
+        )
+        before_defense = run["defense"]
+
+        result = boss.perform_training_action(run, "attack", SafeRng())
+
+        self.assertEqual(result["gains"]["defense"], 2)
+        self.assertEqual(run["defense"], before_defense + 2)
+        self.assertFalse(
+            any(
+                "루우데" in line and "방어" in line
+                for line in result["logs"]
+            )
+        )
+
+    def test_kaian_friendship_accelerates_tactics_facility(self):
+        class SafeRng:
+            def randint(self, low, high):
+                return high
+
+            def random(self):
+                return 1.0
+
+            def choice(self, values):
+                return values[0]
+
+        run = make_run()
+        run["support_placements"] = {key: [] for key in boss.GROWTH_KEYS}
+        run["support_placements"]["tactics"] = [0]
+        run["supports"][0].update(
+            name="카이안",
+            specialty="tactics",
+            bond=80,
+            level=0,
+            upgrade=0,
+            event_stage=3,
+        )
+
+        boss.perform_training_action(run, "tactics", SafeRng())
+
+        self.assertEqual(run["facility_successes"]["tactics"], 2)
+
+    def test_tactics_friendship_recovers_five_energy_per_support(self):
+        class SafeRng:
+            def randint(self, low, high):
+                return high
+
+            def random(self):
+                return 1.0
+
+            def choice(self, values):
+                return values[0]
+
+        run = make_run()
+        run["energy"] = 40
+        run["support_placements"] = {key: [] for key in boss.GROWTH_KEYS}
+        run["support_placements"]["tactics"] = [0, 1]
+        for index in (0, 1):
+            run["supports"][index].update(
+                name=f"일반 전술 서포트 {index}",
+                specialty="tactics",
+                bond=80,
+                level=0,
+                upgrade=0,
+                event_stage=3,
+            )
+
+        result = boss.perform_training_action(run, "tactics", SafeRng())
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["friendship_supports"], [
+            "일반 전술 서포트 0",
+            "일반 전술 서포트 1",
+        ])
+        self.assertEqual(run["energy"], 55)
+
+    def test_failed_tactics_friendship_only_keeps_base_recovery(self):
+        class FailRng:
+            def randint(self, low, high):
+                return low
+
+            def random(self):
+                return 1.0
+
+            def choice(self, values):
+                return values[0]
+
+        run = make_run()
+        run["energy"] = 0
+        run["support_placements"] = {key: [] for key in boss.GROWTH_KEYS}
+        run["support_placements"]["tactics"] = [0]
+        run["supports"][0].update(
+            specialty="tactics",
+            bond=80,
+            event_stage=3,
+        )
+
+        result = boss.perform_training_action(run, "tactics", FailRng())
+
+        self.assertFalse(result["success"])
+        self.assertEqual(run["energy"], 5)
+
+    def test_every_current_support_has_a_personality_description(self):
+        self.assertTrue(boss.SUPPORT_PERSONALITIES)
+        for name in boss.support_character_names():
+            with self.subTest(name=name):
+                self.assertNotEqual(
+                    boss.support_personality_text(name),
+                    "고유 육성 보너스 없음",
+                )
+
     def test_all_supports_grant_base_hints_on_stage_three(self):
         class EventRng:
             def randint(self, low, high):

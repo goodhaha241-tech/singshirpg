@@ -39,6 +39,7 @@ START_HOPE = 2
 MAX_TURNS = 70
 MAX_SUPPORT_UPGRADE = 4
 SUPPORT_UPGRADE_COSTS = (1, 2, 3, 4)
+TACTICS_FRIENDSHIP_ENERGY_PER_SUPPORT = 5
 GROWTH_KEYS = ("hp", "attack", "defense", "mental", "tactics")
 GROWTH_LABELS = {
     "hp": "HP",
@@ -80,7 +81,7 @@ EVALUATION_TURNS = {
     28: ("Silver", 70, 2_900),
     42: ("Gold", 100, 3_500),
     56: ("Platinum", 140, 4_100),
-    70: ("Diamond", 200, 8_750),
+    70: ("Diamond", 200, 8_900),
 }
 
 SPECIAL_SUPPORTS = {
@@ -91,6 +92,65 @@ SPECIAL_SUPPORTS = {
     "샤일라": ("shayla_light", 400, "강한 빛"),
     "센쇼": ("sensho_star", 450, "별똥별의 가호"),
     "영설": ("yeongseol_severe_cold", 550, "혹한"),
+}
+
+# These bonuses are intentionally folded into the normal training result.
+# They do not create separate training-log entries.
+SUPPORT_PERSONALITIES = {
+    "어즈렉": {
+        "description": "방어 우정 훈련 시 HP 기본 성장 +180",
+        "action": "defense",
+        "gains": {"hp": 180},
+    },
+    "루우데": {
+        "description": "공격 우정 훈련 시 방어 기본 성장 +2",
+        "action": "attack",
+        "gains": {"defense": 2},
+    },
+    "영산": {
+        "description": "HP 우정 훈련 시 SP 기본 성장 +12",
+        "action": "hp",
+        "gains": {"sp": 12},
+    },
+    "카이안": {
+        "description": "전술 우정 훈련 시 시설 숙련도 +1회",
+        "action": "tactics",
+        "facility_successes": 1,
+    },
+    "샤일라": {
+        "description": "전술 우정 훈련 시 공격 기본 성장 +2",
+        "action": "tactics",
+        "gains": {"attack": 2},
+    },
+    "센쇼": {
+        "description": "공격 우정 훈련 성공 시 체력 +8",
+        "action": "attack",
+        "energy": 8,
+    },
+    "영설": {
+        "description": "함께 훈련하면 SP 획득량 +25% (2명까지)",
+        "placed_sp_multiplier": 0.25,
+    },
+    "로버드": {
+        "description": "공격 우정 훈련 시 정신 기본 성장 +110",
+        "action": "attack",
+        "gains": {"mental": 110},
+    },
+    "셰리안": {
+        "description": "공격 우정 훈련 시 HP 기본 성장 +180",
+        "action": "attack",
+        "gains": {"hp": 180},
+    },
+    "루트렌 뉴마": {
+        "description": "정신 우정 훈련 시 SP 기본 성장 +15",
+        "action": "mental",
+        "gains": {"sp": 15},
+    },
+    "미카엘": {
+        "description": "공격 우정 훈련 시 방어 기본 성장 +2",
+        "action": "attack",
+        "gains": {"defense": 2},
+    },
 }
 
 GENERAL_PASSIVES = {
@@ -505,6 +565,27 @@ def _support_identity(name: str) -> str | None:
     return None
 
 
+def _support_personality(name: str) -> dict[str, Any]:
+    """Return the canonical quiet training passive for a support name."""
+    normalized = str(name)
+    key = next(
+        (
+            personality_name
+            for personality_name in sorted(
+                SUPPORT_PERSONALITIES, key=len, reverse=True
+            )
+            if personality_name in normalized
+        ),
+        None,
+    )
+    return SUPPORT_PERSONALITIES.get(key, {})
+
+
+def support_personality_text(name: str) -> str:
+    personality = _support_personality(name)
+    return str(personality.get("description", "고유 육성 보너스 없음"))
+
+
 def _support_specialty(character: dict[str, Any]) -> str:
     if "영설" in str(character.get("name", "")):
         return "attack"
@@ -905,27 +986,75 @@ def perform_training_action(
         else:
             placed = list(run.get("support_placements", {}).get(action, []))
             support_bonus = 0.0
-            yeongseol_count = 0
+            personality_sp_bonus = 0.0
             friendship_supports = []
+            personality_gains: dict[str, int] = {}
+            personality_energy = 0
+            personality_facility_successes = 0
+            personality_counts: dict[str, int] = {}
             for index in placed:
                 support = run["supports"][index]
                 bond = int(support.get("bond", 0))
                 support_bonus += min(0.10, int(support.get("level", 0)) * 0.002)
                 support_bonus += int(support.get("upgrade", 0)) * 0.05
-                if bond >= 80 and support.get("specialty") == action:
+                friendship = bond >= 80 and support.get("specialty") == action
+                if friendship:
                     support_bonus += 0.20
                     friendship_supports.append(str(support.get("name", "서포트")))
                 support["bond"] = min(100, bond + 7)
-                if _support_identity(str(support.get("name", ""))) == "영설":
-                    yeongseol_count += 1
-            yeongseol_sp_bonus = min(0.50, yeongseol_count * 0.25)
+                support_name = str(support.get("name", ""))
+                personality = _support_personality(support_name)
+                if personality.get("placed_sp_multiplier"):
+                    personality_sp_bonus += float(
+                        personality["placed_sp_multiplier"]
+                    )
+                personality_key = next(
+                    (
+                        key
+                        for key in sorted(
+                            SUPPORT_PERSONALITIES, key=len, reverse=True
+                        )
+                        if key in support_name
+                    ),
+                    support_name,
+                )
+                if (
+                    friendship
+                    and personality.get("action") == action
+                    and personality_counts.get(personality_key, 0) < 2
+                ):
+                    personality_counts[personality_key] = (
+                        personality_counts.get(personality_key, 0) + 1
+                    )
+                    for key, value in personality.get("gains", {}).items():
+                        personality_gains[key] = (
+                            int(personality_gains.get(key, 0)) + int(value)
+                        )
+                    personality_energy += int(personality.get("energy", 0))
+                    personality_facility_successes += int(
+                        personality.get("facility_successes", 0)
+                    )
+            personality_sp_bonus = min(0.50, personality_sp_bonus)
+            tactics_friendship_energy = (
+                len(friendship_supports) * TACTICS_FRIENDSHIP_ENERGY_PER_SUPPORT
+                if action == "tactics"
+                else 0
+            )
+            training_gains = dict(spec["gains"])
+            for key, value in personality_gains.items():
+                training_gains[key] = int(training_gains.get(key, 0)) + int(value)
             applied = _apply_growth(
                 run,
                 action,
-                spec["gains"],
+                training_gains,
                 support_bonus,
-                sp_support_bonus=yeongseol_sp_bonus,
+                sp_support_bonus=personality_sp_bonus,
             )
+            recovered_energy = personality_energy + tactics_friendship_energy
+            if recovered_energy:
+                run["energy"] = min(
+                    100, int(run["energy"]) + recovered_energy
+                )
             result["gains"] = applied
             gain_labels = {
                 "hp": "HP",
@@ -940,7 +1069,11 @@ def perform_training_action(
                     for key, value in applied.items()
                 )
             )
-            run["facility_successes"][action] = int(run["facility_successes"].get(action, 0)) + 1
+            run["facility_successes"][action] = (
+                int(run["facility_successes"].get(action, 0))
+                + 1
+                + personality_facility_successes
+            )
             scenario = SCENARIOS.get(run.get("scenario_id", "normal"), SCENARIOS["normal"])
             run["facility_levels"][action] = min(
                 int(scenario["facility_cap"]),
@@ -952,11 +1085,6 @@ def perform_training_action(
                 result["logs"].append(
                     f"💞 우정 트레이닝: {', '.join(friendship_supports)} · 성장 +20%"
                 )
-            if yeongseol_count:
-                result["logs"].append(
-                    f"🌨️ 영설 서포트 {yeongseol_count}명 · 훈련 SP +{int(yeongseol_sp_bonus * 100)}%"
-                )
-
             # Only the borrowed public support can drop an equipped-card hint
             # outside its event chain.
             for index in placed:
@@ -3156,14 +3284,16 @@ class BossSetupView(_OwnerView):
             cards = ", ".join(character.get("equipped_cards", []) or ["없음"])
             own_lines.append(
                 f"• **{character.get('name', '이름 없음')}** · "
-                f"주력 {GROWTH_LABELS[_support_specialty(character)]} · 장착 {cards}"
+                f"주력 {GROWTH_LABELS[_support_specialty(character)]} · 장착 {cards}\n"
+                f"  ↳ 개성: {support_personality_text(character.get('name', ''))}"
             )
         if self.guild_index is not None:
             support = self.guild_supports[self.guild_index]
             cards = ", ".join(support.get("equipped_cards", []) or ["없음"])
             borrowed = (
                 f"• **{support['name']}** (+{support['upgrade']}강) · "
-                f"주력 {GROWTH_LABELS.get(support['specialty'], support['specialty'])} · 장착 {cards}"
+                f"주력 {GROWTH_LABELS.get(support['specialty'], support['specialty'])} · 장착 {cards}\n"
+                f"  ↳ 개성: {support_personality_text(support['name'])}"
             )
         else:
             borrowed = "• 미선택"
@@ -3656,7 +3786,10 @@ class BossTrainingRunView(_OwnerView):
             inline=False,
         )
         support_embed.set_footer(
-            text="✨💞 표시는 해당 주력 분야에서 우정 트레이닝이 가능한 서포트입니다."
+            text=(
+                "✨💞 표시는 해당 주력 분야에서 우정 트레이닝이 가능한 서포트입니다. "
+                "전술 우정은 참가 서포트 1명마다 체력 +5."
+            )
         )
 
         history_lines = []
@@ -5016,6 +5149,12 @@ class BossSupportView(_OwnerView):
             color=discord.Color.teal(),
         )
         embed.add_field(name="조각·강화", value="\n".join(lines) or "아직 획득한 조각이 없습니다.", inline=False)
+        if self.selected_name:
+            embed.add_field(
+                name=f"{self.selected_name}의 서포트 개성",
+                value=support_personality_text(self.selected_name),
+                inline=False,
+            )
         embed.add_field(
             name="길드 공개 서포트",
             value=(public.get("name") if isinstance(public, dict) else "미등록"),
