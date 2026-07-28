@@ -575,10 +575,28 @@ def consume_guardian_defense_bonus(source, dice_type):
     return result
 
 
-def status_amount_after_resistance(source, amount):
+def status_amount_after_resistance(source, amount, status_key=None):
     amount = max(0, int(amount or 0))
     if amount <= 0:
         return 0
+    status_key = str(status_key or "").lower()
+    immunity = (
+        source.get("status_immunity")
+        if isinstance(source, dict)
+        else getattr(source, "status_immunity", None)
+    )
+    if status_key and immunity == status_key:
+        return 0
+    resistances = (
+        source.get("status_resistances", {})
+        if isinstance(source, dict)
+        else getattr(source, "status_resistances", {})
+    )
+    if status_key and isinstance(resistances, dict):
+        boss_resistance = max(0, min(75, int(resistances.get(status_key, 0) or 0)))
+        amount = math.ceil(amount * (100 - boss_resistance) / 100)
+        if amount <= 0:
+            return 0
     value = min(75, gem_effect_total_category(source, "정화의 젬", "combat_common"))
     reduced = math.ceil(amount * (100 - value) / 100)
     if gem_max_star_category(source, "정화의 젬", "combat_common") >= 3:

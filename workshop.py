@@ -567,7 +567,7 @@ class ImprintView(discord.ui.View):
                 "rank": 3,
                 "stats": {"attack": 5, "defense": 5},
                 "special": "kaian_time",
-                "description": "[각인] 시간술식으로 인한 시간가속 강화"
+                "description": "[각인] 시간가속 7스택 누적, 스택당 주사위 위력 25% 증가. 만충 시 최대 HP/정신력 10% 회복 후 적 최대 HP의 15% 피해"
             }
         elif "샤일라" in char_data["name"]:
             imprint_art = {

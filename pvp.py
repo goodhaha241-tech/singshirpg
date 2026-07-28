@@ -235,8 +235,8 @@ class PVPBattleView(discord.ui.View):
         
         self.p1_revived = False
         self.p2_revived = False
-        self.p1_next_bonus = 0
-        self.p2_next_bonus = 0
+        self.p1_next_accel_stacks = 0
+        self.p2_next_accel_stacks = 0
         self.p1_damage_last = 0
         self.p2_damage_last = 0
         
@@ -664,10 +664,14 @@ class PVPBattleView(discord.ui.View):
     async def resolve_turn(self, interaction):
         log = f"### ⚔️ 제 {self.turn_count}턴 결과\n"
         
-        bonus1 = self.p1_next_bonus; self.p1_next_bonus = 0
-        bonus2 = self.p2_next_bonus; self.p2_next_bonus = 0
-        if bonus1 > 0: log += f"✨ P1 시간가속(+{bonus1})\n"
-        if bonus2 > 0: log += f"✨ P2 시간가속(+{bonus2})\n"
+        accel_stacks1 = self.p1_next_accel_stacks; self.p1_next_accel_stacks = 0
+        accel_stacks2 = self.p2_next_accel_stacks; self.p2_next_accel_stacks = 0
+        if accel_stacks1 > 0:
+            multiplier = battle_engine.time_accel_multiplier(accel_stacks1)
+            log += f"✨ P1 시간가속 {accel_stacks1}스택(×{multiplier:.2f})\n"
+        if accel_stacks2 > 0:
+            multiplier = battle_engine.time_accel_multiplier(accel_stacks2)
+            log += f"✨ P2 시간가속 {accel_stacks2}스택(×{multiplier:.2f})\n"
 
         gem_log1 = process_gem_turn_start(
             self.p1_char,
@@ -705,9 +709,7 @@ class PVPBattleView(discord.ui.View):
                 damage_taken=self.p1_damage_last, character=self.p1_char, user_data=self.p1_data
             )
             p1_res = battle_engine.apply_stat_scaling(p1_res, self.p1_char)
-            if bonus1 > 0:
-                for d in p1_res: 
-                    if d["type"] != "none": d["value"] += bonus1
+            battle_engine.apply_time_accel_power(p1_res, accel_stacks1)
 
         p2_res = []
         if self.p2_card is None:
@@ -724,9 +726,7 @@ class PVPBattleView(discord.ui.View):
                 damage_taken=self.p2_damage_last, character=self.p2_char, user_data=self.p2_data
             )
             p2_res = battle_engine.apply_stat_scaling(p2_res, self.p2_char)
-            if bonus2 > 0:
-                for d in p2_res:
-                    if d["type"] != "none": d["value"] += bonus2
+            battle_engine.apply_time_accel_power(p2_res, accel_stacks2)
 
         c1_name = self.p1_card.name if self.p1_card else "행동 불가"
         c2_name = self.p2_card.name if self.p2_card else "행동 불가"
@@ -795,15 +795,13 @@ class PVPBattleView(discord.ui.View):
         )
         
         # [시간가속] 적립된 보너스 적용
-        b1 = self.p1_char.runtime_cooldowns.get("time_accel_bonus", 0)
+        b1 = self.p1_char.runtime_cooldowns.pop("time_accel_next_stacks", 0)
         if b1 > 0:
-            self.p1_next_bonus += b1
-            self.p1_char.runtime_cooldowns["time_accel_bonus"] = 0
+            self.p1_next_accel_stacks += b1
             
-        b2 = self.p2_char.runtime_cooldowns.get("time_accel_bonus", 0)
+        b2 = self.p2_char.runtime_cooldowns.pop("time_accel_next_stacks", 0)
         if b2 > 0:
-            self.p2_next_bonus += b2
-            self.p2_char.runtime_cooldowns["time_accel_bonus"] = 0
+            self.p2_next_accel_stacks += b2
         
         log += clash_log
         self.p1_damage_last = dmg1

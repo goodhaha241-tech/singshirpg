@@ -187,6 +187,46 @@ async def check_schema(pool):
                 INDEX idx_user_revision (user_id, revision),
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )""")
+            await create_table_if_missing("user_bosses", """CREATE TABLE user_bosses (
+                boss_id CHAR(32) PRIMARY KEY,
+                owner_id VARCHAR(50) NOT NULL,
+                guild_id INT,
+                boss_name VARCHAR(80) NOT NULL,
+                grade VARCHAR(4) NOT NULL,
+                power_score INT NOT NULL,
+                boss_data JSON NOT NULL,
+                is_published TINYINT(1) NOT NULL DEFAULT 0,
+                publish_scope VARCHAR(10) NOT NULL DEFAULT 'guild',
+                active_battles INT NOT NULL DEFAULT 0,
+                weekly_key VARCHAR(10),
+                weekly_elo INT NOT NULL DEFAULT 1500,
+                all_time_best_elo INT NOT NULL DEFAULT 1500,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_user_boss_owner (owner_id, created_at),
+                INDEX idx_user_boss_publish (is_published, publish_scope, weekly_elo),
+                INDEX idx_user_boss_power (power_score),
+                FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )""")
+            await create_table_if_missing("user_boss_battles", """CREATE TABLE user_boss_battles (
+                battle_id CHAR(32) PRIMARY KEY,
+                boss_id CHAR(32) NOT NULL,
+                challenger_id VARCHAR(50) NOT NULL,
+                result VARCHAR(12) NOT NULL,
+                weekly_key VARCHAR(10) NOT NULL,
+                elo_before INT NOT NULL,
+                elo_after INT NOT NULL,
+                owner_rewarded TINYINT(1) NOT NULL DEFAULT 0,
+                battle_data JSON,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_user_boss_battle_boss (boss_id, created_at),
+                INDEX idx_user_boss_battle_week (weekly_key, elo_after),
+                FOREIGN KEY (boss_id) REFERENCES user_bosses(boss_id) ON DELETE CASCADE
+            )""")
+            # Discord views do not survive a process restart; no user-boss
+            # battle can still be active when schema initialization runs.
+            await cur.execute("UPDATE user_bosses SET active_battles=0 WHERE active_battles<>0")
             try:
                 await cur.execute("DESCRIBE workshop_slots")
                 workshop_cols = [r[0] for r in await cur.fetchall()]

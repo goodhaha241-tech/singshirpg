@@ -29,8 +29,74 @@ from gem_effects import (
     turn_first_dice_bonus,
 )
 
+TIME_ACCEL_POWER_PER_STACK = 0.25
+KAIAN_TIME_MAX_STACKS = 7
+KAIAN_TIME_HP_HEAL_RATIO = 0.10
+KAIAN_TIME_MENTAL_HEAL_RATIO = 0.10
+KAIAN_TIME_DAMAGE_RATIO = 0.15
+
+
 def get_emoji(action_type):
     return {"attack": "⚔️", "defense": "🛡️", "counter": "⚡", "heal": "💚", "mental_heal": "🔮", "none": "💨"}.get(action_type, "🎲")
+
+
+def time_accel_multiplier(stacks):
+    """시간가속 스택에 따른 주사위 위력 배율을 반환합니다."""
+    return 1.0 + (max(0, int(stacks)) * TIME_ACCEL_POWER_PER_STACK)
+
+
+def apply_time_accel_power(dice_results, stacks):
+    """모든 유효 주사위에 시간가속 배율을 적용합니다."""
+    stacks = max(0, int(stacks))
+    if stacks <= 0:
+        return dice_results
+
+    multiplier = time_accel_multiplier(stacks)
+    for dice in dice_results:
+        if dice.get("type") == "none":
+            continue
+        value = max(0, dice.get("value", 0))
+        dice["value"] = int((value * multiplier) + 0.5)
+    return dice_results
+
+
+def gain_time_acceleration(actor, target, effects, turn_count):
+    """합 승리 시 시간가속을 적립하고, 각인 만충 효과를 처리합니다."""
+    runtime = runtime_cooldowns(actor)
+    last_turn = runtime.get("time_accel_last_turn", -1)
+    if last_turn >= turn_count:
+        return ""
+    runtime["time_accel_last_turn"] = turn_count
+
+    if "kaian_time" not in effects:
+        runtime["time_accel_next_stacks"] = 1
+        return " ⌛가속(다음 턴 ×1.25)"
+
+    stack = min(KAIAN_TIME_MAX_STACKS, runtime.get("kaian_stack", 0) + 1)
+    if stack < KAIAN_TIME_MAX_STACKS:
+        runtime["kaian_stack"] = stack
+        multiplier = time_accel_multiplier(stack)
+        return f" ⌛가속({stack}/{KAIAN_TIME_MAX_STACKS}, ×{multiplier:.2f})"
+
+    runtime["kaian_stack"] = 0
+
+    hp_before = actor.current_hp
+    mental_before = actor.current_mental
+    hp_heal = max(1, int(actor.max_hp * KAIAN_TIME_HP_HEAL_RATIO))
+    mental_heal = max(1, int(actor.max_mental * KAIAN_TIME_MENTAL_HEAL_RATIO))
+    actor.current_hp = min(actor.max_hp, actor.current_hp + hp_heal)
+    actor.current_mental = min(actor.max_mental, actor.current_mental + mental_heal)
+    hp_restored = actor.current_hp - hp_before
+    mental_restored = actor.current_mental - mental_before
+
+    damage = max(1, int(target.max_hp * KAIAN_TIME_DAMAGE_RATIO))
+    target.current_hp = max(0, target.current_hp - damage)
+    return (
+        f"\n⌛ **[시간붕괴]** 시간가속이 가득 찼습니다! "
+        f"HP +{hp_restored}, 정신력 +{mental_restored}, "
+        f"**{target.name}**에게 최대 체력 비례 피해 {damage}!"
+    )
+
 
 def apply_stat_scaling(dice_results, char):
     """캐릭터 스탯에 따라 주사위 값을 보정합니다."""
@@ -91,9 +157,12 @@ def process_turn_start_artifacts(char, target, my_res, opp_res, turn_count, shay
     if "kaian_time" in effects:
         stack = char.runtime_cooldowns.get("kaian_stack", 0)
         if stack > 0:
-            for d in my_res:
-                if d["type"] != "none": d["value"] += stack
-            log += f"⌛ **[{char.name}:시간]** 가속! (+{stack})\n"
+            apply_time_accel_power(my_res, stack)
+            multiplier = time_accel_multiplier(stack)
+            log += (
+                f"⌛ **[{char.name}:시간]** 가속 "
+                f"{stack}/{KAIAN_TIME_MAX_STACKS}! (주사위 ×{multiplier:.2f})\n"
+            )
 
     # 3. [영산: 황금]
     if "youngsan_gold" in effects:
@@ -205,7 +274,16 @@ def apply_dice_effect(dice, attacker, defender, is_win, is_self=False):
     val = 0
     if len(parts) > 1 and parts[1].isdigit():
         val = int(parts[1])
-    val = status_amount_after_resistance(target, val)
+    status_key = next(
+        (key for key in ("paralysis", "bleed", "stun") if key in parts),
+        None,
+    )
+    if (
+        status_key
+        and "status_extend" in set(getattr(attacker, "general_passives", set()) or set())
+    ):
+        val += 1
+    val = status_amount_after_resistance(target, val, status_key)
 
     # 효과 적용
     if "paralysis" in parts and "dmg" not in parts and "atk" not in parts:
@@ -472,6 +550,14 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         # --- [최적화] 효과 적용 (apply_dice_effect 사용) ---
         clash_log += apply_dice_effect(d1, char1, char2, val_win1)
         clash_log += apply_dice_effect(d2, char2, char1, val_win2)
+        for extra_effect in d1.get("extra_effects", []):
+            clash_log += apply_dice_effect(
+                {"effect": extra_effect}, char1, char2, val_win1
+            )
+        for extra_effect in d2.get("extra_effects", []):
+            clash_log += apply_dice_effect(
+                {"effect": extra_effect}, char2, char1, val_win2
+            )
         
         if "self" in (d1.get("effect") or ""): clash_log += apply_dice_effect(d1, char1, char2, val_win1, is_self=True)
         if "self" in (d2.get("effect") or ""): clash_log += apply_dice_effect(d2, char2, char1, val_win2, is_self=True)
@@ -563,6 +649,10 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if state2.get("guardian_turn") != turn_count:
             state2["guardian_turn"] = turn_count
             state2["guardian_turn_used"] = False
+        if hasattr(char1, "modify_incoming_damage"):
+            dmg1 = char1.modify_incoming_damage(dmg1)
+        if hasattr(char2, "modify_incoming_damage"):
+            dmg2 = char2.modify_incoming_damage(dmg2)
         dmg1 = reduce_turn_first_damage(char1, dmg1, state1)
         dmg2 = reduce_turn_first_damage(char2, dmg2, state2)
         mental_dmg1 = reduce_guardian_mental_damage(char1, mental_dmg1, state1)
@@ -587,52 +677,48 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
             refl = reflection_damage(art2, char2, (dmg2 * 3) // 4)
             if refl > 0: char1.current_hp = max(0, char1.current_hp - refl); clash_log += f" 💢반사(-{refl})"
 
-        if val_win1 and d1.get("effect") == "absorb_hp":
-            char1.current_hp = min(char1.max_hp, char1.current_hp + dmg2); clash_log += " 🧛흡혈"
-        if val_win2 and d2.get("effect") == "absorb_hp":
-            char2.current_hp = min(char2.max_hp, char2.current_hp + dmg1); clash_log += " 🧛흡혈"
+        absorb1 = next(
+            (effect for effect in [d1.get("effect"), *d1.get("extra_effects", [])]
+             if (effect or "").startswith("absorb_hp")),
+            None,
+        )
+        absorb2 = next(
+            (effect for effect in [d2.get("effect"), *d2.get("extra_effects", [])]
+             if (effect or "").startswith("absorb_hp")),
+            None,
+        )
+        if val_win1 and absorb1:
+            ratio = 0.25 if absorb1 == "absorb_hp_25" else 1.0
+            healed = max(0, int(dmg2 * ratio))
+            char1.current_hp = min(char1.max_hp, char1.current_hp + healed)
+            clash_log += f" 🧛흡혈(+{healed})"
+        if val_win2 and absorb2:
+            ratio = 0.25 if absorb2 == "absorb_hp_25" else 1.0
+            healed = max(0, int(dmg1 * ratio))
+            char2.current_hp = min(char2.max_hp, char2.current_hp + healed)
+            clash_log += f" 🧛흡혈(+{healed})"
 
         # [시간가속] (합 승리 시)
         if d1.get("effect") == "time_accel" and val_win1:
-            last = char1.runtime_cooldowns.get("time_accel_last_turn", -1)
-            if last < turn_count:
-                if "kaian_time" in effs1:
-                    stack = char1.runtime_cooldowns.get("kaian_stack", 0) + 6
-                    char1.runtime_cooldowns["kaian_stack"] = stack
-                    clash_log += f" ⌛(🔺{stack})"
-                    if stack >= 42: # 시간붕괴
-                        char1.runtime_cooldowns["kaian_stack"] = 0
-                        dmg_val = char1.attack * 2
-                        char2.current_hp = max(0, char2.current_hp - dmg_val)
-                        clash_log += f"\n⌛ **[시간붕괴]** 시간술식 3장: 시간은 비명을 지를 수 없으니, 시간을 대신해 비명을 지르라. (-{dmg_val})"
-                else:
-                    char1.runtime_cooldowns["time_accel_bonus"] = char1.runtime_cooldowns.get("time_accel_bonus", 0) + 6
-                    clash_log += " ⌛가속(+6)"
-                char1.runtime_cooldowns["time_accel_last_turn"] = turn_count
+            clash_log += gain_time_acceleration(char1, char2, effs1, turn_count)
 
         if d2.get("effect") == "time_accel" and val_win2:
-            last = char2.runtime_cooldowns.get("time_accel_last_turn", -1)
-            if last < turn_count:
-                if "kaian_time" in effs2:
-                    stack = char2.runtime_cooldowns.get("kaian_stack", 0) + 6
-                    char2.runtime_cooldowns["kaian_stack"] = stack
-                    clash_log += f" ⌛(🔺{stack})"
-                    if stack >= 42: # 시간붕괴
-                        char2.runtime_cooldowns["kaian_stack"] = 0
-                        dmg_val = char2.attack * 2
-                        char1.current_hp = max(0, char1.current_hp - dmg_val)
-                        clash_log += f"\n⌛ **[시간붕괴]** 시간술식 3장: 시간은 비명을 지를 수 없으니, 시간을 대신해 비명을 지르라. (-{dmg_val})"
-                else:
-                    char2.runtime_cooldowns["time_accel_bonus"] = char2.runtime_cooldowns.get("time_accel_bonus", 0) + 6
-                    clash_log += " ⌛가속(+6)"
-                char2.runtime_cooldowns["time_accel_last_turn"] = turn_count
+            clash_log += gain_time_acceleration(char2, char1, effs2, turn_count)
 
         # 파괴 (루우데 각인 연동)
-        if val_win1 and d1.get("effect") == "destroy_next_on_hit" and i + 1 < len(res2):
+        if (
+            val_win1
+            and "destroy_next_on_hit" in [d1.get("effect"), *d1.get("extra_effects", [])]
+            and i + 1 < len(res2)
+        ):
             res2[i+1] = {"type": "none", "value": 0}; clash_log += " 💥파괴!"
             if "luude_imprint" in effs1: clash_log = apply_luude_logic(char1, char2, clash_log)
         
-        if val_win2 and d2.get("effect") == "destroy_next_on_hit" and i + 1 < len(res1):
+        if (
+            val_win2
+            and "destroy_next_on_hit" in [d2.get("effect"), *d2.get("extra_effects", [])]
+            and i + 1 < len(res1)
+        ):
             res1[i+1] = {"type": "none", "value": 0}; clash_log += " 💥파괴!"
             if "luude_imprint" in effs2: clash_log = apply_luude_logic(char2, char1, clash_log)
 

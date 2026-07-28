@@ -6,7 +6,7 @@ EFFECT_DESCRIPTIONS = {
     "destroy_next_on_hit": "적중 시 다음 상대 주사위 파괴",
     "lock_others": "이후 상대 주사위를 잠금",
     "absorb_hp": "준 피해 일부를 체력으로 흡수",
-    "time_accel": "시간 가속 효과 발동",
+    "time_accel": "합 승리 시 다음 턴 주사위 위력 25% 증가",
     "morning_glory": "특수 조건에서 위력 강화",
     "self_major": "자신에게 메이저 부여: 주는 피해와 받는 피해 25% 증가",
     "self_minor": "자신에게 마이너 부여: 주는 피해와 받는 피해 25% 감소",
@@ -90,7 +90,7 @@ class SkillCard:
             if effect_desc and effect_desc not in effect_lines:
                 effect_lines.append(effect_desc)
         desc = " ➔ ".join(desc_parts)
-        if self.is_aoe: desc = "📢 [광역] " + desc
+        if getattr(self, "is_aoe", False): desc = "📢 [광역] " + desc
         if effect_lines:
             desc += "\n" + "\n".join(f"• {line}" for line in effect_lines)
         return desc
@@ -217,42 +217,42 @@ class LuudeCard(SkillCard):
 
 class KaianCard(SkillCard):
     def __init__(self, name):
-        self.name = name
         if name == "시간술식:기본형":
-            self.dice_list = [
+            dice_list = [
                 Dice("defense", 10, 17),
                 Dice("counter", 10, 13, effect="time_accel"),
                 Dice("defense", 7, 13)
             ]
         elif name == "시간술식:1장":
-            self.dice_list = [
+            dice_list = [
                 Dice("heal", 20, 30),
                 Dice("heal", 20, 30),
                 Dice("counter", 7, 10, effect="time_accel")
             ]
         elif name == "시간술식:1장 응용":
-            self.dice_list = [
+            dice_list = [
                 Dice("counter", 7, 10, effect="time_accel"),
                 Dice("counter", 7, 10, effect="time_accel"),
                 Dice("heal", 20, 30)
             ]
         else:
-            self.dice_list = []
+            dice_list = []
+        super().__init__(name, dice_list)
 
     @property
     def description(self):
         base_desc = super().description
         if "시간술식" in self.name:
-            base_desc += "\n⌛ [특수] 합 승리 시 다음 턴 모든값 +6"
+            base_desc += "\n⌛ [특수] 합 승리 시 다음 턴 모든 주사위 위력 ×1.25"
         return base_desc
 
 class SenshoCard(SkillCard):
     def __init__(self, name):
-        self.name = name
         if name == "파멸의 소원":
-            self.dice_list = [Dice("attack", 10, 17), Dice("attack", 10, 13)]
+            dice_list = [Dice("attack", 10, 17), Dice("attack", 10, 13)]
         else:
-            self.dice_list = []
+            dice_list = []
+        super().__init__(name, dice_list)
 
     @property
     def description(self):

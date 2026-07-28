@@ -40,8 +40,9 @@ RAW_STONE_ITEM = "원석"
 TOOL_TOKEN_ITEM = "도구 증표"
 TOOL_TOKEN_PRICE = 50
 
-TOOL_GACHA_STONE_WEIGHT = 65
+TOOL_GACHA_STONE_WEIGHT = 60
 TOOL_GACHA_TOOL_WEIGHT = 35
+TOOL_GACHA_SUPPORT_WEIGHT = 5
 APPRAISAL_TURNS = 30
 CRAFT_TURNS = 20
 MAX_TOOL_BREAKTHROUGH = 3
@@ -534,16 +535,26 @@ def draw_crafting_tool(
 
 
 def draw_tool_gacha_result(user_data: dict[str, Any]) -> dict[str, Any]:
-    """Draw either a raw stone or a reusable crafting tool."""
+    """Draw a raw stone, reusable crafting tool, or character support fragment."""
     result_kind = random.choices(
-        ["stone", "tool"],
-        weights=[TOOL_GACHA_STONE_WEIGHT, TOOL_GACHA_TOOL_WEIGHT],
+        ["stone", "tool", "support_fragment"],
+        weights=[
+            TOOL_GACHA_STONE_WEIGHT,
+            TOOL_GACHA_TOOL_WEIGHT,
+            TOOL_GACHA_SUPPORT_WEIGHT,
+        ],
         k=1,
     )[0]
     if result_kind == "stone":
         inventory = _inventory(user_data)
         inventory[RAW_STONE_ITEM] = int(inventory.get(RAW_STONE_ITEM, 0)) + 1
         return {"kind": "stone", "name": RAW_STONE_ITEM, "count": 1}
+    if result_kind == "support_fragment":
+        # Lazy import avoids coupling the life-system module import graph to
+        # the Discord guild views.
+        from boss_training import add_support_fragment
+
+        return add_support_fragment(user_data)
     return draw_crafting_tool(user_data)
 
 
@@ -558,6 +569,11 @@ def format_tool_result(result: dict[str, Any], index: int | None = None) -> str:
     prefix = f"`{index:02d}` " if index is not None else ""
     if result.get("kind") == "stone":
         return f"{prefix}💎 **원석 ×{int(result.get('count', 1))}**"
+    if result.get("kind") == "support_fragment":
+        return (
+            f"{prefix}🤝 **{result['name']} 서포트 조각 ×1** "
+            f"· 보유 {int(result.get('total', 1))}개 · +{int(result.get('upgrade', 0))}강"
+        )
     name = result["name"]
     rarity = result["rarity"]
     if result["result"] == "new":
@@ -2257,7 +2273,9 @@ class ToolGachaView(_LifeChildView):
                 f"도구 {len(life['tools'])}/{len(TOOL_DEFS)}종 · "
                 f"순수한 희망 {inv.get(PURE_HOPE_ITEM, 0)}개 · "
                 f"도구 증표 {inv.get(TOOL_TOKEN_ITEM, 0)}개\n"
-                f"등장: 원석 {TOOL_GACHA_STONE_WEIGHT}% · 도구 {TOOL_GACHA_TOOL_WEIGHT}%"
+                f"등장: 원석 {TOOL_GACHA_STONE_WEIGHT}% · "
+                f"도구 {TOOL_GACHA_TOOL_WEIGHT}% · "
+                f"서포트 조각 {TOOL_GACHA_SUPPORT_WEIGHT}%"
             ),
             inline=False,
         )

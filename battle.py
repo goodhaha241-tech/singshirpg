@@ -57,7 +57,7 @@ class BattleView(discord.ui.View):
         self.shayla_light_trigger = False
         
         self.damage_taken_last_turn = 0
-        self.next_turn_bonus = 0 
+        self.next_turn_accel_stacks = 0
         self.card_page = 0
         
         # 상태이상 초기화
@@ -331,10 +331,14 @@ class BattleView(discord.ui.View):
             )
 
         # 턴 보너스
-        applied_bonus = self.next_turn_bonus
-        if applied_bonus > 0:
-            self.next_turn_bonus = 0
-            rec_log += f"⏱️ **[시간가속]** 주사위 위력 +{applied_bonus}!\n"
+        applied_accel_stacks = self.next_turn_accel_stacks
+        if applied_accel_stacks > 0:
+            self.next_turn_accel_stacks = 0
+            multiplier = battle_engine.time_accel_multiplier(applied_accel_stacks)
+            rec_log += (
+                f"⏱️ **[시간가속]** {applied_accel_stacks}스택, "
+                f"주사위 위력 ×{multiplier:.2f}!\n"
+            )
 
         # 패닉 회복
         if self.is_panic:
@@ -372,9 +376,7 @@ class BattleView(discord.ui.View):
                 )
 
                 p_res = battle_engine.apply_stat_scaling(p_res, self.player)
-                if applied_bonus > 0:
-                    for d in p_res: 
-                        if d["type"] != "none": d["value"] += applied_bonus
+                battle_engine.apply_time_accel_power(p_res, applied_accel_stacks)
             else:
                 p_res = [{"type": "none", "value": 0}]
             
@@ -438,10 +440,9 @@ class BattleView(discord.ui.View):
         ) # is_stunned2는 battle_engine 내부에서 m_res가 none일 때 자동 처리됨 (혹은 추가 인자로 넘길 수도 있음)
         
         # [시간가속] 적립된 보너스 적용
-        accel_bonus = self.player.runtime_cooldowns.get("time_accel_bonus", 0)
-        if accel_bonus > 0:
-            self.next_turn_bonus += accel_bonus
-            self.player.runtime_cooldowns["time_accel_bonus"] = 0
+        accel_stacks = self.player.runtime_cooldowns.pop("time_accel_next_stacks", 0)
+        if accel_stacks > 0:
+            self.next_turn_accel_stacks += accel_stacks
         
         # [던전 아이템] 피해 무시 (소모성)
         if self.dungeon_item and self.dungeon_item["type"] == "consumable" and self.dungeon_item.get("effect") == "ignore_dmg":
