@@ -28,7 +28,8 @@ PREFIXES = {
         "믿음어린", # (히든/각인) 어즈렉 각인 전용
         "별똥별의", # (히든/각인) 센쇼 각인 전용
         "시간의",   # (히든/각인) 카이안 전용
-        "빛나는"    # (히든/각인) 샤일라 전용
+        "빛나는",   # (히든/각인) 샤일라 전용
+        "혹한의"    # (히든/각인) 영설 전용
     ]
 }
 
@@ -46,7 +47,8 @@ SPECIAL_EFFECTS = {
     "믿음어린": "earthreg_faith", # 어즈렉 각인 전용
     "별똥별의": "Sensho_star", # 센쇼 각인 전용
     "시간의": "kaian_time",     # 카이안 각인 전용
-    "빛나는": "shayla_light"    # 샤일라 각인 전용
+    "빛나는": "shayla_light",   # 샤일라 각인 전용
+    "혹한의": "yeongseol_severe_cold"  # 영설 각인 전용
 }
 
 # ==================================================================================
@@ -127,7 +129,8 @@ def _make_description(stats, special=None):
         "luude_imprint": "👁️ **[악몽]** 주사위 파괴 시 효과 발동 (3회 누적 시 강화 효과)",
         "kaian_time": "⌛ **[시간]** 시간가속이 7스택까지 누적되며, 스택당 주사위 위력 25% 증가. 만충 시 회복 후 적 최대 체력 비례 피해",
         "shayla_light": "✨ **[빛나는]** '밀키워킹' 사용 시 적 주사위 1~3개 파괴 (누적 10회 파괴 시 적 완전 무력화)",
-        "sensho_star": "🌠 **[별똥별]** '별의 은총' 강화 (1/7 확률로 완전회복+피해, 실패 시 방어 2배)"
+        "sensho_star": "🌠 **[별똥별]** '별의 은총' 강화 (1/7 확률로 완전회복+피해, 실패 시 방어 2배)",
+        "yeongseol_severe_cold": "🌨️ **[혹한]** 서리 3스택마다 빙결을 부여하고 빙결 대상 피해의 20%를 흡수"
     }
     
     if special in effect_desc:
@@ -168,7 +171,7 @@ def generate_artifact(rank=None):
     base_name = random.choice(pool)
     prefix = random.choice(PREFIXES[rank])
     # 3성은 황금의(히든) 제외하고 생성
-    if rank == 3 and prefix in ["황금의", "악몽의", "믿음어린", "별똥별의", "시간의", "빛나는"]: prefix = "고조된" 
+    if rank == 3 and prefix in ["황금의", "악몽의", "믿음어린", "별똥별의", "시간의", "빛나는", "혹한의"]: prefix = "고조된"
     
     full_name = f"{'⭐'*rank} {prefix} {base_name}"
 

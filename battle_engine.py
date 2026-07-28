@@ -34,10 +34,196 @@ KAIAN_TIME_MAX_STACKS = 7
 KAIAN_TIME_HP_HEAL_RATIO = 0.10
 KAIAN_TIME_MENTAL_HEAL_RATIO = 0.10
 KAIAN_TIME_DAMAGE_RATIO = 0.15
+FREEZE_STAT_MULTIPLIER = 0.85
+SEVERE_COLD_FROST_THRESHOLD = 3
+SEVERE_COLD_DURATION = 5
+SEVERE_COLD_LIFESTEAL_RATIO = 0.20
 
 
 def get_emoji(action_type):
     return {"attack": "⚔️", "defense": "🛡️", "counter": "⚡", "heal": "💚", "mental_heal": "🔮", "none": "💨"}.get(action_type, "🎲")
+
+
+def ensure_status_effects(entity):
+    """Legacy combatants lazily receive every shared status key."""
+    statuses = getattr(entity, "status_effects", None)
+    if not isinstance(statuses, dict):
+        statuses = {}
+        entity.status_effects = statuses
+    for key in ("bleed", "paralysis", "stun", "freeze"):
+        statuses.setdefault(key, 0)
+    return statuses
+
+
+def status_summary(entity):
+    statuses = ensure_status_effects(entity)
+    parts = []
+    if statuses["bleed"] > 0:
+        parts.append(f"🩸 출혈 {statuses['bleed']}")
+    if statuses["paralysis"] > 0:
+        parts.append(f"⚡ 마비 {statuses['paralysis']}")
+    if statuses["stun"] > 0:
+        parts.append(f"💫 기절 {statuses['stun']}")
+    if statuses["freeze"] > 0:
+        parts.append(
+            f"❄️ 빙결 {statuses['freeze']} · 주사위 1~2개 봉쇄 · 공격/방어 -15%"
+        )
+    frost = int(runtime_cooldowns(entity).get("yeongseol_frost", 0))
+    if frost:
+        parts.append(f"🌨️ 서리 {frost}/{SEVERE_COLD_FROST_THRESHOLD}")
+    return " · ".join(parts)
+
+
+def effective_combat_stat(entity, key):
+    """Return a frozen combat stat with the 15% penalty floored once."""
+    value = int(getattr(entity, key, 0) or 0)
+    if ensure_status_effects(entity).get("freeze", 0) > 0 and key in {"attack", "defense"}:
+        return max(0, int(value * FREEZE_STAT_MULTIPLIER))
+    return value
+
+
+def apply_freeze_status(source, target, turns):
+    """Apply freeze using max-duration refresh semantics and shared resistance."""
+    statuses = ensure_status_effects(target)
+    amount = int(turns)
+    if (
+        source is not None
+        and "status_extend" in set(getattr(source, "general_passives", set()) or set())
+    ):
+        amount += 1
+    amount = status_amount_after_resistance(target, amount, "freeze")
+    if amount <= 0:
+        return 0
+    previous = int(statuses.get("freeze", 0))
+    statuses["freeze"] = max(previous, amount)
+    return max(0, statuses["freeze"] - previous)
+
+
+def apply_freeze_dice_lock(entity, dice_results, turn_count, rng=None):
+    """Lock one or two valid dice once per action; reuse positions for AoE."""
+    statuses = ensure_status_effects(entity)
+    if statuses.get("freeze", 0) <= 0:
+        return ""
+    runtime = runtime_cooldowns(entity)
+    action_key = (int(turn_count), runtime.get("freeze_action_serial", 0))
+    valid = [index for index, die in enumerate(dice_results) if die.get("type") != "none"]
+    if not valid:
+        return ""
+    if runtime.get("freeze_lock_action_key") == action_key:
+        locked = [index for index in runtime.get("freeze_lock_indices", []) if index < len(dice_results)]
+        first = False
+    else:
+        roller = rng or random
+        count = min(len(valid), roller.randint(1, 2))
+        locked = sorted(roller.sample(valid, count))
+        runtime["freeze_lock_action_key"] = action_key
+        runtime["freeze_lock_indices"] = locked
+        first = True
+    for index in locked:
+        if index < len(dice_results) and dice_results[index].get("type") != "none":
+            dice_results[index] = {
+                "type": "none", "value": 0, "effect": None, "frozen": True
+            }
+    if first and locked:
+        positions = ", ".join(str(index + 1) for index in locked)
+        return f"❄️ **[{entity.name}:빙결]** 주사위 {positions}번 봉쇄!\n"
+    return ""
+
+
+def _has_severe_cold(entity, effects=None):
+    effects = set(effects or [])
+    if "yeongseol_severe_cold" in effects:
+        return True
+    for attr in ("equipped_artifact", "equipped_engraved_artifact"):
+        artifact = getattr(entity, attr, None)
+        if isinstance(artifact, dict) and artifact.get("special") == "yeongseol_severe_cold":
+            return True
+    return getattr(entity, "inherited_special", None) == "yeongseol_severe_cold"
+
+
+def process_severe_cold_before_clash(actor, target, dice_results, effects, turn_count):
+    """Prepare per-die frost triggers once, without counting AoE targets twice."""
+    if not _has_severe_cold(actor, effects):
+        return ""
+    runtime = runtime_cooldowns(actor)
+    action_key = (int(turn_count), runtime.get("freeze_action_serial", 0))
+    if runtime.get("severe_cold_action_key") == action_key:
+        return ""
+    attack_indices = [
+        index for index, die in enumerate(dice_results)
+        if die.get("type") == "attack"
+    ]
+    if not attack_indices:
+        return ""
+    stack = int(runtime.get("yeongseol_frost", 0))
+    trigger_indices = []
+    for index in attack_indices:
+        stack += 1
+        if stack >= SEVERE_COLD_FROST_THRESHOLD:
+            trigger_indices.append(index)
+            stack = 0
+    runtime["severe_cold_action_key"] = action_key
+    runtime["severe_cold_trigger_indices"] = trigger_indices
+    runtime["severe_cold_triggered_targets"] = set()
+    runtime["yeongseol_frost"] = stack
+    return (
+        f"🌨️ **[{actor.name}:혹한]** 서리 +{len(attack_indices)} "
+        f"({stack}/{SEVERE_COLD_FROST_THRESHOLD})\n"
+    )
+
+
+def trigger_severe_cold_for_die(actor, target, dice_index, effects, turn_count):
+    """Apply a prepared threshold immediately before its triggering clash."""
+    if not _has_severe_cold(actor, effects):
+        return ""
+    runtime = runtime_cooldowns(actor)
+    action_key = (int(turn_count), runtime.get("freeze_action_serial", 0))
+    if runtime.get("severe_cold_action_key") != action_key:
+        return ""
+    if int(dice_index) not in runtime.get("severe_cold_trigger_indices", []):
+        return ""
+    seen = runtime.setdefault("severe_cold_triggered_targets", set())
+    key = (id(target), int(dice_index))
+    if key in seen:
+        return ""
+    seen.add(key)
+    applied = apply_freeze_status(actor, target, SEVERE_COLD_DURATION)
+    return (
+        f" ❄️혹한 발동: {target.name} 빙결 "
+        f"{ensure_status_effects(target)['freeze']}턴"
+        + ("!" if applied else "(면역/기존 지속시간 유지)")
+    )
+
+
+def apply_severe_cold_lifesteal(actor, target, actual_hp_damage, effects=None):
+    """Heal from post-mitigation HP damage dealt to a frozen opponent."""
+    damage = max(0, int(actual_hp_damage or 0))
+    if (
+        damage <= 0
+        or ensure_status_effects(target).get("freeze", 0) <= 0
+        or not _has_severe_cold(actor, effects)
+    ):
+        return 0
+    before = actor.current_hp
+    actor.current_hp = min(
+        actor.max_hp,
+        actor.current_hp + int(damage * SEVERE_COLD_LIFESTEAL_RATIO),
+    )
+    return actor.current_hp - before
+
+
+def tick_freeze_end_of_turn(entity, turn_count):
+    """Decrease freeze exactly once for a resolved combat turn."""
+    statuses = ensure_status_effects(entity)
+    runtime = runtime_cooldowns(entity)
+    if runtime.get("freeze_tick_turn") == int(turn_count):
+        return 0
+    runtime["freeze_tick_turn"] = int(turn_count)
+    before = int(statuses.get("freeze", 0))
+    if before > 0:
+        statuses["freeze"] = before - 1
+        return 1
+    return 0
 
 
 def time_accel_multiplier(stacks):
@@ -106,14 +292,17 @@ def apply_stat_scaling(dice_results, char):
         bonus = 0
         
         if d_type == "attack":
-            bonus = int(char.attack * 0.5)
+            bonus = int(effective_combat_stat(char, "attack") * 0.5)
         elif d_type == "defense":
             if val > 1: 
-                bonus = int(char.defense * 0.5)
+                bonus = int(effective_combat_stat(char, "defense") * 0.5)
         elif d_type == "counter":
-            bonus = int((char.attack * 0.25) + (char.defense * 0.25))
+            bonus = int(
+                (effective_combat_stat(char, "attack") * 0.25)
+                + (effective_combat_stat(char, "defense") * 0.25)
+            )
         elif d_type in ["heal", "mental_heal"]:
-            bonus = int(char.defense * 0.2)
+            bonus = int(effective_combat_stat(char, "defense") * 0.2)
 
         dice["value"] = val + bonus
     return dice_results
@@ -189,6 +378,10 @@ def process_turn_start_artifacts(char, target, my_res, opp_res, turn_count, shay
     next_shayla_trigger = False
     if "shayla_light" in effects and selected_card_name == "밀키워킹":
         next_shayla_trigger = True
+
+    # Freeze is resolved after artifact destruction and before the first clash.
+    log += apply_freeze_dice_lock(char, my_res, turn_count)
+    log += apply_freeze_dice_lock(target, opp_res, turn_count)
         
     return log, next_shayla_trigger
 
@@ -275,7 +468,7 @@ def apply_dice_effect(dice, attacker, defender, is_win, is_self=False):
     if len(parts) > 1 and parts[1].isdigit():
         val = int(parts[1])
     status_key = next(
-        (key for key in ("paralysis", "bleed", "stun") if key in parts),
+        (key for key in ("paralysis", "bleed", "stun", "freeze") if key in parts),
         None,
     )
     if (
@@ -300,6 +493,11 @@ def apply_dice_effect(dice, attacker, defender, is_win, is_self=False):
         if val > 0:
             target.status_effects["stun"] = target.status_effects.get("stun", 0) + val
             log += f" 💫기절({val})"
+    elif "freeze" in parts:
+        if val > 0:
+            previous = ensure_status_effects(target).get("freeze", 0)
+            target.status_effects["freeze"] = max(previous, val)
+            log += f" ❄️빙결({target.status_effects['freeze']}턴)"
 
     return log
 
@@ -341,6 +539,11 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if isinstance(art, dict): effs2.append(art.get("special"))
         eng = getattr(char2, "equipped_engraved_artifact", None)
         if isinstance(eng, dict): effs2.append(eng.get("special"))
+
+    ensure_status_effects(char1)
+    ensure_status_effects(char2)
+    log += process_severe_cold_before_clash(char1, char2, res1, effs1, turn_count)
+    log += process_severe_cold_before_clash(char2, char1, res2, effs2, turn_count)
     
     max_len = max(len(res1), len(res2))
     
@@ -428,6 +631,12 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
             valid_index2 += 1
 
         clash_log = f"\n**[{i+1}합]** "
+        clash_log += trigger_severe_cold_for_die(
+            char1, char2, i, effs1, turn_count
+        )
+        clash_log += trigger_severe_cold_for_die(
+            char2, char1, i, effs2, turn_count
+        )
 
         # [꼼꼼한] 재사용
         if "reuse_last_dice" in effs1 and not is_stunned1 and t1 == "none" and t2 != "none" and i > 0:
@@ -470,7 +679,9 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if "fierce_attack" in effs1 and t1 == "attack":
             last = runtime1.get("fierce_attack", -10)
             if turn_count - last >= artifact_trigger_interval(art1, "fierce_attack", 2):
-                fierce = artifact_modifier(art1, "damage", char1.attack)
+                fierce = artifact_modifier(
+                    art1, "damage", effective_combat_stat(char1, "attack")
+                )
                 v1 += fierce
                 runtime1["fierce_attack"] = turn_count
                 record_fierce_aftereffect(art1, fierce, state1)
@@ -478,7 +689,9 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         if "fierce_attack" in effs2 and t2 == "attack":
             last = runtime2.get("fierce_attack", -10)
             if turn_count - last >= artifact_trigger_interval(art2, "fierce_attack", 2):
-                fierce = artifact_modifier(art2, "damage", char2.attack)
+                fierce = artifact_modifier(
+                    art2, "damage", effective_combat_stat(char2, "attack")
+                )
                 v2 += fierce
                 runtime2["fierce_attack"] = turn_count
                 record_fierce_aftereffect(art2, fierce, state2)
@@ -612,10 +825,10 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         # 방어율 및 방어력 비례 경감
         if dmg1 > 0:
             if getattr(char1, "defense_rate", 0) > 0: dmg1 = int(dmg1 * (1 - char1.defense_rate / 100))
-            dmg1 = max(0, dmg1 - int(char1.defense / 3))
+            dmg1 = max(0, dmg1 - int(effective_combat_stat(char1, "defense") / 3))
         if dmg2 > 0:
             if getattr(char2, "defense_rate", 0) > 0: dmg2 = int(dmg2 * (1 - char2.defense_rate / 100))
-            dmg2 = max(0, dmg2 - int(char2.defense / 3))
+            dmg2 = max(0, dmg2 - int(effective_combat_stat(char2, "defense") / 3))
 
         # 메이저/마이너는 일반 합 피해에만 적용한다. 서로 배타적이며
         # 다른 체인지 카드를 사용하거나 전투가 끝날 때까지 유지된다.
@@ -723,10 +936,26 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
             if "luude_imprint" in effs2: clash_log = apply_luude_logic(char2, char1, clash_log)
 
         # 최종 피해 적용
+        actual_dmg1 = min(max(0, int(char1.current_hp)), max(0, int(dmg1)))
+        actual_dmg2 = min(max(0, int(char2.current_hp)), max(0, int(dmg2)))
         char1.current_hp = max(0, char1.current_hp - dmg1)
         char2.current_hp = max(0, char2.current_hp - dmg2)
         char1.current_mental = max(0, char1.current_mental - mental_dmg1)
         char2.current_mental = max(0, char2.current_mental - mental_dmg2)
+
+        # 혹한의 흡혈은 방어·피해감소를 모두 거친 실제 HP 피해만 사용한다.
+        if dmg2 > 0:
+            healed = apply_severe_cold_lifesteal(
+                char1, char2, actual_dmg2, effs1
+            )
+            if healed > 0:
+                clash_log += f" 🌨️혹한 흡혈(+{healed})"
+        if dmg1 > 0:
+            healed = apply_severe_cold_lifesteal(
+                char2, char1, actual_dmg1, effs2
+            )
+            if healed > 0:
+                clash_log += f" 🌨️혹한 흡혈(+{healed})"
         
         # 회복 처리 (방어 시 정신력 회복 포함)
         if t1 == "heal": char1.current_hp = min(char1.max_hp, char1.current_hp + v1); clash_log += f" 💚+{v1}"

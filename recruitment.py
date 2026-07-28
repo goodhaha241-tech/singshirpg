@@ -36,6 +36,44 @@ class QuestMonster:
 
 # --- 영입 캐릭터 데이터 레지스트리 ---
 RECRUIT_REGISTRY = {
+    "Yeongseol": {
+        "name": "영설",
+        "description": "고요한 혹한을 다루는 빙결술사",
+        "emoji": "🌨️",
+        "quests": [
+            {
+                "type": "item",
+                "title": "🌨️ 첫 번째 발자취",
+                "story": "설국을 걷던 중 눈보라 사이로 낯선 술사의 흔적을 발견했습니다.",
+                "req_items": {"신화의 발자취": 1, "천년얼음": 20, "혹한의 눈꽃": 3},
+                "req_money": 0,
+            },
+            {
+                "type": "item",
+                "title": "🌅 두 번째 발자취",
+                "story": "아침의 얼어붙은 길을 따라가며 영설이 남긴 고요한 마력과 마주합니다.",
+                "req_items": {"신화의 발자취": 1, "눈꽃팬던트": 5, "맑은 생각": 5},
+                "req_money": 0,
+            },
+            {
+                "type": "item",
+                "title": "❄️ 세 번째 발자취",
+                "story": "고요한 눈밭에서 서로의 온기를 나눈 끝에 영설이 동행을 받아들입니다.",
+                "req_items": {"신화의 발자취": 1, "눈사람": 5, "따스한 목도리": 10},
+                "req_money": 0,
+            },
+        ],
+        "char_data": {
+            "name": "영설",
+            "hp": 220,
+            "attack": 34,
+            "defense": 30,
+            "max_mental": 240,
+            "card_slots": 5,
+            "equipped_cards": ["동결건조", "조선:아침", "조선:고요"],
+            "is_recruited": True,
+        },
+    },
     "Yeongsan": {
         "name": "영산", 
         "description": "일한산으로 여정을 떠나는 작은 마법생물",

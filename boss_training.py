@@ -21,7 +21,7 @@ import aiomysql
 import discord
 from discord.ui import Button, Modal, Select, TextInput
 
-from cards import Dice, SkillCard
+from cards import Dice, SkillCard, get_card
 from data_manager import (
     add_guild_contribution,
     get_db_pool,
@@ -50,11 +50,26 @@ GROWTH_LABELS = {
 MOOD_MULTIPLIERS = (0.90, 0.95, 1.00, 1.05, 1.10)
 
 TRAINING_ACTIONS: dict[str, dict[str, Any]] = {
-    "hp": {"label": "HP 훈련", "energy": -18, "gains": {"hp": 350, "sp": 8}},
-    "attack": {"label": "공격 훈련", "energy": -20, "gains": {"attack": 3, "hp": 60, "sp": 8}},
-    "defense": {"label": "방어 훈련", "energy": -18, "gains": {"defense": 3, "mental": 60, "sp": 8}},
-    "mental": {"label": "정신 훈련", "energy": -16, "gains": {"mental": 220, "defense": 1, "sp": 8}},
-    "tactics": {"label": "전술 훈련", "energy": -12, "gains": {"sp": 35, "mental": 50}},
+    "hp": {
+        "label": "HP 훈련", "energy": -18,
+        "gains": {"hp": 350, "defense": 2, "mental": 30, "sp": 8},
+    },
+    "attack": {
+        "label": "공격 훈련", "energy": -20,
+        "gains": {"attack": 3, "mental": 110, "sp": 12},
+    },
+    "defense": {
+        "label": "방어 훈련", "energy": -18,
+        "gains": {"defense": 3, "hp": 180, "mental": 30, "sp": 8},
+    },
+    "mental": {
+        "label": "정신 훈련", "energy": -16,
+        "gains": {"mental": 220, "attack": 2, "defense": 1, "sp": 8},
+    },
+    "tactics": {
+        "label": "전술 훈련", "energy": 5,
+        "gains": {"attack": 2, "mental": 30, "sp": 35},
+    },
     "rest": {"label": "휴식", "energy": 50},
     "outing": {"label": "외출", "energy": 20, "mood": 1},
     "infirmary": {"label": "치료", "energy": 15},
@@ -65,7 +80,7 @@ EVALUATION_TURNS = {
     28: ("Silver", 70, 2_900),
     42: ("Gold", 100, 3_500),
     56: ("Platinum", 140, 4_100),
-    70: ("Diamond", 200, 7_470),
+    70: ("Diamond", 200, 8_750),
 }
 
 SPECIAL_SUPPORTS = {
@@ -75,6 +90,7 @@ SPECIAL_SUPPORTS = {
     "카이안": ("kaian_time", 400, "시간가속"),
     "샤일라": ("shayla_light", 400, "강한 빛"),
     "센쇼": ("sensho_star", 450, "별똥별의 가호"),
+    "영설": ("yeongseol_severe_cold", 550, "혹한"),
 }
 
 GENERAL_PASSIVES = {
@@ -95,7 +111,12 @@ INNATE_PASSIVES = {
     "domination": ("지배", 500_000, 500, "생존 공격자마다 공격 주사위 +3%"),
 }
 
-IMMUNITIES = {"bleed": ("출혈", 160), "paralysis": ("마비", 180), "stun": ("기절", 240)}
+IMMUNITIES = {
+    "bleed": ("출혈", 160),
+    "paralysis": ("마비", 180),
+    "stun": ("기절", 240),
+    "freeze": ("빙결", 300),
+}
 RESISTANCE_COSTS = {25: 40, 50: 100, 75: 190}
 DICE_TIERS = {
     (5, 9): 25,
@@ -109,16 +130,252 @@ EFFECT_COSTS = {
     "stun": 80,
     "lifesteal": 90,
     "destroy": 120,
+    "freeze": 150,
 }
 COOLDOWN_MULTIPLIERS = {1: 1.5, 2: 1.0, 3: 0.9, 4: 0.8}
 
+SCENARIOS = {
+    "normal": {
+        "name": "일반 시나리오",
+        "description": "기존 70턴 육성 규칙을 그대로 사용합니다.",
+        "facility_cap": 5,
+        "training_multiplier": 1.0,
+        "evaluation_sp_multiplier": 1.0,
+    },
+    "facility_expansion": {
+        "name": "시설 확장 시나리오",
+        "description": "시설 최대 레벨 6 · 모든 훈련 성장 +15% · 평가전 SP +20%",
+        "facility_cap": 6,
+        "training_multiplier": 1.15,
+        "evaluation_sp_multiplier": 1.20,
+        "shop_price": 600_000,
+        "unlock_key": "scenario_facility_expansion",
+    },
+}
+
+FACTOR_STAR_DISTRIBUTIONS = {
+    "C": ((1, 1.0),),
+    "B": ((1, 1.0),),
+    "A": ((1, 0.70), (2, 0.30)),
+    "S": ((1, 0.40), (2, 0.60)),
+    "SS": ((1, 0.20), (2, 0.55), (3, 0.25)),
+    "UG": ((1, 0.10), (2, 0.45), (3, 0.45)),
+    "UF": ((2, 0.35), (3, 0.65)),
+}
+FACTOR_ACTIVATION_CHANCES = {1: 0.50, 2: 0.75, 3: 1.0}
+FACTOR_STAT_VALUES = {
+    "hp": {1: 150, 2: 300, 3: 500},
+    "mental": {1: 80, 2: 160, 3: 260},
+    "attack": {1: 1, 2: 2, 3: 3},
+    "defense": {1: 1, 2: 2, 3: 3},
+}
+FACTOR_GROWTH_VALUES = {1: 3, 2: 6, 3: 10}
+FACTOR_SKILL_ROLL = 0.45
+FACTOR_HINT_ROLL = 0.25
+FACTOR_PASSIVE_ROLL = 0.30
+FACTOR_VERSION = 1
+
+USER_BOSS_REWARD_MULTIPLIERS = {
+    "C": 1.0, "B": 1.2, "A": 1.5, "S": 2.0,
+    "SS": 2.75, "UG": 3.75, "UF": 5.0,
+}
+USER_BOSS_HOPE_REWARDS = {
+    "C": 1, "B": 1, "A": 1, "S": 1, "SS": 2, "UG": 3, "UF": 4,
+}
+
+BASE_SKILL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
+    "hp": {
+        "default": {
+            "name": "기본회복",
+            "dice": [{"type": "heal", "min": 5, "max": 9}],
+            "effects": [], "cooldown": 2, "is_aoe": False, "free": True,
+        },
+        "change": {
+            "name": "숨고르기",
+            "dice": [
+                {"type": "attack", "min": 5, "max": 8},
+                {"type": "heal", "min": 10, "max": 15},
+            ],
+            "effects": [], "cooldown": 2, "is_aoe": False, "base_cost": 80,
+        },
+        "upgrade": {
+            "name": "중급회복",
+            "dice": [
+                {"type": "heal", "min": 15, "max": 20},
+                {"type": "heal", "min": 8, "max": 10},
+                {"type": "mental_heal", "min": 2, "max": 10},
+            ],
+            "effects": [], "cooldown": 3, "is_aoe": False, "base_cost": 120,
+        },
+    },
+    "attack": {
+        "default": {
+            "name": "기본공격",
+            "dice": [{"type": "attack", "min": 5, "max": 9}],
+            "effects": [], "cooldown": 2, "is_aoe": False, "free": True,
+        },
+        "change": {
+            "name": "복합공격",
+            "dice": [
+                {"type": "attack", "min": 3, "max": 5},
+                {"type": "attack", "min": 2, "max": 4},
+            ],
+            "effects": [], "cooldown": 1, "is_aoe": False, "base_cost": 80,
+        },
+        "upgrade": {
+            "name": "강한참격",
+            "dice": [
+                {"type": "attack", "min": 7, "max": 10},
+                {"type": "attack", "min": 1, "max": 6},
+            ],
+            "effects": [], "cooldown": 2, "is_aoe": False, "base_cost": 120,
+        },
+    },
+    "defense": {
+        "default": {
+            "name": "기본방어",
+            "dice": [{"type": "defense", "min": 5, "max": 9}],
+            "effects": [], "cooldown": 2, "is_aoe": False, "free": True,
+        },
+        "change": {
+            "name": "복합반격",
+            "dice": [
+                {"type": "defense", "min": 3, "max": 5},
+                {"type": "counter", "min": 3, "max": 5},
+            ],
+            "effects": [], "cooldown": 1, "is_aoe": False, "base_cost": 80,
+        },
+        "upgrade": {
+            "name": "섬세한 방어",
+            "dice": [{"type": "defense", "min": 8, "max": 12}],
+            "effects": [], "cooldown": 2, "is_aoe": False, "base_cost": 120,
+        },
+    },
+    "mental": {
+        "default": {
+            "name": "기본집중",
+            "dice": [{"type": "mental_heal", "min": 5, "max": 9}],
+            "effects": [], "cooldown": 2, "is_aoe": False, "free": True,
+        },
+        "change": {
+            "name": "방어와 침착",
+            "dice": [
+                {"type": "defense", "min": 5, "max": 9},
+                {"type": "mental_heal", "min": 10, "max": 12},
+            ],
+            "effects": [], "cooldown": 2, "is_aoe": False, "base_cost": 80,
+        },
+        "upgrade": {
+            "name": "깊은집중",
+            "dice": [
+                {"type": "mental_heal", "min": 6, "max": 9},
+                {"type": "heal", "min": 10, "max": 14},
+            ],
+            "effects": [], "cooldown": 2, "is_aoe": False, "base_cost": 120,
+        },
+    },
+    "tactics": {
+        "default": {
+            "name": "기본반격",
+            "dice": [{"type": "counter", "min": 5, "max": 9}],
+            "effects": [], "cooldown": 2, "is_aoe": False, "free": True,
+        },
+        "change": {
+            "name": "회전베기",
+            "dice": [
+                {"type": "attack", "min": 6, "max": 10},
+                {"type": "counter", "min": 5, "max": 9},
+            ],
+            "effects": [], "cooldown": 2, "is_aoe": False, "base_cost": 80,
+        },
+        "upgrade": {
+            "name": "집중반격",
+            "dice": [
+                {"type": "counter", "min": 5, "max": 9},
+                {"type": "counter", "min": 5, "max": 9},
+                {"type": "mental_heal", "min": 7, "max": 9},
+            ],
+            "effects": [], "cooldown": 3, "is_aoe": False, "base_cost": 120,
+        },
+    },
+}
+
+SPECIAL_SKILL_PRESETS: dict[str, dict[str, Any]] = {
+    "어즈렉": {
+        "name": "신앙의 성벽",
+        "dice": [
+            {"type": "defense", "min": 18, "max": 30},
+            {"type": "defense", "min": 12, "max": 20},
+            {"type": "heal", "min": 12, "max": 20},
+        ],
+        "effects": [], "cooldown": 3, "is_aoe": False, "base_cost": 260,
+    },
+    "루우데": {
+        "name": "악몽 붕괴",
+        "dice": [
+            {"type": "attack", "min": 18, "max": 30, "effect": "destroy_next_on_hit"},
+            {"type": "defense", "min": 12, "max": 20},
+        ],
+        "effects": [], "cooldown": 3, "is_aoe": False, "base_cost": 300,
+    },
+    "영산": {
+        "name": "황금 폭류",
+        "dice": [
+            {"type": "attack", "min": 12, "max": 20},
+            {"type": "attack", "min": 12, "max": 20},
+            {"type": "attack", "min": 8, "max": 14},
+        ],
+        "effects": [], "cooldown": 3, "is_aoe": True, "base_cost": 320,
+    },
+    "카이안": {
+        "name": "시간 단층",
+        "dice": [
+            {"type": "counter", "min": 18, "max": 30},
+            {"type": "counter", "min": 12, "max": 20},
+            {"type": "defense", "min": 12, "max": 20},
+        ],
+        "effects": [], "cooldown": 3, "is_aoe": False, "base_cost": 300,
+    },
+    "샤일라": {
+        "name": "은하 섬광",
+        "dice": [
+            {"type": "mental_heal", "min": 12, "max": 20},
+            {"type": "defense", "min": 12, "max": 20},
+            {"type": "counter", "min": 8, "max": 14},
+        ],
+        "effects": [], "cooldown": 3, "is_aoe": False, "base_cost": 280,
+    },
+    "센쇼": {
+        "name": "성좌의 심판",
+        "dice": [
+            {"type": "defense", "min": 12, "max": 20},
+            {"type": "attack", "min": 18, "max": 30},
+            {"type": "heal", "min": 12, "max": 20},
+        ],
+        "effects": [], "cooldown": 4, "is_aoe": False, "base_cost": 300,
+    },
+    "영설": {
+        "name": "백야의 동결",
+        "dice": [
+            {"type": "attack", "min": 18, "max": 30, "effect": "freeze_2_on_win"},
+            {"type": "attack", "min": 12, "max": 20},
+            {"type": "defense", "min": 12, "max": 20},
+        ],
+        "effects": ["freeze"],
+        "cooldown": 4,
+        "is_aoe": True,
+        "base_cost": 450,
+        "purchase_cost": 450,
+    },
+}
+
 GRADE_THRESHOLDS = (
-    ("UF", 11_000),
-    ("UG", 9_000),
-    ("SS", 7_500),
-    ("S", 6_000),
-    ("A", 4_500),
-    ("B", 3_500),
+    ("UF", 13_000),
+    ("UG", 11_000),
+    ("SS", 9_000),
+    ("S", 7_500),
+    ("A", 6_000),
+    ("B", 4_500),
     ("C", 0),
 )
 SALE_REWARDS = {
@@ -145,10 +402,24 @@ def ensure_boss_training_data(user_data: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("public_support", None)
     state.setdefault("shop_unlocks", {})
     state.setdefault("rewarded_battle_ids", [])
+    state.setdefault("challenger_rewarded_battle_ids", [])
     state.setdefault("sold_boss_ids", [])
     # Bound only the idempotency ledger, never the user's fragment inventory.
     state["rewarded_battle_ids"] = list(state["rewarded_battle_ids"])[-500:]
+    state["challenger_rewarded_battle_ids"] = list(
+        state["challenger_rewarded_battle_ids"]
+    )[-500:]
     state["sold_boss_ids"] = list(state["sold_boss_ids"])[-500:]
+    run = state.get("active_run")
+    if isinstance(run, dict):
+        run.setdefault("inherited_growth_bonus", {})
+        run.setdefault("passive_factor_discounts", {})
+        run.setdefault("inherited_skill_offers", {})
+        run.setdefault("inheritance_parents", [])
+        run.setdefault("inheritance_events_done", [])
+        run.setdefault("inheritance_log", [])
+        run.setdefault("inheritance_totals", {"stats": {}})
+        run.setdefault("scenario_id", "normal")
     return state
 
 
@@ -221,13 +492,36 @@ def _support_identity(name: str) -> str | None:
 
 
 def _support_specialty(character: dict[str, Any]) -> str:
+    if "영설" in str(character.get("name", "")):
+        return "attack"
+    # 캐릭터 스탯과 현재 장착 카드의 주사위 구성을 함께 본다.
+    # 반격 카드는 전술 성향에 강하게 반영해 다섯 훈련 모두 실제로
+    # 서포트 주력이 될 수 있도록 한다.
     values = {
-        "hp": float(character.get("hp", 0) or 0) / 5_000,
-        "mental": float(character.get("max_mental", 0) or 0) / 2_000,
-        "attack": float(character.get("attack", 0) or 0) / 25,
-        "defense": float(character.get("defense", 0) or 0) / 25,
+        "hp": float(character.get("hp", 0) or 0) / 300,
+        "mental": float(character.get("max_mental", 0) or 0) / 240,
+        "attack": float(character.get("attack", 0) or 0) / 30,
+        "defense": float(character.get("defense", 0) or 0) / 30,
+        "tactics": 0.45 + float(character.get("level", 0) or 0) / 100,
     }
-    best = max(values, key=values.get) if any(values.values()) else "tactics"
+    action_to_specialty = {
+        "heal": "hp",
+        "mental_heal": "mental",
+        "attack": "attack",
+        "defense": "defense",
+        "counter": "tactics",
+    }
+    for card_name in character.get("equipped_cards", []) or []:
+        card = get_card(str(card_name))
+        if card is None:
+            continue
+        if getattr(card, "is_aoe", False):
+            values["tactics"] += 0.40
+        for dice in getattr(card, "dice_list", []) or []:
+            specialty = action_to_specialty.get(getattr(dice, "action_type", ""))
+            if specialty:
+                values[specialty] += 2.50 if specialty == "tactics" else 0.80
+    best = max(values, key=values.get)
     return best
 
 
@@ -238,9 +532,26 @@ def _snapshot_support(character: dict[str, Any], upgrade: int, owner_id: str) ->
         "level": max(0, int(character.get("level", 0) or 0)),
         "upgrade": max(0, min(MAX_SUPPORT_UPGRADE, int(upgrade))),
         "specialty": _support_specialty(character),
+        "specialty_version": 2,
+        "equipped_cards": list(character.get("equipped_cards", []) or []),
         "bond": 0,
         "event_stage": 0,
     }
+
+
+def _refresh_support_specialties(run: dict[str, Any]) -> None:
+    """Migrate active runs created before card-aware support specialties."""
+    for support in run.get("supports", []):
+        if int(support.get("specialty_version", 0)) >= 2:
+            continue
+        equipped_cards = list(support.get("equipped_cards", []) or [])
+        if equipped_cards:
+            inferred = _support_specialty({
+                "level": support.get("level", 0),
+                "equipped_cards": equipped_cards,
+            })
+            support["specialty"] = inferred
+        support["specialty_version"] = 2
 
 
 def _roll_support_placements(run: dict[str, Any], rng: random.Random | Any = random) -> None:
@@ -261,6 +572,8 @@ def create_training_run(
     *,
     base_tokens: dict[str, int] | None = None,
     innate_passive: str | None = None,
+    parent_records: list[dict[str, Any]] | None = None,
+    scenario_id: str = "normal",
     rng: random.Random | Any = random,
 ) -> dict[str, Any]:
     state = ensure_boss_training_data(user_data)
@@ -298,6 +611,27 @@ def create_training_run(
         raise BossTrainingError("기본 스탯 토큰은 총 5개, 한 스탯 최대 3개입니다.")
     if innate_passive and not state["shop_unlocks"].get(innate_passive):
         raise BossTrainingError("구매하지 않은 고유 패시브입니다.")
+    if scenario_id not in SCENARIOS:
+        raise BossTrainingError("알 수 없는 육성 시나리오입니다.")
+    scenario = SCENARIOS[scenario_id]
+    unlock_key = scenario.get("unlock_key")
+    if unlock_key and not state["shop_unlocks"].get(unlock_key):
+        raise BossTrainingError("해금하지 않은 육성 시나리오입니다.")
+
+    parents = list(parent_records or [])
+    parent_ids = [str(record.get("boss_id", "")) for record in parents]
+    if len(parents) > 2 or len(set(parent_ids)) != len(parent_ids) or any(not value for value in parent_ids):
+        raise BossTrainingError("계승 부모는 서로 다른 완성 보스 0~2체여야 합니다.")
+    parent_snapshots = []
+    for record in parents:
+        normalized, _ = ensure_completed_boss_factors(record)
+        parent_data = normalized.get("boss_data", normalized)
+        parent_snapshots.append({
+            "boss_id": str(normalized.get("boss_id") or parent_data.get("boss_id")),
+            "name": str(normalized.get("boss_name") or parent_data.get("name", "부모 보스")),
+            "grade": str(normalized.get("grade") or parent_data.get("grade", "C")),
+            "factors": deepcopy(parent_data.get("factors", [])),
+        })
 
     inventory[PURE_HOPE_ITEM] = int(inventory.get(PURE_HOPE_ITEM, 0)) - START_HOPE
     user_data["money"] = int(user_data.get("money", 0)) - START_MONEY
@@ -307,7 +641,7 @@ def create_training_run(
         _snapshot_support(
             characters[index],
             state["support_upgrades"].get(str(characters[index].get("name", "")), 0),
-            str(user_data.get("user_id", "self")),
+            "self",
         )
         for index in indices
     ]
@@ -327,16 +661,30 @@ def create_training_run(
         "spent_sp": 0,
         "injured": False,
         "growth_rates": growth,
+        "inherited_growth_bonus": {},
+        "passive_factor_discounts": {},
+        "inherited_skill_offers": {},
+        "inheritance_parents": parent_snapshots,
+        "inheritance_events_done": [],
+        "inheritance_log": [],
+        "inheritance_totals": {"stats": {}},
+        "scenario_id": scenario_id,
         "base_tokens": tokens,
         "facility_successes": {key: 0 for key in GROWTH_KEYS},
         "facility_levels": {key: 1 for key in GROWTH_KEYS},
         "supports": supports,
         "pending_event_choice": None,
         "inheritance_candidates": [],
+        "skill_hints": {},
+        "base_skill_hints": {},
+        "base_upgrade_hints": {},
+        "special_preset_hints": {},
+        "hint_history": [],
         "evaluation_results": [],
         "innate_passive": innate_passive,
         "build": {
-            "skills": [],
+            "skills": _default_skills(),
+            "skill_slots_initialized": True,
             "immunity": None,
             "resistances": {},
             "passives": [],
@@ -348,6 +696,7 @@ def create_training_run(
         "created_at": datetime.now(KST).isoformat(),
     }
     _roll_support_placements(run, rng)
+    _apply_inheritance_event(run, "start", rng)
     state["active_run"] = run
     return run
 
@@ -358,20 +707,109 @@ def _support_event_chance(support: dict[str, Any]) -> float:
     return min(1.0, base + int(support.get("upgrade", 0)) * 0.03)
 
 
+def _skill_hint_chance(support: dict[str, Any]) -> float:
+    bond = int(support.get("bond", 0))
+    base = 0.10 if bond < 40 else 0.20 if bond < 80 else 0.30
+    return min(1.0, base + int(support.get("upgrade", 0)) * 0.02)
+
+
+def _add_hint(run: dict[str, Any], bucket: str, key: str, source: str) -> int:
+    hints = run.setdefault(bucket, {})
+    hints[key] = min(4, int(hints.get(key, 0)) + 1)
+    history = run.setdefault("hint_history", [])
+    history.append({
+        "turn": int(run.get("turn", 0)),
+        "bucket": bucket,
+        "key": key,
+        "source": source,
+    })
+    run["hint_history"] = history[-30:]
+    return int(hints[key])
+
+
+def _grant_equipped_card_hint(
+    run: dict[str, Any],
+    support: dict[str, Any],
+    rng: random.Random | Any = random,
+) -> str | None:
+    cards = [
+        name for name in support.get("equipped_cards", [])
+        if get_card(str(name)) is not None
+    ]
+    if not cards:
+        return None
+    card_name = str(rng.choice(cards))
+    count = _add_hint(run, "skill_hints", card_name, str(support.get("name", "")))
+    return f"{card_name} 힌트 Lv.{count} (SP {count * 10}% 할인)"
+
+
+def _grant_stage_three_hints(
+    run: dict[str, Any],
+    support: dict[str, Any],
+    rng: random.Random | Any = random,
+) -> list[str]:
+    specialty = str(support.get("specialty", "tactics"))
+    source = str(support.get("name", "서포트"))
+    base_count = _add_hint(run, "base_skill_hints", specialty, source)
+    upgrade_count = _add_hint(run, "base_upgrade_hints", specialty, source)
+    logs = [
+        f"{GROWTH_LABELS[specialty]} 기본기 변경 힌트 Lv.{base_count}",
+        f"{GROWTH_LABELS[specialty]} 기본기 강화 힌트 Lv.{upgrade_count}",
+    ]
+    identity = _support_identity(source)
+    if identity == "영설":
+        for card_name in support.get("equipped_cards", []):
+            if get_card(str(card_name)) is None:
+                continue
+            count = _add_hint(run, "skill_hints", str(card_name), source)
+            logs.append(f"{card_name} 변경·강화 힌트 Lv.{count} (SP {count * 10}% 할인)")
+    else:
+        card_hint = _grant_equipped_card_hint(run, support, rng)
+        if card_hint:
+            logs.append(card_hint)
+    if identity:
+        preset_count = _add_hint(run, "special_preset_hints", identity, source)
+        logs.append(
+            f"{identity} 강력 프리셋 힌트 Lv.{preset_count} "
+            f"(SP {preset_count * 10}% 할인)"
+        )
+    return logs
+
+
+def training_failure_rate(run: dict[str, Any], energy: int | None = None) -> int:
+    current_energy = int(run.get("energy", 0)) if energy is None else int(energy)
+    return min(
+        60,
+        max(0, 50 - current_energy)
+        + (15 if run.get("injured") else 0),
+    )
+
+
 def _apply_growth(
     run: dict[str, Any],
     action: str,
     gains: dict[str, int],
     support_bonus: float,
+    sp_support_bonus: float = 0.0,
 ) -> dict[str, int]:
     mood = MOOD_MULTIPLIERS[max(1, min(5, int(run["mood"]))) - 1]
     facility = 1.0 + (max(1, int(run["facility_levels"].get(action, 1))) - 1) * 0.10
-    growth = 1.0 + int(run["growth_rates"].get(action, 0)) / 100
+    growth_rate = (
+        int(run["growth_rates"].get(action, 0))
+        + int(run.get("inherited_growth_bonus", {}).get(action, 0))
+    )
+    growth = 1.0 + growth_rate / 100
     injury = 0.75 if run.get("injured") else 1.0
-    multiplier = mood * facility * growth * injury * (1.0 + min(0.60, support_bonus))
+    scenario = SCENARIOS.get(run.get("scenario_id", "normal"), SCENARIOS["normal"])
+    multiplier = (
+        mood * facility * growth * injury
+        * (1.0 + min(0.60, support_bonus))
+        * float(scenario["training_multiplier"])
+    )
     applied: dict[str, int] = {}
     for key, amount in gains.items():
-        value = max(1, math.floor(int(amount) * multiplier))
+        key_multiplier = multiplier * (1.0 + sp_support_bonus if key == "sp" else 1.0)
+        value = max(1, math.floor(int(amount) * key_multiplier))
         run[key] = int(run.get(key, 0)) + value
         applied[key] = value
     return applied
@@ -405,7 +843,9 @@ def _simulate_evaluation(
     durability = int(run["hp"]) / 20 + int(run["mental"]) / 20 + int(run["defense"]) * 25
     mock_score = int(offense + durability + rng.randint(-180, 180))
     win = mock_score >= target
-    gained = reward if win else math.floor(reward * 0.40)
+    base_gained = reward if win else math.floor(reward * 0.40)
+    scenario = SCENARIOS.get(run.get("scenario_id", "normal"), SCENARIOS["normal"])
+    gained = math.floor(base_gained * float(scenario["evaluation_sp_multiplier"]))
     run["sp"] = int(run["sp"]) + gained
     result = {
         "turn": turn,
@@ -424,6 +864,7 @@ def perform_training_action(
     action: str,
     rng: random.Random | Any = random,
 ) -> dict[str, Any]:
+    _refresh_support_specialties(run)
     if run.get("phase") != "training" or int(run.get("turn", 0)) >= MAX_TURNS:
         raise BossTrainingError("훈련 단계가 아닙니다.")
     if run.get("pending_event_choice"):
@@ -438,7 +879,7 @@ def perform_training_action(
 
     if action in GROWTH_KEYS:
         run["energy"] = max(0, min(100, before_energy + int(spec["energy"])))
-        failure_rate = min(60, max(0, 50 - before_energy) + (15 if run.get("injured") else 0))
+        failure_rate = training_failure_rate(run, before_energy)
         result["failure_rate"] = failure_rate
         if rng.randint(1, 100) <= failure_rate:
             result["success"] = False
@@ -450,29 +891,79 @@ def perform_training_action(
         else:
             placed = list(run.get("support_placements", {}).get(action, []))
             support_bonus = 0.0
+            yeongseol_count = 0
+            friendship_supports = []
             for index in placed:
                 support = run["supports"][index]
                 bond = int(support.get("bond", 0))
                 support_bonus += min(0.10, int(support.get("level", 0)) * 0.002)
                 support_bonus += int(support.get("upgrade", 0)) * 0.05
-                if bond >= 80:
+                if bond >= 80 and support.get("specialty") == action:
                     support_bonus += 0.20
+                    friendship_supports.append(str(support.get("name", "서포트")))
                 support["bond"] = min(100, bond + 7)
-            applied = _apply_growth(run, action, spec["gains"], support_bonus)
+                if _support_identity(str(support.get("name", ""))) == "영설":
+                    yeongseol_count += 1
+            yeongseol_sp_bonus = min(0.50, yeongseol_count * 0.25)
+            applied = _apply_growth(
+                run,
+                action,
+                spec["gains"],
+                support_bonus,
+                sp_support_bonus=yeongseol_sp_bonus,
+            )
             result["gains"] = applied
+            gain_labels = {
+                "hp": "HP",
+                "mental": "정신",
+                "attack": "공격",
+                "defense": "방어",
+                "sp": "SP",
+            }
+            result["logs"].append(
+                "성장 · " + " · ".join(
+                    f"{gain_labels.get(key, key)} +{value}"
+                    for key, value in applied.items()
+                )
+            )
             run["facility_successes"][action] = int(run["facility_successes"].get(action, 0)) + 1
-            run["facility_levels"][action] = min(5, 1 + run["facility_successes"][action] // 4)
+            scenario = SCENARIOS.get(run.get("scenario_id", "normal"), SCENARIOS["normal"])
+            run["facility_levels"][action] = min(
+                int(scenario["facility_cap"]),
+                1 + run["facility_successes"][action] // 4,
+            )
             result["supports"] = [run["supports"][index]["name"] for index in placed]
+            result["friendship_supports"] = friendship_supports
+            if friendship_supports:
+                result["logs"].append(
+                    f"💞 우정 트레이닝: {', '.join(friendship_supports)} · 성장 +20%"
+                )
+            if yeongseol_count:
+                result["logs"].append(
+                    f"🌨️ 영설 서포트 {yeongseol_count}명 · 훈련 SP +{int(yeongseol_sp_bonus * 100)}%"
+                )
+
+            # Only the borrowed public support can drop an equipped-card hint
+            # outside its event chain.
+            for index in placed:
+                support = run["supports"][index]
+                if str(support.get("owner_id")) == "self":
+                    continue
+                if rng.random() < _skill_hint_chance(support):
+                    hint_log = _grant_equipped_card_hint(run, support, rng)
+                    if hint_log:
+                        result["logs"].append(f"💡 공개 서포트 힌트: {hint_log}")
 
             # One sequential special event at most per turn.
             for index in placed:
                 support = run["supports"][index]
                 identity = _support_identity(str(support.get("name", "")))
                 stage = int(support.get("event_stage", 0))
-                if not identity or stage >= 3 or rng.random() >= _support_event_chance(support):
+                if stage >= 3 or rng.random() >= _support_event_chance(support):
                     continue
                 stage += 1
                 support["event_stage"] = stage
+                support_name = str(support.get("name", "서포트"))
                 if stage == 1:
                     support["bond"] = min(100, int(support["bond"]) + 10)
                     extra = {
@@ -481,15 +972,28 @@ def perform_training_action(
                     }
                     for key, value in extra.items():
                         run[key] = int(run.get(key, 0)) + value
-                    result["logs"].append(f"{identity} 연속 이벤트 1단계 · 유대 +10 · 추가 성장 {extra}")
+                    result["logs"].append(
+                        f"{support_name} 연속 이벤트 1단계 · 유대 +10 · 추가 성장 {extra}"
+                    )
                 elif stage == 2:
-                    run["pending_event_choice"] = {"support_index": index, "name": identity}
-                    result["logs"].append(f"{identity} 연속 이벤트 2단계 · 보상을 선택하세요.")
+                    run["pending_event_choice"] = {
+                        "support_index": index,
+                        "name": support_name,
+                    }
+                    result["logs"].append(
+                        f"{support_name} 연속 이벤트 2단계 · 보상을 선택하세요."
+                    )
                 else:
-                    if identity not in run["inheritance_candidates"]:
+                    if identity and identity not in run["inheritance_candidates"]:
                         run["inheritance_candidates"].append(identity)
                     run["sp"] = int(run["sp"]) + 60
-                    result["logs"].append(f"{identity} 연속 이벤트 완주 · 계승 후보 해금 · SP +60")
+                    hint_logs = _grant_stage_three_hints(run, support, rng)
+                    completion = (
+                        f"{support_name} 연속 이벤트 완주 · SP +60"
+                        + (f" · {identity} 계승 후보 해금" if identity else "")
+                    )
+                    result["logs"].append(completion)
+                    result["logs"].extend(f"💡 {text}" for text in hint_logs)
                 break
     elif action == "rest":
         run["energy"] = min(100, before_energy + 50)
@@ -510,6 +1014,10 @@ def perform_training_action(
         result["logs"].append(
             f"{evaluation['rank']} 평가전 {'승리' if evaluation['win'] else '패배'} · SP +{evaluation['sp']}"
         )
+    inheritance_key = {35: "mid", 60: "late"}.get(int(run["turn"]))
+    if inheritance_key:
+        inheritance_logs = _apply_inheritance_event(run, inheritance_key, rng)
+        result["logs"].extend(inheritance_logs)
     if int(run["turn"]) >= MAX_TURNS:
         run["phase"] = "build"
     else:
@@ -520,7 +1028,7 @@ def perform_training_action(
         "action": action,
         "success": bool(result["success"]),
         "logs": list(result["logs"]),
-    }])[-20:]
+    }])[-3:]
     return result
 
 
@@ -569,6 +1077,7 @@ def normalize_effects(text: str) -> list[str]:
         "출혈": "bleed",
         "마비": "paralysis",
         "기절": "stun",
+        "빙결": "freeze",
         "흡혈": "lifesteal",
         "파괴": "destroy",
     }
@@ -587,6 +1096,10 @@ def normalize_effects(text: str) -> list[str]:
 
 
 def skill_sp_cost(skill: dict[str, Any]) -> int:
+    if skill.get("free"):
+        return 0
+    if "purchase_cost" in skill:
+        return max(0, int(skill["purchase_cost"]))
     dice = skill.get("dice", [])
     if not 1 <= len(dice) <= 3:
         raise BossTrainingError("스킬 하나에는 주사위가 1~3개 필요합니다.")
@@ -614,7 +1127,8 @@ def skill_sp_cost(skill: dict[str, Any]) -> int:
 
 
 def _build_sp_cost(run: dict[str, Any], build: dict[str, Any]) -> int:
-    total = sum(skill_sp_cost(skill) for skill in build.get("skills", []))
+    skills = ensure_skill_slots(run)
+    total = sum(skill_sp_cost(skill) for skill in skills)
     immunity = build.get("immunity")
     if immunity:
         if immunity not in IMMUNITIES:
@@ -631,7 +1145,10 @@ def _build_sp_cost(run: dict[str, Any], build: dict[str, Any]) -> int:
     passives = list(dict.fromkeys(build.get("passives", [])))
     if len(passives) > 3 or any(key not in GENERAL_PASSIVES for key in passives):
         raise BossTrainingError("일반 패시브는 최대 3개입니다.")
-    total += sum(GENERAL_PASSIVES[key][1] for key in passives)
+    passive_discounts = run.get("passive_factor_discounts", {})
+    for key in passives:
+        discount = min(50, max(0, int(passive_discounts.get(key, 0))))
+        total += math.ceil(GENERAL_PASSIVES[key][1] * (100 - discount) / 100)
     inheritance = build.get("inheritance")
     if inheritance:
         if inheritance not in run.get("inheritance_candidates", []):
@@ -647,18 +1164,446 @@ def _require_build_budget(run: dict[str, Any]) -> int:
     return cost
 
 
+def _sp_summary(run: dict[str, Any]) -> tuple[int, int, int]:
+    allocated = _build_sp_cost(run, run.get("build", {}))
+    owned = int(run.get("sp", 0))
+    return owned, allocated, owned - allocated
+
+
 def _default_skills() -> list[dict[str, Any]]:
     return [
-        {
-            "name": f"기본 기술 {index + 1}",
-            "dice": [{"type": "attack" if index % 2 == 0 else "defense", "min": 5, "max": 9}],
-            "effects": [],
-            "cooldown": 2,
-            "is_aoe": False,
-            "free": True,
-        }
-        for index in range(5)
+        deepcopy(BASE_SKILL_FAMILIES[key]["default"])
+        for key in GROWTH_KEYS
     ]
+
+
+def ensure_skill_slots(run: dict[str, Any]) -> list[dict[str, Any]]:
+    build = run.setdefault("build", {})
+    skills = list(build.get("skills", []))
+    if not build.get("skill_slots_initialized"):
+        defaults = _default_skills()
+        for index, skill in enumerate(skills[:5]):
+            defaults[index] = skill
+        skills = defaults
+        build["skills"] = skills
+        build["skill_slots_initialized"] = True
+    while len(skills) < 5:
+        skills.append(deepcopy(_default_skills()[len(skills)]))
+    del skills[5:]
+    build["skills"] = skills
+    return skills
+
+
+def _hint_discount(count: int) -> int:
+    return min(40, max(0, int(count)) * 10)
+
+
+def _discounted_cost(base_cost: int, hint_count: int) -> int:
+    return max(0, math.ceil(int(base_cost) * (100 - _hint_discount(hint_count)) / 100))
+
+
+def _estimate_card_cost(card) -> int:
+    total = 0
+    for dice in getattr(card, "dice_list", []) or []:
+        maximum = int(getattr(dice, "d_max", 0))
+        total += 25 if maximum <= 9 else 45 if maximum <= 14 else 75 if maximum <= 20 else 120
+        if getattr(dice, "action_type", "") == "counter":
+            total += 10
+        effect = str(getattr(dice, "effect", "") or "")
+        if "bleed" in effect:
+            total += 30
+        elif "paralysis" in effect:
+            total += 40
+        elif "stun" in effect:
+            total += 80
+        elif "freeze" in effect:
+            total += 150
+        elif "absorb_hp" in effect:
+            total += 90
+        elif "destroy_next" in effect:
+            total += 120
+    if getattr(card, "is_aoe", False):
+        total *= 2
+    return max(25, total)
+
+
+def _card_offer_spec(card_name: str) -> dict[str, Any] | None:
+    card = get_card(card_name)
+    if card is None:
+        return None
+    dice = []
+    for item in getattr(card, "dice_list", []) or []:
+        dice.append({
+            "type": str(getattr(item, "action_type", "attack")),
+            "min": int(getattr(item, "d_min", 1)),
+            "max": int(getattr(item, "d_max", 1)),
+            "effect": getattr(item, "effect", None),
+        })
+    if not dice:
+        return None
+    return {
+        "name": str(card_name),
+        "dice": dice,
+        "effects": [],
+        "cooldown": 2,
+        "is_aoe": bool(getattr(card, "is_aoe", False)),
+        "base_cost": _estimate_card_cost(card),
+        "catalog_kind": "equipped",
+    }
+
+
+def available_skill_offers(run: dict[str, Any]) -> list[dict[str, Any]]:
+    offers: list[dict[str, Any]] = []
+    for card_name, count in sorted(run.get("skill_hints", {}).items()):
+        if int(count) <= 0:
+            continue
+        spec = _card_offer_spec(str(card_name))
+        if not spec:
+            continue
+        spec["offer_id"] = f"card:{card_name}"
+        spec["hint_count"] = int(count)
+        offers.append(spec)
+    for specialty in GROWTH_KEYS:
+        change_count = int(run.get("base_skill_hints", {}).get(specialty, 0))
+        if change_count:
+            spec = deepcopy(BASE_SKILL_FAMILIES[specialty]["change"])
+            spec.update({
+                "offer_id": f"base:{specialty}:change",
+                "hint_count": change_count,
+                "catalog_kind": "base_change",
+            })
+            offers.append(spec)
+        upgrade_count = int(run.get("base_upgrade_hints", {}).get(specialty, 0))
+        if upgrade_count:
+            spec = deepcopy(BASE_SKILL_FAMILIES[specialty]["upgrade"])
+            spec.update({
+                "offer_id": f"base:{specialty}:upgrade",
+                "hint_count": upgrade_count,
+                "catalog_kind": "base_upgrade",
+            })
+            offers.append(spec)
+    for identity, count in sorted(run.get("special_preset_hints", {}).items()):
+        if int(count) <= 0 or identity not in SPECIAL_SKILL_PRESETS:
+            continue
+        spec = deepcopy(SPECIAL_SKILL_PRESETS[identity])
+        spec.update({
+            "offer_id": f"special:{identity}",
+            "hint_count": int(count),
+            "catalog_kind": "special",
+            "special_identity": identity,
+        })
+        offers.append(spec)
+    for factor_id, inherited in sorted(run.get("inherited_skill_offers", {}).items()):
+        count = int(inherited.get("hint_count", 0))
+        if count <= 0:
+            continue
+        spec = deepcopy(inherited.get("spec", {}))
+        if not spec.get("name") or not spec.get("dice"):
+            continue
+        spec.update({
+            "offer_id": f"factor:{factor_id}",
+            "hint_count": min(4, count),
+            "catalog_kind": "inherited",
+        })
+        offers.append(spec)
+    return offers
+
+
+def _roll_factor_star(grade: str, rng: random.Random) -> int:
+    roll = rng.random()
+    cumulative = 0.0
+    for stars, chance in FACTOR_STAR_DISTRIBUTIONS.get(
+        str(grade), FACTOR_STAR_DISTRIBUTIONS["C"]
+    ):
+        cumulative += chance
+        if roll <= cumulative:
+            return int(stars)
+    return int(
+        FACTOR_STAR_DISTRIBUTIONS.get(str(grade), FACTOR_STAR_DISTRIBUTIONS["C"])[-1][0]
+    )
+
+
+def _factor_skill_spec(skill: dict[str, Any]) -> dict[str, Any]:
+    spec = deepcopy(skill)
+    for metadata_key in (
+        "offer_id", "hint_count", "hint_discount", "special_identity",
+    ):
+        spec.pop(metadata_key, None)
+    purchase_cost = spec.pop("purchase_cost", None)
+    was_free = bool(spec.pop("free", False))
+    base_cost = spec.pop("base_cost", None)
+    if base_cost is None:
+        try:
+            base_cost = skill_sp_cost(spec)
+        except BossTrainingError:
+            base_cost = purchase_cost if purchase_cost is not None else 25
+    if was_free:
+        base_cost = 0
+    spec["base_cost"] = max(0, int(base_cost))
+    spec["catalog_kind"] = "inherited"
+    return spec
+
+
+def _factor_skill_id(spec: dict[str, Any]) -> str:
+    payload = json.dumps(spec, ensure_ascii=False, sort_keys=True)
+    return uuid.uuid5(uuid.NAMESPACE_URL, payload).hex
+
+
+def factor_display_text(factor: dict[str, Any]) -> str:
+    stars = max(1, min(3, int(factor.get("stars", 1))))
+    star_text = "★" * stars
+    kind = factor.get("kind")
+    if kind == "stat":
+        stat = str(factor.get("stat", ""))
+        labels = {"hp": "HP", "mental": "정신", "attack": "공격", "defense": "방어"}
+        amount = FACTOR_STAT_VALUES.get(stat, {}).get(stars, 0)
+        return f"{star_text} {labels.get(stat, stat)} 인자 · 발동 시 +{amount}"
+    if kind == "growth":
+        specialty = str(factor.get("specialty", ""))
+        amount = FACTOR_GROWTH_VALUES.get(stars, 0)
+        return (
+            f"{star_text} {GROWTH_LABELS.get(specialty, specialty)} 성장률 인자 "
+            f"· 발동 시 +{amount}%"
+        )
+    if kind == "skill":
+        name = str(factor.get("skill", {}).get("name", "스킬"))
+        source = "장착" if factor.get("source") == "registered" else "미장착 힌트"
+        return f"{star_text} {name} 스킬 인자 · 힌트 Lv.+{stars} ({source})"
+    if kind == "passive_discount":
+        key = str(factor.get("passive", ""))
+        name = GENERAL_PASSIVES.get(key, (key,))[0]
+        return f"{star_text} {name} 할인 인자 · 비용 -{stars * 10}%p"
+    return f"{star_text} 알 수 없는 인자"
+
+
+def _generate_boss_factors(boss: dict[str, Any], seed: str) -> list[dict[str, Any]]:
+    rng = random.Random(f"{seed}:boss-factors-v{FACTOR_VERSION}")
+    grade = str(boss.get("grade", "C"))
+    factors: list[dict[str, Any]] = []
+
+    vital_scores = {
+        "hp": int(boss.get("hp", 0)) / 20,
+        "mental": int(boss.get("mental", 0)) / 20,
+    }
+    vital_max = max(vital_scores.values())
+    vital_candidates = [key for key, value in vital_scores.items() if value == vital_max]
+    factors.append({
+        "kind": "stat",
+        "stat": rng.choice(vital_candidates),
+        "stars": _roll_factor_star(grade, rng),
+    })
+
+    combat_scores = {
+        "attack": int(boss.get("attack", 0)) * 25,
+        "defense": int(boss.get("defense", 0)) * 25,
+    }
+    combat_max = max(combat_scores.values())
+    combat_candidates = [key for key, value in combat_scores.items() if value == combat_max]
+    factors.append({
+        "kind": "stat",
+        "stat": rng.choice(combat_candidates),
+        "stars": _roll_factor_star(grade, rng),
+    })
+
+    base_growth = dict(
+        boss.get("growth_rates")
+        or {"hp": 10, "attack": 5, "defense": 5, "mental": 5, "tactics": 5}
+    )
+    inherited_growth = dict(boss.get("inherited_growth_bonus", {}))
+    effective_growth = {
+        key: int(base_growth.get(key, 0)) + int(inherited_growth.get(key, 0))
+        for key in GROWTH_KEYS
+    }
+    growth_max = max(effective_growth.values())
+    growth_candidates = [
+        key for key, value in effective_growth.items() if value == growth_max
+    ]
+    factors.append({
+        "kind": "growth",
+        "specialty": rng.choice(growth_candidates),
+        "stars": _roll_factor_star(grade, rng),
+    })
+
+    registered_names = set()
+    for skill in boss.get("build", {}).get("skills", []):
+        spec = _factor_skill_spec(skill)
+        registered_names.add(str(spec.get("name", "")))
+        if rng.random() < FACTOR_SKILL_ROLL:
+            factors.append({
+                "kind": "skill",
+                "factor_id": _factor_skill_id(spec),
+                "skill": spec,
+                "stars": _roll_factor_star(grade, rng),
+                "source": "registered",
+            })
+
+    for offer in boss.get("hint_catalog", []):
+        if str(offer.get("name", "")) in registered_names:
+            continue
+        spec = _factor_skill_spec(offer)
+        if rng.random() < FACTOR_HINT_ROLL:
+            factors.append({
+                "kind": "skill",
+                "factor_id": _factor_skill_id(spec),
+                "skill": spec,
+                "stars": _roll_factor_star(grade, rng),
+                "source": "hint",
+            })
+
+    for passive in boss.get("build", {}).get("passives", []):
+        if passive in GENERAL_PASSIVES and rng.random() < FACTOR_PASSIVE_ROLL:
+            factors.append({
+                "kind": "passive_discount",
+                "passive": passive,
+                "stars": _roll_factor_star(grade, rng),
+            })
+    return factors
+
+
+def ensure_completed_boss_factors(
+    record: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    normalized = deepcopy(record)
+    wrapped = isinstance(normalized.get("boss_data"), dict)
+    data = normalized["boss_data"] if wrapped else normalized
+    changed = False
+    if not data.get("boss_id") and normalized.get("boss_id"):
+        data["boss_id"] = normalized["boss_id"]
+        changed = True
+    if not data.get("grade") and normalized.get("grade"):
+        data["grade"] = normalized["grade"]
+        changed = True
+    if not data.get("growth_rates"):
+        data["growth_rates"] = {
+            "hp": 10, "attack": 5, "defense": 5, "mental": 5, "tactics": 5
+        }
+        changed = True
+    if "inherited_growth_bonus" not in data:
+        data["inherited_growth_bonus"] = {}
+        changed = True
+    if "hint_catalog" not in data:
+        data["hint_catalog"] = []
+        changed = True
+    if "scenario_id" not in data:
+        data["scenario_id"] = "normal"
+        changed = True
+    if int(data.get("factors_version", 0)) < FACTOR_VERSION or not data.get("factors"):
+        data["factors"] = _generate_boss_factors(
+            data,
+            str(normalized.get("boss_id") or data.get("boss_id") or data.get("name", "")),
+        )
+        data["factors_version"] = FACTOR_VERSION
+        changed = True
+    if wrapped:
+        normalized["boss_data"] = data
+    return normalized, changed
+
+
+def _apply_inheritance_event(
+    run: dict[str, Any],
+    event_key: str,
+    rng: random.Random | Any = random,
+) -> list[str]:
+    completed = run.setdefault("inheritance_events_done", [])
+    if event_key in completed:
+        return []
+    completed.append(event_key)
+    labels = {"start": "시작", "mid": "35턴", "late": "60턴"}
+    event_logs = [f"🧬 {labels.get(event_key, event_key)} 인자 계승"]
+    activations = 0
+    for parent in run.get("inheritance_parents", []):
+        parent_name = str(parent.get("name", "부모 보스"))
+        for factor in parent.get("factors", []):
+            stars = max(1, min(3, int(factor.get("stars", 1))))
+            if rng.random() >= FACTOR_ACTIVATION_CHANCES[stars]:
+                continue
+            kind = factor.get("kind")
+            if kind == "stat":
+                stat = str(factor.get("stat"))
+                amount = FACTOR_STAT_VALUES.get(stat, {}).get(stars, 0)
+                if not amount:
+                    continue
+                run[stat] = int(run.get(stat, 0)) + amount
+                stat_totals = run.setdefault(
+                    "inheritance_totals", {"stats": {}}
+                ).setdefault("stats", {})
+                stat_totals[stat] = int(stat_totals.get(stat, 0)) + amount
+                text = f"{stat} +{amount}"
+            elif kind == "growth":
+                specialty = str(factor.get("specialty"))
+                if specialty not in GROWTH_KEYS:
+                    continue
+                amount = FACTOR_GROWTH_VALUES[stars]
+                bonuses = run.setdefault("inherited_growth_bonus", {})
+                bonuses[specialty] = int(bonuses.get(specialty, 0)) + amount
+                text = f"{GROWTH_LABELS[specialty]} 성장률 +{amount}%"
+            elif kind == "skill":
+                spec = deepcopy(factor.get("skill", {}))
+                if not spec.get("name"):
+                    continue
+                factor_id = str(factor.get("factor_id") or _factor_skill_id(spec))
+                offers = run.setdefault("inherited_skill_offers", {})
+                entry = offers.setdefault(factor_id, {"spec": spec, "hint_count": 0})
+                entry["hint_count"] = min(
+                    4, int(entry.get("hint_count", 0)) + stars
+                )
+                text = f"{spec['name']} 힌트 Lv.{entry['hint_count']}"
+            elif kind == "passive_discount":
+                passive = str(factor.get("passive"))
+                if passive not in GENERAL_PASSIVES:
+                    continue
+                discounts = run.setdefault("passive_factor_discounts", {})
+                discounts[passive] = min(
+                    50, int(discounts.get(passive, 0)) + stars * 10
+                )
+                text = (
+                    f"{GENERAL_PASSIVES[passive][0]} 할인 "
+                    f"{discounts[passive]}%"
+                )
+            else:
+                continue
+            activations += 1
+            event_logs.append(f"• {parent_name} {'★' * stars} · {text}")
+    if not activations:
+        event_logs.append("• 발동한 인자가 없습니다.")
+    history = run.setdefault("inheritance_log", [])
+    history.extend(event_logs)
+    run["inheritance_log"] = history[-60:]
+    return event_logs
+
+
+def purchase_skill_offer(run: dict[str, Any], offer_id: str, slot_index: int) -> dict[str, Any]:
+    if not 0 <= int(slot_index) < 5:
+        raise BossTrainingError("스킬 슬롯은 1~5번이어야 합니다.")
+    offer = next(
+        (item for item in available_skill_offers(run) if item["offer_id"] == offer_id),
+        None,
+    )
+    if not offer:
+        raise BossTrainingError("아직 발견하지 못한 스킬 힌트입니다.")
+    skill = deepcopy(offer)
+    base_cost = int(skill.pop("base_cost"))
+    hint_count = int(skill.pop("hint_count"))
+    skill.pop("offer_id", None)
+    skill["purchase_cost"] = _discounted_cost(base_cost, hint_count)
+    skill["hint_discount"] = _hint_discount(hint_count)
+    skills = ensure_skill_slots(run)
+    previous = skills[int(slot_index)]
+    skills[int(slot_index)] = skill
+    try:
+        _require_build_budget(run)
+    except Exception:
+        skills[int(slot_index)] = previous
+        raise
+    return skill
+
+
+def restore_default_skill(run: dict[str, Any], slot_index: int) -> dict[str, Any]:
+    if not 0 <= int(slot_index) < 5:
+        raise BossTrainingError("스킬 슬롯은 1~5번이어야 합니다.")
+    skills = ensure_skill_slots(run)
+    skills[int(slot_index)] = deepcopy(_default_skills()[int(slot_index)])
+    return skills[int(slot_index)]
 
 
 def grade_for_score(score: int) -> str:
@@ -672,22 +1617,17 @@ def finalize_training_run(run: dict[str, Any]) -> dict[str, Any]:
     if run.get("phase") != "build" or int(run.get("turn", 0)) < MAX_TURNS:
         raise BossTrainingError("70턴 육성을 마친 뒤에만 보스를 완성할 수 있습니다.")
     build = deepcopy(run.get("build", {}))
-    skills = list(build.get("skills", []))
-    if len(skills) > 5:
-        raise BossTrainingError("스킬은 최대 5개입니다.")
+    skills = list(ensure_skill_slots(run))
     if sum(1 for skill in skills if skill.get("is_aoe")) > 2:
         raise BossTrainingError("광역 스킬은 최대 2개입니다.")
     paid_cost = _build_sp_cost(run, build)
     if paid_cost > int(run.get("sp", 0)):
         raise BossTrainingError(f"SP가 부족합니다. 필요 {paid_cost} / 보유 {int(run.get('sp', 0))}")
-    defaults = _default_skills()
-    while len(skills) < 5:
-        skills.append(defaults[len(skills)])
     build["skills"] = skills
     run["spent_sp"] = paid_cost
     score = _run_power_score(run, build)
     boss_id = uuid.uuid4().hex
-    return {
+    boss = {
         "boss_id": boss_id,
         "owner_id": None,
         "name": run["name"],
@@ -702,8 +1642,17 @@ def finalize_training_run(run: dict[str, Any]) -> dict[str, Any]:
         "grade": grade_for_score(score),
         "evaluation_results": deepcopy(run.get("evaluation_results", [])),
         "supports": deepcopy(run.get("supports", [])),
+        "growth_rates": deepcopy(run.get("growth_rates", {})),
+        "inherited_growth_bonus": deepcopy(run.get("inherited_growth_bonus", {})),
+        "hint_catalog": deepcopy(available_skill_offers(run)),
+        "scenario_id": run.get("scenario_id", "normal"),
+        "factors_version": FACTOR_VERSION,
         "created_at": datetime.now(KST).isoformat(),
     }
+    boss["factors"] = _generate_boss_factors(
+        boss, str(run.get("run_id") or boss_id)
+    )
+    return boss
 
 
 def _effect_code(effect: str) -> str | None:
@@ -713,6 +1662,7 @@ def _effect_code(effect: str) -> str | None:
         "stun": "stun_1_prob_20",
         "lifesteal": "absorb_hp_25",
         "destroy": "destroy_next_on_hit",
+        "freeze": "freeze_2_on_win",
     }.get(effect)
 
 
@@ -728,7 +1678,9 @@ class BossSkillCard(SkillCard):
             low, high = int(item["min"]), int(item["max"])
             if is_aoe and item["type"] == "attack":
                 low, high = max(1, math.floor(low * 0.75)), max(1, math.floor(high * 0.75))
-            effect = effect_codes[index] if index < len(effect_codes) else None
+            effect = item.get("effect")
+            if effect is None:
+                effect = effect_codes[index] if index < len(effect_codes) else None
             if inheritance == "카이안" and item["type"] == "counter":
                 if effect:
                     forced_extras.append(effect)
@@ -752,6 +1704,7 @@ class BossSkillCard(SkillCard):
             "stun": "기절 20%",
             "lifesteal": "흡혈 25%",
             "destroy": "다음 주사위 파괴",
+            "freeze": "빙결 2턴",
         }
         suffix = ", ".join(effects[key] for key in self.spec.get("effects", []) if key in effects)
         details = f"\n쿨다운 {self.cooldown}턴" + (f" · {suffix}" if suffix else "")
@@ -999,6 +1952,28 @@ def _decode_boss_row(row: Any) -> dict[str, Any]:
     return data
 
 
+async def _normalize_boss_rows(conn, cur, rows: list[Any]) -> list[dict[str, Any]]:
+    """레거시 보스 인자를 최초 조회 시 결정적으로 생성해 영구 저장한다."""
+    normalized_rows: list[dict[str, Any]] = []
+    changed_any = False
+    for row in rows:
+        decoded = _decode_boss_row(row)
+        normalized, changed = ensure_completed_boss_factors(decoded)
+        normalized_rows.append(normalized)
+        if changed:
+            await cur.execute(
+                "UPDATE user_bosses SET boss_data=%s WHERE boss_id=%s",
+                (
+                    json.dumps(normalized["boss_data"], ensure_ascii=False),
+                    normalized["boss_id"],
+                ),
+            )
+            changed_any = True
+    if changed_any:
+        await conn.commit()
+    return normalized_rows
+
+
 def weekly_key(now: datetime | None = None) -> str:
     current = (now or datetime.now(KST)).astimezone(KST)
     monday = (current - timedelta(days=current.weekday())).date()
@@ -1038,11 +2013,12 @@ async def list_owned_bosses(owner_id: int | str) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await _reset_stale_weekly_ratings(cur)
+            await conn.commit()
             await cur.execute(
                 "SELECT * FROM user_bosses WHERE owner_id=%s ORDER BY created_at DESC",
                 (str(owner_id),),
             )
-            return [_decode_boss_row(row) for row in await cur.fetchall()]
+            return await _normalize_boss_rows(conn, cur, list(await cur.fetchall()))
 
 
 async def get_boss_record(boss_id: str) -> dict[str, Any] | None:
@@ -1051,7 +2027,9 @@ async def get_boss_record(boss_id: str) -> dict[str, Any] | None:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await cur.execute("SELECT * FROM user_bosses WHERE boss_id=%s", (boss_id,))
             row = await cur.fetchone()
-            return _decode_boss_row(row) if row else None
+            if not row:
+                return None
+            return (await _normalize_boss_rows(conn, cur, [row]))[0]
 
 
 async def list_published_bosses(
@@ -1063,6 +2041,7 @@ async def list_published_bosses(
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await _reset_stale_weekly_ratings(cur)
+            await conn.commit()
             if scope == "world":
                 await cur.execute(
                     """SELECT * FROM user_bosses
@@ -1076,7 +2055,7 @@ async def list_published_bosses(
                        ORDER BY weekly_elo DESC,power_score DESC LIMIT %s""",
                     (int(guild_id), int(limit)),
                 )
-            return [_decode_boss_row(row) for row in await cur.fetchall()]
+            return await _normalize_boss_rows(conn, cur, list(await cur.fetchall()))
 
 
 async def get_boss_rankings(limit: int = 10) -> dict[str, list[dict[str, Any]]]:
@@ -1090,6 +2069,7 @@ async def get_boss_rankings(limit: int = 10) -> dict[str, list[dict[str, Any]]]:
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
             await _reset_stale_weekly_ratings(cur)
+            await conn.commit()
             for key, ordering in queries.items():
                 await cur.execute(
                     f"""SELECT * FROM user_bosses
@@ -1097,7 +2077,9 @@ async def get_boss_rankings(limit: int = 10) -> dict[str, list[dict[str, Any]]]:
                         ORDER BY {ordering} LIMIT %s""",
                     (int(limit),),
                 )
-                result[key] = [_decode_boss_row(row) for row in await cur.fetchall()]
+                result[key] = await _normalize_boss_rows(
+                    conn, cur, list(await cur.fetchall())
+                )
     return result
 
 
@@ -1189,12 +2171,27 @@ async def begin_boss_battle(boss_id: str) -> str:
     return battle_id
 
 
+def user_boss_grade_reward(
+    grade: str,
+    *,
+    factor: float = 1.0,
+) -> dict[str, int]:
+    multiplier = USER_BOSS_REWARD_MULTIPLIERS.get(str(grade), 1.0)
+    return {
+        "money": math.floor(5_000 * multiplier * factor),
+        "pt": math.floor(1_000 * multiplier * factor),
+        "contribution": math.floor(100 * multiplier * factor),
+    }
+
+
 async def finish_boss_battle(
     record: dict[str, Any],
     battle_id: str,
     challenger_id: int | str,
     attackers_won: bool,
     owner_name: str | None = None,
+    *,
+    self_challenge: bool = False,
 ) -> dict[str, Any]:
     boss_id = record["boss_id"]
     key = weekly_key()
@@ -1208,10 +2205,14 @@ async def finish_boss_battle(
                 await conn.rollback()
                 raise BossTrainingError("전투 결과를 기록할 보스가 없습니다.")
             current = 1500 if row.get("weekly_key") != key else int(row.get("weekly_elo", 1500))
-            # Boss expectation against a 1500 challenger, K=32.
+            # 자기 보스 도전은 전투 이력만 남기고 Elo에는 반영하지 않는다.
             expected = 1.0 / (1.0 + 10 ** ((1500 - current) / 400))
             actual = 0.0 if attackers_won else 1.0
-            updated = max(0, round(current + 32 * (actual - expected)))
+            updated = (
+                current
+                if self_challenge
+                else max(0, round(current + 32 * (actual - expected)))
+            )
             best = max(int(row.get("all_time_best_elo", 1500)), updated)
             await cur.execute(
                 """INSERT IGNORE INTO user_boss_battles
@@ -1221,7 +2222,13 @@ async def finish_boss_battle(
                     battle_id, boss_id, str(challenger_id),
                     "attacker_win" if attackers_won else "boss_win",
                     key, current, updated,
-                    json.dumps({"attackers_won": attackers_won}, ensure_ascii=False),
+                    json.dumps(
+                        {
+                            "attackers_won": attackers_won,
+                            "self_challenge": bool(self_challenge),
+                        },
+                        ensure_ascii=False,
+                    ),
                 ),
             )
             inserted = cur.rowcount == 1
@@ -1233,15 +2240,29 @@ async def finish_boss_battle(
                     (key, updated, best, boss_id),
                 )
             await conn.commit()
-    reward = {"money": 1_000 if attackers_won else 2_500, "pt": 200 if attackers_won else 500,
-              "contribution": 20 if attackers_won else 50}
+    reward = (
+        {"money": 0, "pt": 0, "contribution": 0}
+        if self_challenge
+        else user_boss_grade_reward(
+            str(record.get("grade", "C")),
+            factor=0.4 if attackers_won else 1.0,
+        )
+    )
+    if self_challenge:
+        return {
+            "elo_before": current,
+            "elo_after": updated,
+            "owner_reward": reward,
+            "granted": False,
+            "self_challenge": True,
+        }
     owner_id = str(record["owner_id"])
     granted = {"value": False}
 
     def grant(latest):
         state = ensure_boss_training_data(latest)
         ledger = state["rewarded_battle_ids"]
-        if battle_id in ledger or not inserted:
+        if battle_id in ledger or not inserted or self_challenge:
             return
         latest["money"] = int(latest.get("money", 0)) + reward["money"]
         latest["pt"] = int(latest.get("pt", 0)) + reward["pt"]
@@ -1261,7 +2282,13 @@ async def finish_boss_battle(
                     (battle_id,),
                 )
                 await conn.commit()
-    return {"elo_before": current, "elo_after": updated, "owner_reward": reward, "granted": granted["value"]}
+    return {
+        "elo_before": current,
+        "elo_after": updated,
+        "owner_reward": reward,
+        "granted": granted["value"],
+        "self_challenge": bool(self_challenge),
+    }
 
 
 async def get_public_supports(guild_id: int, exclude_user_id: int | str) -> list[dict[str, Any]]:
@@ -1301,7 +2328,11 @@ async def buy_training_shop_item(
     user_name: str,
     item_key: str,
 ) -> str:
-    prices = {"base_stat_license": 100_000, "growth_license": 200_000}
+    prices = {
+        "base_stat_license": 100_000,
+        "growth_license": 200_000,
+        "scenario_facility_expansion": 600_000,
+    }
     prices.update({key: data[1] for key, data in INNATE_PASSIVES.items()})
     if item_key not in prices:
         raise BossTrainingError("알 수 없는 상점 상품입니다.")
@@ -1404,8 +2435,15 @@ class BossTrainingHubView(_OwnerView):
         data = await get_user_data(self.author.id, self.author.display_name)
         run = ensure_boss_training_data(data).get("active_run")
         if run:
-            view = BossBuildView(self.author, self.guild_info) if run.get("phase") == "build" else BossTrainingRunView(self.author, self.guild_info)
-            return await interaction.response.edit_message(embed=await view.get_embed(), view=view)
+            if run.get("phase") == "build":
+                view = BossBuildView(self.author, self.guild_info)
+                return await interaction.response.edit_message(
+                    embed=await view.get_embed(), view=view
+                )
+            view = BossTrainingRunView(self.author, self.guild_info)
+            return await interaction.response.edit_message(
+                embeds=await view.get_embeds(), view=view
+            )
         view = BossSetupView(self.author, self.guild_info)
         await view.setup(data)
         await interaction.response.edit_message(embed=view.get_embed(), view=view)
@@ -1520,10 +2558,14 @@ class BossSetupView(_OwnerView):
         self.growth_rates = {"hp": 10, "attack": 5, "defense": 5, "mental": 5, "tactics": 5}
         self.base_tokens = {key: 0 for key in ("hp", "mental", "attack", "defense")}
         self.innate_passive: str | None = None
+        self.owned_bosses: list[dict[str, Any]] = []
+        self.parent_ids: list[str] = []
+        self.scenario_id = "normal"
 
     async def setup(self, user_data):
         self.user_data = user_data
         self.guild_supports = await get_public_supports(self.guild_info["guild_id"], self.author.id)
+        self.owned_bosses = await list_owned_bosses(self.author.id)
         self.rebuild()
 
     def rebuild(self):
@@ -1535,7 +2577,14 @@ class BossSetupView(_OwnerView):
                 min_values=min(3, len(characters)),
                 max_values=min(3, len(characters)),
                 options=[
-                    discord.SelectOption(label=str(char.get("name", "이름 없음"))[:100], value=str(index))
+                    discord.SelectOption(
+                        label=str(char.get("name", "이름 없음"))[:100],
+                        value=str(index),
+                        description=(
+                            f"주력 {GROWTH_LABELS[_support_specialty(char)]} · "
+                            f"장착 {', '.join(char.get('equipped_cards', []) or ['없음'])}"
+                        )[:100],
+                    )
                     for index, char in enumerate(characters[:25])
                 ],
                 row=0,
@@ -1553,7 +2602,10 @@ class BossSetupView(_OwnerView):
                 options=[
                     discord.SelectOption(
                         label=f"{support['name']} (+{support['upgrade']}강)"[:100],
-                        description=f"특기 {GROWTH_LABELS.get(support['specialty'], support['specialty'])}",
+                        description=(
+                            f"주력 {GROWTH_LABELS.get(support['specialty'], support['specialty'])} · "
+                            f"장착 {', '.join(support.get('equipped_cards', []) or ['없음'])}"
+                        )[:100],
                         value=str(index),
                     )
                     for index, support in enumerate(self.guild_supports[:25])
@@ -1592,6 +2644,14 @@ class BossSetupView(_OwnerView):
         configure = Button(label="📝 이름·성장률·기본 스탯", style=discord.ButtonStyle.primary, row=3)
         configure.callback = lambda interaction: interaction.response.send_modal(BossSetupModal(self))
         self.add_item(configure)
+        advanced = Button(label="🧬 계승·시나리오", style=discord.ButtonStyle.primary, row=3)
+
+        async def open_advanced(interaction):
+            view = BossAdvancedSetupView(self)
+            await interaction.response.edit_message(embed=view.get_embed(), view=view)
+
+        advanced.callback = open_advanced
+        self.add_item(advanced)
         start = Button(label="🌱 70턴 육성 시작", style=discord.ButtonStyle.success, row=3)
         start.callback = self.start
         self.add_item(start)
@@ -1601,11 +2661,25 @@ class BossSetupView(_OwnerView):
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         state = ensure_boss_training_data(self.user_data)
-        own_names = [
-            self.user_data["characters"][index].get("name", "이름 없음")
-            for index in self.own_indices if index < len(self.user_data.get("characters", []))
-        ]
-        borrowed = self.guild_supports[self.guild_index]["name"] if self.guild_index is not None else "미선택"
+        own_lines = []
+        for index in self.own_indices:
+            if index >= len(self.user_data.get("characters", [])):
+                continue
+            character = self.user_data["characters"][index]
+            cards = ", ".join(character.get("equipped_cards", []) or ["없음"])
+            own_lines.append(
+                f"• **{character.get('name', '이름 없음')}** · "
+                f"주력 {GROWTH_LABELS[_support_specialty(character)]} · 장착 {cards}"
+            )
+        if self.guild_index is not None:
+            support = self.guild_supports[self.guild_index]
+            cards = ", ".join(support.get("equipped_cards", []) or ["없음"])
+            borrowed = (
+                f"• **{support['name']}** (+{support['upgrade']}강) · "
+                f"주력 {GROWTH_LABELS.get(support['specialty'], support['specialty'])} · 장착 {cards}"
+            )
+        else:
+            borrowed = "• 미선택"
         growth_text = " · ".join(f"{GROWTH_LABELS[key]} +{value}%" for key, value in self.growth_rates.items())
         embed = discord.Embed(
             title="🌱 새 보스 육성 설정",
@@ -1613,7 +2687,14 @@ class BossSetupView(_OwnerView):
             color=discord.Color.green(),
         )
         embed.add_field(name="이름", value=self.boss_name or "미설정", inline=False)
-        embed.add_field(name="서포트", value=f"본인: {', '.join(own_names) or '미선택'}\n길드: {borrowed}", inline=False)
+        embed.add_field(
+            name="서포트 편성 · 주력/장착 카드 스냅샷",
+            value=(
+                f"**본인**\n{chr(10).join(own_lines) or '• 미선택'}\n"
+                f"**길드 공개**\n{borrowed}"
+            )[:1024],
+            inline=False,
+        )
         embed.add_field(
             name="성장률",
             value=growth_text + ("" if state["shop_unlocks"].get("growth_license") else "\n설정권 미보유: 기본 배분 적용"),
@@ -1623,6 +2704,22 @@ class BossSetupView(_OwnerView):
             name="기본 토큰",
             value=", ".join(f"{key} {value}" for key, value in self.base_tokens.items())
             + ("" if state["shop_unlocks"].get("base_stat_license") else "\n설정권 미보유: 적용 안 됨"),
+            inline=False,
+        )
+        selected_parents = [
+            row for row in self.owned_bosses if str(row.get("boss_id")) in self.parent_ids
+        ]
+        scenario = SCENARIOS.get(self.scenario_id, SCENARIOS["normal"])
+        parent_text = ", ".join(
+            f"{row.get('boss_name')} [{row.get('grade')}]"
+            for row in selected_parents
+        ) or "없음"
+        embed.add_field(
+            name="🧬 계승·시나리오",
+            value=(
+                f"부모: {parent_text}\n"
+                f"시나리오: **{scenario['name']}**"
+            ),
             inline=False,
         )
         if not self.guild_supports:
@@ -1637,23 +2734,181 @@ class BossSetupView(_OwnerView):
                 raise BossTrainingError("본인 서포트 3명을 선택해주세요.")
             if self.guild_index is None:
                 raise BossTrainingError("길드 공개 서포트 1명을 선택해주세요.")
+            current_bosses = await list_owned_bosses(self.author.id)
+            current_ids = {str(row.get("boss_id")) for row in current_bosses}
+            if any(parent_id not in current_ids for parent_id in self.parent_ids):
+                raise BossTrainingError(
+                    "선택한 부모 보스가 판매되었거나 더 이상 존재하지 않습니다. 고급 설정에서 다시 선택해주세요."
+                )
+            self.owned_bosses = current_bosses
 
             def create(latest):
                 create_training_run(
                     latest, self.boss_name, self.growth_rates, self.own_indices,
                     self.guild_supports[self.guild_index],
                     base_tokens=self.base_tokens, innate_passive=self.innate_passive,
+                    parent_records=[
+                        row for row in self.owned_bosses
+                        if str(row.get("boss_id")) in self.parent_ids
+                    ],
+                    scenario_id=self.scenario_id,
                 )
 
             await mutate_user_data(self.author.id, create, self.author.display_name)
             view = BossTrainingRunView(self.author, self.guild_info)
-            await interaction.response.edit_message(embed=await view.get_embed("육성을 시작했습니다."), view=view)
+            await interaction.response.edit_message(
+                embeds=await view.get_embeds("육성을 시작했습니다."),
+                view=view,
+            )
         except Exception as exc:
             await _reply_error(interaction, exc)
 
     async def back(self, interaction: discord.Interaction):
         view = BossTrainingHubView(self.author, self.guild_info)
         await interaction.response.edit_message(embed=await view.get_embed(), view=view)
+
+
+class BossAdvancedSetupView(_OwnerView):
+    PER_PAGE = 4
+
+    def __init__(self, setup_view: BossSetupView):
+        super().__init__(setup_view.author, timeout=300)
+        self.setup_view = setup_view
+        self.page = 0
+        self.rebuild()
+
+    def rebuild(self):
+        self.clear_items()
+        bosses = self.setup_view.owned_bosses
+        total_pages = max(1, math.ceil(len(bosses) / self.PER_PAGE))
+        self.page = max(0, min(self.page, total_pages - 1))
+        start = self.page * self.PER_PAGE
+        for offset, row in enumerate(bosses[start:start + self.PER_PAGE]):
+            boss_id = str(row["boss_id"])
+            selected = boss_id in self.setup_view.parent_ids
+            button = Button(
+                label=f"{'✅ ' if selected else ''}{row['boss_name']} [{row['grade']}]"[:80],
+                style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
+                row=offset // 2,
+            )
+
+            async def toggle(interaction, selected_id=boss_id):
+                if selected_id in self.setup_view.parent_ids:
+                    self.setup_view.parent_ids.remove(selected_id)
+                elif len(self.setup_view.parent_ids) >= 2:
+                    return await interaction.response.send_message(
+                        "계승 부모는 최대 2체입니다.", ephemeral=True
+                    )
+                else:
+                    self.setup_view.parent_ids.append(selected_id)
+                self.rebuild()
+                await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+            button.callback = toggle
+            self.add_item(button)
+
+        previous = Button(label="이전", disabled=self.page == 0, row=2)
+        following = Button(
+            label="다음", disabled=self.page >= total_pages - 1, row=2
+        )
+
+        async def move(interaction, delta):
+            self.page += delta
+            self.rebuild()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+        previous.callback = lambda interaction: move(interaction, -1)
+        following.callback = lambda interaction: move(interaction, 1)
+        self.add_item(previous)
+        self.add_item(following)
+
+        state = ensure_boss_training_data(self.setup_view.user_data)
+        scenario_options = [
+            discord.SelectOption(
+                label="일반 시나리오",
+                value="normal",
+                default=self.setup_view.scenario_id == "normal",
+            )
+        ]
+        if state["shop_unlocks"].get("scenario_facility_expansion"):
+            scenario_options.append(
+                discord.SelectOption(
+                    label="시설 확장 시나리오",
+                    value="facility_expansion",
+                    description="시설 최대 6 · 훈련 +15% · 평가전 SP +20%",
+                    default=self.setup_view.scenario_id == "facility_expansion",
+                )
+            )
+        scenario = Select(
+            placeholder="육성 시나리오 선택",
+            options=scenario_options,
+            row=3,
+        )
+
+        async def choose_scenario(interaction):
+            self.setup_view.scenario_id = interaction.data["values"][0]
+            self.rebuild()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+        scenario.callback = choose_scenario
+        self.add_item(scenario)
+        back = Button(label="설정으로 돌아가기", style=discord.ButtonStyle.primary, row=4)
+
+        async def go_back(interaction):
+            self.setup_view.rebuild()
+            await interaction.response.edit_message(
+                embed=self.setup_view.get_embed("고급 설정을 저장했습니다."),
+                view=self.setup_view,
+            )
+
+        back.callback = go_back
+        self.add_item(back)
+
+    def get_embed(self) -> discord.Embed:
+        bosses = self.setup_view.owned_bosses
+        total_pages = max(1, math.ceil(len(bosses) / self.PER_PAGE))
+        selected = [
+            row for row in bosses
+            if str(row.get("boss_id")) in self.setup_view.parent_ids
+        ]
+        factor_lines = []
+        for row in selected:
+            factors = row.get("boss_data", {}).get("factors", [])
+            factor_lines.append(
+                f"• **{row['boss_name']} [{row['grade']}]** · 인자 {len(factors)}개"
+            )
+        scenario = SCENARIOS.get(
+            self.setup_view.scenario_id, SCENARIOS["normal"]
+        )
+        embed = discord.Embed(
+            title="🧬 계승 부모·시나리오 설정",
+            description=(
+                "완성 보스 0~2체를 선택합니다. 인자는 시작·35턴·60턴에 각각 판정되며, "
+                "육성을 시작하면 부모 정보가 스냅샷으로 고정됩니다."
+            ),
+            color=discord.Color.purple(),
+        )
+        embed.add_field(
+            name=f"부모 선택 ({len(selected)}/2) · {self.page + 1}/{total_pages}쪽",
+            value="\n".join(factor_lines) or "선택하지 않음",
+            inline=False,
+        )
+        embed.add_field(
+            name=f"시나리오 · {scenario['name']}",
+            value=scenario["description"],
+            inline=False,
+        )
+        for row in selected:
+            factors = row.get("boss_data", {}).get("factors", [])
+            embed.add_field(
+                name=f"🔎 {row['boss_name']} 인자",
+                value=(
+                    "\n".join(f"• {factor_display_text(factor)}" for factor in factors)
+                    or "인자 없음"
+                )[:1024],
+                inline=False,
+            )
+        return embed
 
 
 class AbortBossModal(Modal, title="보스 육성 포기"):
@@ -1701,9 +2956,13 @@ class BossTrainingRunView(_OwnerView):
                 button.callback = pick
                 self.add_item(button)
         else:
+            success_rate = 100 - training_failure_rate(run or {})
             action_buttons = [
-                ("❤️ HP", "hp", 0), ("⚔️ 공격", "attack", 0), ("🛡️ 방어", "defense", 0),
-                ("🔮 정신", "mental", 0), ("📘 전술", "tactics", 0),
+                (f"❤️ HP {success_rate}%", "hp", 0),
+                (f"⚔️ 공격 {success_rate}%", "attack", 0),
+                (f"🛡️ 방어 {success_rate}%", "defense", 0),
+                (f"🔮 정신 {success_rate}%", "mental", 0),
+                (f"📘 전술 {success_rate}%", "tactics", 0),
                 ("🛌 휴식", "rest", 1), ("🎡 외출", "outing", 1), ("🏥 치료", "infirmary", 1),
             ]
             for label, action, row in action_buttons:
@@ -1734,22 +2993,24 @@ class BossTrainingRunView(_OwnerView):
         back.callback = back_to_hub
         self.add_item(back)
 
-    async def get_embed(self, message: str | None = None) -> discord.Embed:
+    async def get_embeds(self, message: str | None = None) -> list[discord.Embed]:
         data = await get_user_data(self.author.id, self.author.display_name)
         run = ensure_boss_training_data(data).get("active_run")
         if not run:
-            return discord.Embed(title="육성 정보 없음", color=discord.Color.red())
+            return [discord.Embed(title="육성 정보 없음", color=discord.Color.red())]
+        _refresh_support_specialties(run)
         self.rebuild(run)
         energy = max(0, min(100, int(run["energy"])))
-        embed = discord.Embed(
+        status_text = (
+            f"체력 {'🟩' * (energy // 10)}{'⬜' * (10 - energy // 10)} {energy}/100 · "
+            f"기분 {'★' * int(run['mood'])}{'☆' * (5 - int(run['mood']))}"
+        )
+        main_embed = discord.Embed(
             title=f"👑 {run['name']} · {int(run['turn'])}/70턴",
-            description=message or (
-                f"체력 {'🟩' * (energy // 10)}{'⬜' * (10 - energy // 10)} {energy}/100 · "
-                f"기분 {'★' * int(run['mood'])}{'☆' * (5 - int(run['mood']))}"
-            ),
+            description=status_text + (f"\n\n{message}" if message else ""),
             color=discord.Color.dark_purple(),
         )
-        embed.add_field(
+        main_embed.add_field(
             name="현재 능력",
             value=(
                 f"HP **{int(run['hp']):,}** · 정신 **{int(run['mental']):,}** · "
@@ -1758,33 +3019,156 @@ class BossTrainingRunView(_OwnerView):
             ),
             inline=False,
         )
-        placement_lines = []
-        for action in GROWTH_KEYS:
-            names = [
-                run["supports"][index]["name"]
-                for index in run.get("support_placements", {}).get(action, [])
+        success_rate = 100 - training_failure_rate(run)
+        main_embed.add_field(
+            name="훈련 성공률",
+            value=" · ".join(
+                f"{GROWTH_LABELS[action]} **{success_rate}%**"
+                for action in GROWTH_KEYS
+            ) + (" · 부상 페널티 적용 중" if run.get("injured") else ""),
+            inline=False,
+        )
+        main_embed.add_field(
+            name="교차 성장",
+            value=(
+                "❤️ HP: 방어 +2 · 정신 +30 · SP +8\n"
+                "🔮 정신: 공격 +2 · 방어 +1 · SP +8\n"
+                "🛡️ 방어: HP +180 · 정신 +30 · SP +8\n"
+                "⚔️ 공격: 정신 +110 · SP +12\n"
+                "📘 전술: 공격 +2 · 정신 +30 · SP +35 · **체력 +5**"
+            ),
+            inline=False,
+        )
+        parent_names = [
+            f"{parent.get('name', '부모')} [{parent.get('grade', 'C')}]"
+            for parent in run.get("inheritance_parents", [])
+        ]
+        growth_bonus = " · ".join(
+            f"{GROWTH_LABELS.get(key, key)} +{value}%"
+            for key, value in run.get("inherited_growth_bonus", {}).items()
+            if int(value)
+        ) or "없음"
+        passive_discounts = " · ".join(
+            f"{GENERAL_PASSIVES[key][0]} {value}%"
+            for key, value in run.get("passive_factor_discounts", {}).items()
+            if key in GENERAL_PASSIVES and int(value)
+        ) or "없음"
+        inherited_stats = " · ".join(
+            f"{key} +{value}"
+            for key, value in run.get("inheritance_totals", {}).get("stats", {}).items()
+            if int(value)
+        ) or "없음"
+        inherited_hints = sum(
+            int(value.get("hint_count", 0))
+            for value in run.get("inherited_skill_offers", {}).values()
+        )
+        scenario = SCENARIOS.get(run.get("scenario_id", "normal"), SCENARIOS["normal"])
+        main_embed.add_field(
+            name="🧬 계승·시나리오",
+            value=(
+                f"부모: {', '.join(parent_names) or '없음'}\n"
+                f"시나리오: **{scenario['name']}**\n"
+                f"완료 시점: {', '.join(run.get('inheritance_events_done', [])) or '없음'}\n"
+                f"누적 스탯: {inherited_stats}\n"
+                f"누적 성장률: {growth_bonus}\n"
+                f"패시브 할인: {passive_discounts}\n"
+                f"계승 스킬 힌트: Lv. 합계 {inherited_hints}"
+            )[:1024],
+            inline=False,
+        )
+        parent_factor_lines = []
+        for parent in run.get("inheritance_parents", []):
+            factor_lines = [
+                f"└ {factor_display_text(factor)}"
+                for factor in parent.get("factors", [])
             ]
-            if names:
-                placement_lines.append(f"**{GROWTH_LABELS[action]}:** {', '.join(names)}")
-        embed.add_field(name="이번 턴 서포트", value="\n".join(placement_lines) or "배치 없음", inline=False)
+            parent_factor_lines.append(
+                f"**{parent.get('name', '부모')} [{parent.get('grade', 'C')}]**\n"
+                + ("\n".join(factor_lines) if factor_lines else "└ 인자 없음")
+            )
+        if parent_factor_lines:
+            main_embed.add_field(
+                name="🔎 부모 보스 인자",
+                value="\n\n".join(parent_factor_lines)[:1024],
+                inline=False,
+            )
         if run.get("pending_event_choice"):
-            embed.add_field(
+            main_embed.add_field(
                 name="✨ 연속 이벤트 2단계",
                 value=f"{run['pending_event_choice']['name']}의 보상을 선택해주세요.",
                 inline=False,
             )
         if run.get("evaluation_results"):
             last = run["evaluation_results"][-1]
-            embed.add_field(
+            main_embed.add_field(
                 name="최근 평가전",
                 value=f"{last['rank']} · {'승리' if last['win'] else '패배'} · SP +{last['sp']}",
                 inline=False,
             )
-        if run.get("history"):
-            latest = run["history"][-1]
-            logs = "\n".join(latest.get("logs", []))
-            embed.add_field(name="최근 행동", value=f"{latest['turn']}턴 {latest['action']}\n{logs or '완료'}"[:1024], inline=False)
-        return embed
+
+        placement_lines = []
+        placements = run.get("support_placements", {})
+        for action in GROWTH_KEYS:
+            names = []
+            for index in placements.get(action, []):
+                if not 0 <= int(index) < len(run.get("supports", [])):
+                    continue
+                support = run["supports"][int(index)]
+                friendship = (
+                    int(support.get("bond", 0)) >= 80
+                    and support.get("specialty") == action
+                )
+                names.append(
+                    f"{'✨💞 ' if friendship else ''}{support.get('name', '서포트')}"
+                )
+            placement_lines.append(
+                f"**{GROWTH_LABELS[action]} 훈련** · {', '.join(names) or '참가 서포트 없음'}"
+            )
+        bond_lines = []
+        for index, support in enumerate(run.get("supports", [])):
+            specialty = str(support.get("specialty", "tactics"))
+            bond_lines.append(
+                f"**{support.get('name', '서포트')}** · "
+                f"인연 {int(support.get('bond', 0))}/100 · "
+                f"연속 이벤트 {int(support.get('event_stage', 0))}/3 · "
+                f"+{int(support.get('upgrade', 0))}강 · "
+                f"주력 {GROWTH_LABELS.get(specialty, specialty)}"
+            )
+        support_embed = discord.Embed(
+            title="🤝 훈련별 참가 서포트",
+            description="\n".join(placement_lines),
+            color=discord.Color.teal(),
+        )
+        support_embed.add_field(
+            name="💞 인연 정보",
+            value="\n".join(bond_lines) or "편성된 서포트가 없습니다.",
+            inline=False,
+        )
+        support_embed.set_footer(
+            text="✨💞 표시는 해당 주력 분야에서 우정 트레이닝이 가능한 서포트입니다."
+        )
+
+        history_lines = []
+        for entry in run.get("history", [])[-3:]:
+            action_label = TRAINING_ACTIONS.get(
+                entry.get("action"), {"label": entry.get("action", "행동")}
+            )["label"]
+            details = " · ".join(entry.get("logs", [])) or "완료"
+            history_lines.append(
+                f"**{int(entry.get('turn', 0))}턴 · {action_label}**\n{details}"
+            )
+        log_text = "\n\n".join(history_lines) or "아직 육성 로그가 없습니다."
+        if len(log_text) > 3900:
+            log_text = "…(이전 로그 생략)\n" + log_text[-3870:]
+        log_embed = discord.Embed(
+            title="📜 최근 3턴 육성 로그",
+            description=log_text,
+            color=discord.Color.orange(),
+        )
+        return [main_embed, support_embed, log_embed]
+
+    async def get_embed(self, message: str | None = None) -> discord.Embed:
+        return (await self.get_embeds(message))[0]
 
     async def run_action(self, interaction: discord.Interaction, action: str):
         try:
@@ -1808,7 +3192,10 @@ class BossTrainingRunView(_OwnerView):
                 await interaction.edit_original_response(embed=await view.get_embed("70턴 육성을 마쳤습니다. 최종 빌드를 확정해주세요."), view=view)
             else:
                 self.rebuild(run)
-                await interaction.edit_original_response(embed=await self.get_embed(message), view=self)
+                await interaction.edit_original_response(
+                    embeds=await self.get_embeds(message),
+                    view=self,
+                )
         except Exception as exc:
             await _reply_error(interaction, exc)
 
@@ -1823,57 +3210,616 @@ class BossTrainingRunView(_OwnerView):
                 result["text"] = resolve_support_event_choice(run, choice)
 
             await mutate_user_data(self.author.id, mutate, self.author.display_name)
-            await interaction.response.edit_message(embed=await self.get_embed(result["text"]), view=self)
+            await interaction.response.edit_message(
+                embeds=await self.get_embeds(result["text"]),
+                view=self,
+            )
         except Exception as exc:
             await _reply_error(interaction, exc)
 
 
-class BossSkillModal(Modal, title="커스텀 보스 스킬"):
+class BossSkillNameModal(Modal, title="커스텀 스킬 이름"):
     skill_name = TextInput(label="스킬 이름", min_length=1, max_length=30)
-    dice = TextInput(label="주사위", placeholder="공격:8-14, 반격:5-9", max_length=100)
-    effects = TextInput(label="효과 (최대 2개)", placeholder="출혈, 파괴 또는 없음", required=False, max_length=40)
-    cooldown = TextInput(label="쿨다운 1~4", default="2", max_length=1)
-    aoe = TextInput(label="광역 여부 (예/아니오)", default="아니오", max_length=5)
 
-    def __init__(self, parent):
+    def __init__(self, wizard):
         super().__init__()
-        self.parent = parent
+        self.wizard = wizard
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
             skill = {
                 "name": self.skill_name.value.strip(),
-                "dice": parse_dice_spec(self.dice.value),
-                "effects": normalize_effects(self.effects.value or ""),
-                "cooldown": int(self.cooldown.value),
-                "is_aoe": self.aoe.value.strip().lower() in {"예", "yes", "y", "true", "1"},
+                "dice": deepcopy(self.wizard.dice),
+                "effects": list(self.wizard.effects),
+                "cooldown": int(self.wizard.cooldown),
+                "is_aoe": bool(self.wizard.is_aoe),
+                "catalog_kind": "custom",
             }
             cost = skill_sp_cost(skill)
+            slot_index = self.wizard.slot_index
 
-            def add(latest):
+            def save(latest):
                 run = ensure_boss_training_data(latest).get("active_run")
                 if not run or run.get("phase") != "build":
                     raise BossTrainingError("최종 빌드 단계가 아닙니다.")
-                skills = run["build"].setdefault("skills", [])
-                if len(skills) >= 5:
-                    raise BossTrainingError("이미 스킬 5개를 구성했습니다.")
-                if skill["is_aoe"] and sum(1 for item in skills if item.get("is_aoe")) >= 2:
+                skills = ensure_skill_slots(run)
+                if (
+                    skill["is_aoe"]
+                    and sum(
+                        1 for index, item in enumerate(skills)
+                        if index != slot_index and item.get("is_aoe")
+                    ) >= 2
+                ):
                     raise BossTrainingError("광역 스킬은 최대 2개입니다.")
-                skills.append(skill)
-                _require_build_budget(run)
+                previous = skills[slot_index]
+                skills[slot_index] = skill
+                try:
+                    _require_build_budget(run)
+                except Exception:
+                    skills[slot_index] = previous
+                    raise
 
-            await mutate_user_data(self.parent.author.id, add, self.parent.author.display_name)
-            self.parent.rebuild()
-            await interaction.response.edit_message(embed=await self.parent.get_embed(f"{skill['name']} 추가 · {cost} SP"), view=self.parent)
+            await mutate_user_data(
+                self.wizard.author.id, save, self.wizard.author.display_name
+            )
+            view = BossSkillManagementView(
+                self.wizard.author,
+                self.wizard.guild_info,
+                selected_slot=slot_index,
+            )
+            await interaction.response.edit_message(
+                embed=await view.get_embed(
+                    f"{slot_index + 1}번 슬롯에 **{skill['name']}** 저장 · {cost} SP"
+                ),
+                view=view,
+            )
+        except Exception as exc:
+            await _reply_error(interaction, exc)
+
+
+class BossSkillWizardView(_OwnerView):
+    ACTIONS = (
+        ("⚔️ 공격", "attack"),
+        ("🛡️ 방어", "defense"),
+        ("⚡ 반격", "counter"),
+        ("💚 회복", "heal"),
+        ("🔮 정신", "mental_heal"),
+    )
+    TIERS = ((5, 9), (8, 14), (12, 20), (18, 30))
+    EFFECTS = (
+        ("🩸 출혈", "bleed"),
+        ("⚡ 마비", "paralysis"),
+        ("💫 기절", "stun"),
+        ("❄️ 빙결 2턴", "freeze"),
+        ("🧛 흡혈", "lifesteal"),
+        ("💥 파괴", "destroy"),
+    )
+
+    def __init__(
+        self,
+        author,
+        guild_info,
+        slot_index,
+        *,
+        total_sp: int = 0,
+        other_allocated_cost: int = 0,
+    ):
+        super().__init__(author, timeout=600)
+        self.guild_info = guild_info
+        self.slot_index = int(slot_index)
+        self.stage = "count"
+        self.target_dice_count = 0
+        self.pending_action: str | None = None
+        self.dice: list[dict[str, Any]] = []
+        self.effects: list[str] = []
+        self.cooldown = 2
+        self.is_aoe = False
+        self.total_sp = int(total_sp)
+        self.other_allocated_cost = int(other_allocated_cost)
+        self.rebuild()
+
+    def rebuild(self):
+        self.clear_items()
+        if self.stage == "count":
+            for count in (1, 2, 3):
+                button = Button(
+                    label=f"주사위 {count}개",
+                    style=discord.ButtonStyle.primary,
+                    row=0,
+                )
+
+                async def choose(interaction, selected=count):
+                    self.target_dice_count = selected
+                    self.stage = "type"
+                    self.rebuild()
+                    await interaction.response.edit_message(
+                        embed=self.get_embed(), view=self
+                    )
+
+                button.callback = choose
+                self.add_item(button)
+        elif self.stage == "type":
+            for label, action in self.ACTIONS:
+                button = Button(label=label, style=discord.ButtonStyle.primary, row=0)
+
+                async def choose(interaction, selected=action):
+                    self.pending_action = selected
+                    self.stage = "tier"
+                    self.rebuild()
+                    await interaction.response.edit_message(
+                        embed=self.get_embed(), view=self
+                    )
+
+                button.callback = choose
+                self.add_item(button)
+        elif self.stage == "tier":
+            for low, high in self.TIERS:
+                button = Button(
+                    label=f"{low}~{high}",
+                    style=discord.ButtonStyle.primary,
+                    row=0,
+                )
+
+                async def choose(interaction, selected_low=low, selected_high=high):
+                    self.dice.append({
+                        "type": self.pending_action,
+                        "min": selected_low,
+                        "max": selected_high,
+                    })
+                    self.pending_action = None
+                    self.stage = (
+                        "type"
+                        if len(self.dice) < self.target_dice_count
+                        else "effects"
+                    )
+                    self.rebuild()
+                    await interaction.response.edit_message(
+                        embed=self.get_embed(), view=self
+                    )
+
+                button.callback = choose
+                self.add_item(button)
+        elif self.stage == "effects":
+            for effect_index, (label, effect) in enumerate(self.EFFECTS):
+                button = Button(
+                    label=("✅ " if effect in self.effects else "") + label,
+                    style=(
+                        discord.ButtonStyle.success
+                        if effect in self.effects
+                        else discord.ButtonStyle.secondary
+                    ),
+                    row=effect_index // 5,
+                )
+
+                async def toggle(interaction, selected=effect):
+                    if selected in self.effects:
+                        self.effects.remove(selected)
+                    elif len(self.effects) < 2:
+                        self.effects.append(selected)
+                    else:
+                        return await interaction.response.send_message(
+                            "부가효과는 최대 2개입니다.", ephemeral=True
+                        )
+                    self.rebuild()
+                    await interaction.response.edit_message(
+                        embed=self.get_embed(), view=self
+                    )
+
+                button.callback = toggle
+                self.add_item(button)
+            next_button = Button(
+                label="효과 선택 완료",
+                style=discord.ButtonStyle.primary,
+                row=2,
+            )
+
+            async def next_stage(interaction):
+                self.stage = "cooldown"
+                self.rebuild()
+                await interaction.response.edit_message(
+                    embed=self.get_embed(), view=self
+                )
+
+            next_button.callback = next_stage
+            self.add_item(next_button)
+        elif self.stage == "cooldown":
+            for value in (1, 2, 3, 4):
+                button = Button(
+                    label=f"쿨다운 {value}턴",
+                    style=discord.ButtonStyle.primary,
+                    row=0,
+                )
+
+                async def choose(interaction, selected=value):
+                    self.cooldown = selected
+                    self.stage = "area"
+                    self.rebuild()
+                    await interaction.response.edit_message(
+                        embed=self.get_embed(), view=self
+                    )
+
+                button.callback = choose
+                self.add_item(button)
+        elif self.stage == "area":
+            for label, aoe in (("🗡️ 단일", False), ("☄️ 광역", True)):
+                button = Button(label=label, style=discord.ButtonStyle.danger, row=0)
+
+                async def choose(interaction, selected=aoe):
+                    if selected and self.cooldown < 2:
+                        return await interaction.response.send_message(
+                            "광역 스킬의 최소 쿨다운은 2턴입니다.",
+                            ephemeral=True,
+                        )
+                    self.is_aoe = selected
+                    self.stage = "name"
+                    self.rebuild()
+                    await interaction.response.edit_message(
+                        embed=self.get_embed(), view=self
+                    )
+
+                button.callback = choose
+                self.add_item(button)
+        elif self.stage == "name":
+            name_button = Button(
+                label="✍️ 스킬 이름 입력",
+                style=discord.ButtonStyle.success,
+                row=0,
+            )
+            name_button.callback = (
+                lambda interaction: interaction.response.send_modal(
+                    BossSkillNameModal(self)
+                )
+            )
+            self.add_item(name_button)
+        cancel = Button(label="취소", style=discord.ButtonStyle.secondary, row=4)
+
+        async def cancel_build(interaction):
+            view = BossSkillManagementView(
+                self.author, self.guild_info, selected_slot=self.slot_index
+            )
+            await interaction.response.edit_message(
+                embed=await view.get_embed("커스텀 제작을 취소했습니다."),
+                view=view,
+            )
+
+        cancel.callback = cancel_build
+        self.add_item(cancel)
+
+    def get_embed(self) -> discord.Embed:
+        action_labels = dict((value, label) for label, value in self.ACTIONS)
+        dice_text = " ➜ ".join(
+            f"{action_labels.get(item['type'], item['type'])} {item['min']}~{item['max']}"
+            for item in self.dice
+        ) or "미선택"
+        stage_labels = {
+            "count": "주사위 개수를 선택하세요.",
+            "type": f"{len(self.dice) + 1}번째 주사위 종류를 선택하세요.",
+            "tier": f"{len(self.dice) + 1}번째 주사위 위력 구간을 선택하세요.",
+            "effects": "부가효과를 최대 2개 선택하세요.",
+            "cooldown": "재사용 대기시간을 선택하세요.",
+            "area": "단일 또는 광역을 선택하면 마지막으로 이름만 입력합니다.",
+            "name": "최종 SP 비용을 확인한 뒤 스킬 이름만 입력하세요.",
+        }
+        effects = ", ".join(self.effects) or "없음"
+        current_cost = 0
+        if self.dice:
+            current_cost = skill_sp_cost({
+                "name": "설계 중",
+                "dice": self.dice,
+                "effects": self.effects,
+                "cooldown": self.cooldown,
+                "is_aoe": self.is_aoe,
+            })
+        projected_remaining = self.total_sp - self.other_allocated_cost - current_cost
+        estimate_note = (
+            "\n※ 쿨다운과 범위를 고르기 전에는 **쿨다운 2턴·단일** 기준 예상값입니다."
+            if self.stage in {"count", "type", "tier", "effects", "cooldown"}
+            else ""
+        )
+        embed = discord.Embed(
+            title=f"🧰 커스텀 스킬 제작 · 슬롯 {self.slot_index + 1}",
+            description=stage_labels[self.stage],
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="현재 설계",
+            value=(
+                f"주사위: {dice_text}\n효과: {effects}\n"
+                f"쿨다운: {self.cooldown}턴 · 범위: {'광역' if self.is_aoe else '단일'}"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="SP 예상",
+            value=(
+                f"보유 **{self.total_sp:,}** · 다른 배정 **{self.other_allocated_cost:,}**\n"
+                f"현재 설계 비용 **{current_cost:,}** · 전체 배정 예상 "
+                f"**{self.other_allocated_cost + current_cost:,}**\n"
+                f"저장 후 남은 SP "
+                f"**{projected_remaining:,}**{estimate_note}"
+            ),
+            inline=False,
+        )
+        return embed
+
+
+class BossSkillManagementView(_OwnerView):
+    def __init__(self, author, guild_info, selected_slot=0):
+        super().__init__(author, timeout=600)
+        self.guild_info = guild_info
+        self.selected_slot = max(0, min(4, int(selected_slot)))
+        self.run: dict[str, Any] | None = None
+        self.rebuild()
+
+    def rebuild(self):
+        self.clear_items()
+        for index in range(5):
+            button = Button(
+                label=f"{'✅ ' if index == self.selected_slot else ''}{index + 1}번",
+                style=(
+                    discord.ButtonStyle.success
+                    if index == self.selected_slot
+                    else discord.ButtonStyle.secondary
+                ),
+                row=0,
+            )
+
+            async def choose(interaction, selected=index):
+                self.selected_slot = selected
+                self.rebuild()
+                await interaction.response.edit_message(
+                    embed=await self.get_embed(), view=self
+                )
+
+            button.callback = choose
+            self.add_item(button)
+        custom = Button(label="🧰 커스텀 제작", style=discord.ButtonStyle.primary, row=1)
+
+        async def open_custom(interaction):
+            data = await get_user_data(self.author.id, self.author.display_name)
+            run = ensure_boss_training_data(data).get("active_run")
+            if not run:
+                return await _reply_error(
+                    interaction, BossTrainingError("진행 중인 최종 빌드가 없습니다.")
+                )
+            skills = ensure_skill_slots(run)
+            allocated = _build_sp_cost(run, run.get("build", {}))
+            old_cost = skill_sp_cost(skills[self.selected_slot])
+            view = BossSkillWizardView(
+                self.author,
+                self.guild_info,
+                self.selected_slot,
+                total_sp=int(run.get("sp", 0)),
+                other_allocated_cost=max(0, allocated - old_cost),
+            )
+            await interaction.response.edit_message(embed=view.get_embed(), view=view)
+
+        custom.callback = open_custom
+        self.add_item(custom)
+        hints = Button(label="💡 힌트 프리셋", style=discord.ButtonStyle.success, row=1)
+
+        async def open_hints(interaction):
+            view = BossHintCatalogView(
+                self.author, self.guild_info, self.selected_slot
+            )
+            await interaction.response.edit_message(
+                embed=await view.get_embed(), view=view
+            )
+
+        hints.callback = open_hints
+        self.add_item(hints)
+        restore = Button(label="↩️ 기본기 복원", style=discord.ButtonStyle.secondary, row=1)
+        restore.callback = self.restore
+        self.add_item(restore)
+        back = Button(label="최종 빌드로", style=discord.ButtonStyle.secondary, row=2)
+
+        async def back_to_build(interaction):
+            view = BossBuildView(self.author, self.guild_info)
+            await interaction.response.edit_message(
+                embed=await view.get_embed(), view=view
+            )
+
+        back.callback = back_to_build
+        self.add_item(back)
+
+    async def get_embed(self, message: str | None = None) -> discord.Embed:
+        data = await get_user_data(self.author.id, self.author.display_name)
+        run = ensure_boss_training_data(data).get("active_run")
+        if not run:
+            return discord.Embed(title="스킬 편집 정보 없음", color=discord.Color.red())
+        skills = ensure_skill_slots(run)
+        self.run = run
+        lines = [
+            f"{'▶' if index == self.selected_slot else '•'} **{index + 1}. {skill['name']}**"
+            f" · {skill_sp_cost(skill)} SP"
+            f"{' · 광역' if skill.get('is_aoe') else ''}"
+            for index, skill in enumerate(skills)
+        ]
+        owned, allocated, remaining = _sp_summary(run)
+        embed = discord.Embed(
+            title="🎴 보스 스킬 슬롯 편집",
+            description=message or (
+                "슬롯을 고른 뒤 커스텀 제작, 발견한 힌트 프리셋 구매, "
+                "기본기 복원 중 하나를 선택하세요."
+            ),
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="SP 현황",
+            value=(
+                f"보유 **{owned:,}** · 전체 배정 **{allocated:,}** · "
+                f"남은 **{remaining:,} SP**"
+            ),
+            inline=False,
+        )
+        embed.add_field(name="현재 5개 슬롯", value="\n".join(lines), inline=False)
+        return embed
+
+    async def restore(self, interaction):
+        try:
+            slot = self.selected_slot
+
+            def apply(latest):
+                run = ensure_boss_training_data(latest).get("active_run")
+                if not run or run.get("phase") != "build":
+                    raise BossTrainingError("최종 빌드 단계가 아닙니다.")
+                restore_default_skill(run, slot)
+
+            await mutate_user_data(
+                self.author.id, apply, self.author.display_name
+            )
+            await interaction.response.edit_message(
+                embed=await self.get_embed(
+                    f"{slot + 1}번 슬롯을 무료 기본기로 복원했습니다."
+                ),
+                view=self,
+            )
+        except Exception as exc:
+            await _reply_error(interaction, exc)
+
+
+class BossHintCatalogView(_OwnerView):
+    PER_PAGE = 4
+
+    def __init__(self, author, guild_info, slot_index):
+        super().__init__(author, timeout=600)
+        self.guild_info = guild_info
+        self.slot_index = int(slot_index)
+        self.page = 0
+        self.offers: list[dict[str, Any]] = []
+
+    def rebuild(self):
+        self.clear_items()
+        total_pages = max(1, math.ceil(len(self.offers) / self.PER_PAGE))
+        self.page = max(0, min(self.page, total_pages - 1))
+        start = self.page * self.PER_PAGE
+        for offer in self.offers[start:start + self.PER_PAGE]:
+            cost = _discounted_cost(offer["base_cost"], offer["hint_count"])
+            button = Button(
+                label=f"{offer['name']} · {cost}SP"[:80],
+                style=discord.ButtonStyle.success,
+                row=0,
+            )
+
+            async def purchase(interaction, offer_id=offer["offer_id"]):
+                await self.purchase(interaction, offer_id)
+
+            button.callback = purchase
+            self.add_item(button)
+        previous = Button(
+            label="이전",
+            disabled=self.page == 0,
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        following = Button(
+            label="다음",
+            disabled=self.page >= total_pages - 1,
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        async def move(interaction, delta):
+            self.page += delta
+            self.rebuild()
+            await interaction.response.edit_message(
+                embed=await self.get_embed(), view=self
+            )
+
+        previous.callback = lambda interaction: move(interaction, -1)
+        following.callback = lambda interaction: move(interaction, 1)
+        self.add_item(previous)
+        self.add_item(following)
+        back = Button(label="스킬 슬롯으로", style=discord.ButtonStyle.secondary, row=1)
+
+        async def go_back(interaction):
+            view = BossSkillManagementView(
+                self.author, self.guild_info, selected_slot=self.slot_index
+            )
+            await interaction.response.edit_message(
+                embed=await view.get_embed(), view=view
+            )
+
+        back.callback = go_back
+        self.add_item(back)
+
+    async def get_embed(self) -> discord.Embed:
+        data = await get_user_data(self.author.id, self.author.display_name)
+        run = ensure_boss_training_data(data).get("active_run")
+        if not run:
+            return discord.Embed(title="힌트 정보 없음", color=discord.Color.red())
+        self.offers = available_skill_offers(run)
+        self.rebuild()
+        owned, allocated, remaining = _sp_summary(run)
+        start = self.page * self.PER_PAGE
+        lines = []
+        for offer in self.offers[start:start + self.PER_PAGE]:
+            discount = _hint_discount(offer["hint_count"])
+            cost = _discounted_cost(offer["base_cost"], offer["hint_count"])
+            kind = {
+                "equipped": "장착 카드",
+                "base_change": "기본기 변경",
+                "base_upgrade": "기본기 강화",
+                "special": "특수능력 프리셋",
+            }.get(offer.get("catalog_kind"), "프리셋")
+            lines.append(
+                f"**{offer['name']}** · {kind}\n"
+                f"힌트 Lv.{offer['hint_count']} · {discount}% 할인 · "
+                f"{offer['base_cost']} → **{cost} SP**"
+            )
+        embed = discord.Embed(
+            title=f"💡 발견한 스킬 힌트 · 슬롯 {self.slot_index + 1}",
+            description=(
+                "\n\n".join(lines)
+                if lines
+                else "아직 발견한 힌트가 없습니다. 서포트 연속 이벤트와 공개 서포트 훈련에서 얻을 수 있습니다."
+            ),
+            color=discord.Color.gold(),
+        )
+        embed.add_field(
+            name="SP 현황",
+            value=(
+                f"보유 **{owned:,}** · 전체 배정 **{allocated:,}** · "
+                f"남은 **{remaining:,} SP**\n"
+                "구매 시 선택 슬롯의 기존 스킬 비용을 먼저 제외합니다."
+            ),
+            inline=False,
+        )
+        return embed
+
+    async def purchase(self, interaction, offer_id):
+        try:
+            slot = self.slot_index
+            result: dict[str, Any] = {}
+
+            def apply(latest):
+                run = ensure_boss_training_data(latest).get("active_run")
+                if not run or run.get("phase") != "build":
+                    raise BossTrainingError("최종 빌드 단계가 아닙니다.")
+                result.update(purchase_skill_offer(run, offer_id, slot))
+
+            await mutate_user_data(
+                self.author.id, apply, self.author.display_name
+            )
+            view = BossSkillManagementView(
+                self.author, self.guild_info, selected_slot=slot
+            )
+            await interaction.response.edit_message(
+                embed=await view.get_embed(
+                    f"{slot + 1}번 슬롯에 **{result['name']}** 구매 · "
+                    f"{result['purchase_cost']} SP ({result['hint_discount']}% 할인)"
+                ),
+                view=view,
+            )
         except Exception as exc:
             await _reply_error(interaction, exc)
 
 
 class BossResistanceModal(Modal, title="상태이상 저항 설정"):
     resistances = TextInput(
-        label="bleed,paralysis,stun 각각 0/25/50/75",
-        default="bleed:0, paralysis:0, stun:0",
-        max_length=80,
+        label="각 상태 0/25/50/75",
+        default="bleed:0, paralysis:0, stun:0, freeze:0",
+        max_length=100,
     )
 
     def __init__(self, parent):
@@ -1887,7 +3833,9 @@ class BossResistanceModal(Modal, title="상태이상 저항 설정"):
                 key, value = part.split(":", 1)
                 key, amount = key.strip().lower(), int(value.strip())
                 if key not in IMMUNITIES or amount not in {0, 25, 50, 75}:
-                    raise BossTrainingError("저항은 bleed/paralysis/stun에 0/25/50/75만 설정할 수 있습니다.")
+                    raise BossTrainingError(
+                        "저항은 bleed/paralysis/stun/freeze에 0/25/50/75만 설정할 수 있습니다."
+                    )
                 if amount:
                     parsed[key] = amount
 
@@ -1928,7 +3876,21 @@ class BossBuildView(_OwnerView):
             min_values=0,
             max_values=3,
             options=[
-                discord.SelectOption(label=f"{label} · {cost} SP", value=key, description=desc[:100])
+                discord.SelectOption(
+                    label=(
+                        f"{label} · "
+                        f"{math.ceil(cost * (100 - min(50, int((run or {}).get('passive_factor_discounts', {}).get(key, 0)))) / 100)} SP"
+                    ),
+                    value=key,
+                    description=(
+                        (
+                            f"계승 할인 {int((run or {}).get('passive_factor_discounts', {}).get(key, 0))}% · "
+                            if int((run or {}).get("passive_factor_discounts", {}).get(key, 0))
+                            else ""
+                        )
+                        + desc
+                    )[:100],
+                )
                 for key, (label, cost, desc) in GENERAL_PASSIVES.items()
             ],
             row=1,
@@ -1951,10 +3913,18 @@ class BossBuildView(_OwnerView):
             )
             inheritance.callback = self.choose_inheritance
             self.add_item(inheritance)
-        add_skill = Button(label="➕ 스킬", style=discord.ButtonStyle.primary, row=3)
-        add_skill.callback = lambda interaction: interaction.response.send_modal(BossSkillModal(self))
-        self.add_item(add_skill)
-        reset = Button(label="🗑️ 스킬 초기화", style=discord.ButtonStyle.secondary, row=3)
+        skill_editor = Button(label="🎴 스킬 편집", style=discord.ButtonStyle.primary, row=3)
+
+        async def open_skill_editor(interaction):
+            view = BossSkillManagementView(self.author, self.guild_info)
+            await interaction.response.edit_message(
+                embed=await view.get_embed(),
+                view=view,
+            )
+
+        skill_editor.callback = open_skill_editor
+        self.add_item(skill_editor)
+        reset = Button(label="↩️ 기본기 전체 복원", style=discord.ButtonStyle.secondary, row=3)
         reset.callback = self.reset_skills
         self.add_item(reset)
         resistance = Button(label="🧪 저항", style=discord.ButtonStyle.secondary, row=3)
@@ -2007,7 +3977,11 @@ class BossBuildView(_OwnerView):
         )
 
     async def reset_skills(self, interaction):
-        await self._update(interaction, lambda run: run["build"].update(skills=[]), "커스텀 스킬을 모두 제거했습니다.")
+        def reset(run):
+            run["build"]["skills"] = _default_skills()
+            run["build"]["skill_slots_initialized"] = True
+
+        await self._update(interaction, reset, "5개 슬롯을 무료 기본기로 모두 복원했습니다.")
 
     async def rotate_ai(self, interaction):
         order = ["aggressive", "balanced", "defensive"]
@@ -2025,26 +3999,57 @@ class BossBuildView(_OwnerView):
             return discord.Embed(title="최종 빌드 정보 없음", color=discord.Color.red())
         self.rebuild(run)
         build = run["build"]
+        skill_slots = ensure_skill_slots(run)
         try:
             cost = _build_sp_cost(run, build)
-            cost_text = f"{cost}/{int(run['sp'])} SP"
+            cost_text = (
+                f"보유 **{int(run['sp']):,}** · 전체 배정 **{cost:,}** · "
+                f"남은 **{int(run['sp']) - cost:,} SP**"
+            )
         except BossTrainingError as exc:
             cost_text = f"오류: {exc}"
         skills = [
             f"{index}. **{skill['name']}** · {skill_sp_cost(skill)} SP"
             f"{' · 광역' if skill.get('is_aoe') else ''}"
-            for index, skill in enumerate(build.get("skills", []), 1)
+            for index, skill in enumerate(skill_slots, 1)
         ]
+        hint_levels = (
+            sum(int(value) for value in run.get("skill_hints", {}).values())
+            + sum(int(value) for value in run.get("base_skill_hints", {}).values())
+            + sum(int(value) for value in run.get("base_upgrade_hints", {}).values())
+            + sum(int(value) for value in run.get("special_preset_hints", {}).values())
+            + sum(
+                int(value.get("hint_count", 0))
+                for value in run.get("inherited_skill_offers", {}).values()
+            )
+        )
+        offer_count = len(available_skill_offers(run))
         immunity = IMMUNITIES.get(build.get("immunity"), ("없음", 0))[0]
         resistance = ", ".join(f"{IMMUNITIES[key][0]} {value}%" for key, value in build.get("resistances", {}).items()) or "없음"
-        passive_names = [GENERAL_PASSIVES[key][0] for key in build.get("passives", [])]
+        passive_names = [
+            (
+                f"{GENERAL_PASSIVES[key][0]}"
+                f"(-{int(run.get('passive_factor_discounts', {}).get(key, 0))}%)"
+                if int(run.get("passive_factor_discounts", {}).get(key, 0))
+                else GENERAL_PASSIVES[key][0]
+            )
+            for key in build.get("passives", [])
+        ]
         embed = discord.Embed(
             title=f"🧩 {run['name']} 최종 빌드",
-            description=message or "커스텀 스킬이 5개 미만이면 남은 칸은 무료 기본 기술로 채워집니다.",
+            description=message or (
+                "스킬 편집에서 슬롯을 고른 뒤 버튼으로 커스텀 기술을 만들거나, "
+                "육성 중 발견한 힌트 프리셋을 구매할 수 있습니다."
+            ),
             color=discord.Color.blurple(),
         )
         embed.add_field(name="SP", value=cost_text, inline=False)
-        embed.add_field(name="커스텀 스킬", value="\n".join(skills) or "없음 · 기본 기술 5개 사용", inline=False)
+        embed.add_field(name="스킬 슬롯", value="\n".join(skills), inline=False)
+        embed.add_field(
+            name="발견한 힌트",
+            value=f"구매 가능 프리셋 **{offer_count}개** · 누적 힌트 Lv. **{hint_levels}**",
+            inline=False,
+        )
         embed.add_field(name="상태이상", value=f"면역: {immunity}\n저항: {resistance}", inline=False)
         embed.add_field(
             name="패시브",
@@ -2052,6 +4057,14 @@ class BossBuildView(_OwnerView):
                 f"일반: {', '.join(passive_names) or '없음'}\n"
                 f"계승: {build.get('inheritance') or '없음'}\n"
                 f"고유: {INNATE_PASSIVES.get(run.get('innate_passive'), ('없음',))[0]}"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="상향된 평가 등급컷",
+            value=(
+                "B 4,500 · A 6,000 · S 7,500 · SS 9,000 · "
+                "UG 11,000 · UF 13,000"
             ),
             inline=False,
         )
@@ -2323,6 +4336,15 @@ class BossArchiveView(_OwnerView):
                 ),
                 inline=False,
             )
+            factors = data.get("factors", [])
+            embed.add_field(
+                name="🧬 보유 인자",
+                value=(
+                    "\n".join(f"• {factor_display_text(factor)}" for factor in factors)
+                    or "인자 없음"
+                )[:1024],
+                inline=False,
+            )
         return embed
 
     async def publish(self, interaction, scope):
@@ -2419,8 +4441,6 @@ class BossChallengeView(_OwnerView):
             record = next((row for row in self.records if row["boss_id"] == self.selected_id), None)
             if not record:
                 raise BossTrainingError("도전할 보스를 선택해주세요.")
-            if str(record["owner_id"]) == str(self.author.id):
-                raise BossTrainingError("본인이 만든 보스에는 도전할 수 없습니다.")
             from guild import RaidLobbyView
 
             lobby = RaidLobbyView(
@@ -2450,6 +4470,11 @@ class BossTrainingShopView(_OwnerView):
         options = [
             discord.SelectOption(label="기본 스탯 설정권 · 100,000 PT", value="base_stat_license"),
             discord.SelectOption(label="성장률 설정권 · 200,000 PT", value="growth_license"),
+            discord.SelectOption(
+                label="시설 확장 시나리오 적용권 · 600,000 PT",
+                value="scenario_facility_expansion",
+                description="시설 최대 6 · 훈련 +15% · 평가전 SP +20%",
+            ),
         ] + [
             discord.SelectOption(label=f"{data[0]} · {data[1]:,} PT"[:100], value=key, description=data[3][:100])
             for key, data in INNATE_PASSIVES.items()
@@ -2471,9 +4496,17 @@ class BossTrainingShopView(_OwnerView):
 
     def get_embed(self, message: str | None = None) -> discord.Embed:
         state = ensure_boss_training_data(self.user_data)
-        prices = {"base_stat_license": 100_000, "growth_license": 200_000}
+        prices = {
+            "base_stat_license": 100_000,
+            "growth_license": 200_000,
+            "scenario_facility_expansion": 600_000,
+        }
         prices.update({key: data[1] for key, data in INNATE_PASSIVES.items()})
-        names = {"base_stat_license": "기본 스탯 설정권", "growth_license": "성장률 설정권"}
+        names = {
+            "base_stat_license": "기본 스탯 설정권",
+            "growth_license": "성장률 설정권",
+            "scenario_facility_expansion": "시설 확장 시나리오 적용권",
+        }
         names.update({key: data[0] for key, data in INNATE_PASSIVES.items()})
         lines = [
             f"{'✅' if state['shop_unlocks'].get(key) else '🔒'} **{names[key]}** · {price:,} PT"

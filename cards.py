@@ -33,6 +33,9 @@ def describe_dice_effect(effect):
         if "prob" in parts:
             chance = f" ({parts[parts.index('prob') + 1]}% 확률)"
         return f"상대에게 기절 {parts[1]} 부여{chance}"
+    if effect.startswith("freeze_") and parts[1].isdigit():
+        condition = " (승리 시)" if "on" in parts and "win" in parts else ""
+        return f"상대에게 빙결 {parts[1]}턴 부여{condition}"
     if effect.startswith("dmg_by_para_"):
         return f"대상 마비 1당 고정 피해 {parts[-1]}"
     if effect.startswith("atk_boost_para_"):
@@ -303,6 +306,22 @@ class MorningGloryCard(SkillCard):
 
 # --- 기술 카드 데이터베이스 ---
 SKILL_CARDS = {
+    # [영설 전용]
+    "동결건조": SkillCard("동결건조", [
+        Dice("attack", 6, 10, effect="freeze_3_on_win"),
+        Dice("attack", 8, 12),
+    ]),
+    "조선:아침": SkillCard("조선:아침", [
+        Dice("attack", 9, 14, effect="freeze_2_on_win"),
+        Dice("attack", 6, 10),
+        Dice("mental_heal", 8, 12),
+    ]),
+    "조선:고요": SkillCard("조선:고요", [
+        Dice("defense", 9, 14),
+        Dice("counter", 7, 11),
+        Dice("heal", 16, 22),
+    ]),
+
     # [기본 카드]
     "기본공격": SkillCard("기본공격", [Dice("attack", 5, 7)]),
     "기본방어": SkillCard("기본방어", [Dice("defense", 3, 5)]),

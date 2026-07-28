@@ -203,7 +203,7 @@ DEFAULT_PLAYER_DATA = {
     "equipped_engraved_artifact": None, # [신규] 각인 아티팩트
     
     # [상태]
-    "status_effects": {"bleed": 0},
+    "status_effects": {"bleed": 0, "paralysis": 0, "stun": 0, "freeze": 0},
     "is_down": False,    # 전투 불능 상태 여부
     "is_recruited": False
 }
@@ -243,7 +243,11 @@ class Character:
         self.equipped_engraved_artifact = equipped_engraved_artifact
         
         # [상태 정보]
-        self.status_effects = status_effects if status_effects else {"bleed": 0}
+        self.status_effects = status_effects if status_effects else {
+            "bleed": 0, "paralysis": 0, "stun": 0, "freeze": 0
+        }
+        for status_key in ("bleed", "paralysis", "stun", "freeze"):
+            self.status_effects.setdefault(status_key, 0)
         self.is_recruited = is_recruited
         self.is_down = is_down
         

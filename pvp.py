@@ -345,7 +345,9 @@ class PVPBattleView(discord.ui.View):
             char_obj.current_mental = char_obj.max_mental
             
         char_obj.runtime_cooldowns = {}
-        if not hasattr(char_obj, "status_effects"): char_obj.status_effects = {"bleed": 0, "paralysis": 0}
+        if not hasattr(char_obj, "status_effects"):
+            char_obj.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0, "freeze": 0}
+        battle_engine.ensure_status_effects(char_obj)
 
         async with self.state_lock:
             if self.started or self.finished:
@@ -705,7 +707,9 @@ class PVPBattleView(discord.ui.View):
                 log += f"💰 **[{self.p1_char.name}:황금]** 비용 50% 절감!\n"
 
             p1_res = self.p1_card.use_card(
-                self.p1_char.attack, self.p1_char.defense, self.p1_char.current_mental,
+                battle_engine.effective_combat_stat(self.p1_char, "attack"),
+                battle_engine.effective_combat_stat(self.p1_char, "defense"),
+                self.p1_char.current_mental,
                 damage_taken=self.p1_damage_last, character=self.p1_char, user_data=self.p1_data
             )
             p1_res = battle_engine.apply_stat_scaling(p1_res, self.p1_char)
@@ -722,7 +726,9 @@ class PVPBattleView(discord.ui.View):
                 log += f"💰 **[{self.p2_char.name}:황금]** 비용 50% 절감!\n"
 
             p2_res = self.p2_card.use_card(
-                self.p2_char.attack, self.p2_char.defense, self.p2_char.current_mental,
+                battle_engine.effective_combat_stat(self.p2_char, "attack"),
+                battle_engine.effective_combat_stat(self.p2_char, "defense"),
+                self.p2_char.current_mental,
                 damage_taken=self.p2_damage_last, character=self.p2_char, user_data=self.p2_data
             )
             p2_res = battle_engine.apply_stat_scaling(p2_res, self.p2_char)
@@ -809,6 +815,8 @@ class PVPBattleView(discord.ui.View):
 
         if self.p1_char.status_effects.get("bleed", 0) > 0: self.p1_char.status_effects["bleed"] = max(0, self.p1_char.status_effects["bleed"] - 1)
         if self.p2_char.status_effects.get("bleed", 0) > 0: self.p2_char.status_effects["bleed"] = max(0, self.p2_char.status_effects["bleed"] - 1)
+        battle_engine.tick_freeze_end_of_turn(self.p1_char, self.turn_count)
+        battle_engine.tick_freeze_end_of_turn(self.p2_char, self.turn_count)
 
         if self.p1_char.current_hp <= 0 and "immortality" in effs1 and not self.p1_revived:
             self.p1_revived = True
@@ -917,10 +925,7 @@ class PVPBattleView(discord.ui.View):
             return f"{e1 * rate}{e2 * (10-rate)} ({c}/{m})"
         
         def st_str(char):
-            s = []
-            if char.status_effects.get('bleed',0) > 0: s.append(f"🩸{char.status_effects['bleed']}")
-            if char.status_effects.get('paralysis',0) > 0: s.append(f"⚡{char.status_effects['paralysis']}")
-            return " ".join(s)
+            return battle_engine.status_summary(char)
 
         embed.add_field(name=f"🔵 {self.p1_char.name} {st_str(self.p1_char)}", value=f"HP {bar(self.p1_char.current_hp, self.p1_char.max_hp, '🟦', '⬜')}\nMG {bar(self.p1_char.current_mental, self.p1_char.max_mental, '🔮', '▫️')}", inline=True)
         embed.add_field(name="VS", value="⚡", inline=True)

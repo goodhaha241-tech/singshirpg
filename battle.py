@@ -62,14 +62,16 @@ class BattleView(discord.ui.View):
         
         # 상태이상 초기화
         if not hasattr(self.player, "status_effects"):
-            self.player.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
+            self.player.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0, "freeze": 0}
+        battle_engine.ensure_status_effects(self.player)
         
         # [Fix] 전투 시작 시 런타임 쿨타임 초기화 (던전 연속 전투 시 이전 전투 기록 삭제)
         self.player.runtime_cooldowns = {}
         
         for m in self.monsters:
             if not hasattr(m, "status_effects"):
-                m.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
+                m.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0, "freeze": 0}
+            battle_engine.ensure_status_effects(m)
             runtime_cooldowns(m)
 
         # 던전 런 체크: 외부에서 버프를 적용했으므로 중복 적용 방지
@@ -234,12 +236,20 @@ class BattleView(discord.ui.View):
         ]
         if not secondary_targets:
             return "", []
+        effects = []
+        for artifact in (
+            getattr(self.player, "equipped_artifact", None),
+            getattr(self.player, "equipped_engraved_artifact", None),
+        ):
+            if isinstance(artifact, dict) and artifact.get("special"):
+                effects.append(artifact["special"])
 
-        attack_dice = [
-            dict(dice)
-            for dice in dice_results
-            if dice.get("type") == "attack" and int(dice.get("value", 0)) > 0
-        ]
+        attack_dice = []
+        for original_index, dice in enumerate(dice_results):
+            if dice.get("type") == "attack" and int(dice.get("value", 0)) > 0:
+                copied = dict(dice)
+                copied["_original_index"] = original_index
+                attack_dice.append(copied)
         if not attack_dice:
             return (
                 f"\n📢 **[{self.selected_card.name}]** 광역 범위가 펼쳐졌지만 "
@@ -255,15 +265,36 @@ class BattleView(discord.ui.View):
         for monster in secondary_targets:
             total_damage = 0
             effect_logs = []
+            severe_log = battle_engine.process_severe_cold_before_clash(
+                self.player,
+                monster,
+                dice_results,
+                effects,
+                self.turn_count,
+            )
+            if severe_log:
+                effect_logs.append(severe_log.strip())
             target_runtime = getattr(monster, "runtime_cooldowns", {}) or {}
             incoming_state = target_runtime.get("change_state")
 
             for dice in attack_dice:
+                trigger_log = battle_engine.trigger_severe_cold_for_die(
+                    self.player,
+                    monster,
+                    dice["_original_index"],
+                    effects,
+                    self.turn_count,
+                )
+                if trigger_log:
+                    effect_logs.append(trigger_log.strip())
                 damage = int(dice.get("value", 0))
                 defense_rate = max(0, min(100, int(getattr(monster, "defense_rate", 0) or 0)))
                 if defense_rate:
                     damage = int(damage * (1 - defense_rate / 100))
-                damage = max(0, damage - int(getattr(monster, "defense", 0) or 0) // 3)
+                damage = max(
+                    0,
+                    damage - battle_engine.effective_combat_stat(monster, "defense") // 3,
+                )
 
                 if damage > 0:
                     if outgoing_state == "major":
@@ -275,7 +306,16 @@ class BattleView(discord.ui.View):
                     elif incoming_state == "minor":
                         damage = max(0, round(damage * 0.75))
 
+                actual_damage = min(
+                    damage,
+                    max(0, int(monster.current_hp) - total_damage),
+                )
                 total_damage += damage
+                severe_heal = battle_engine.apply_severe_cold_lifesteal(
+                    self.player, monster, actual_damage, effects
+                )
+                if severe_heal:
+                    effect_logs.append(f"🌨️ 혹한 흡혈 +{severe_heal}")
                 effect_log = battle_engine.apply_dice_effect(
                     dice, self.player, monster, True
                 )
@@ -285,6 +325,7 @@ class BattleView(discord.ui.View):
             monster.current_hp = max(0, monster.current_hp - total_damage)
             suffix = f" · {' '.join(effect_logs)}" if effect_logs else ""
             logs.append(f"• **{monster.name}**에게 {total_damage} 피해{suffix}")
+            battle_engine.tick_freeze_end_of_turn(monster, self.turn_count)
             if monster.current_hp <= 0:
                 defeated.append(monster)
 
@@ -369,7 +410,9 @@ class BattleView(discord.ui.View):
                     rec_log += f"💰 **[{self.player.name}:황금]** 비용 50% 절감!\n"
 
                 p_res = self.selected_card.use_card(
-                    self.player.attack, self.player.defense, self.player.current_mental,
+                    battle_engine.effective_combat_stat(self.player, "attack"),
+                    battle_engine.effective_combat_stat(self.player, "defense"),
+                    self.player.current_mental,
                     user_data=self.user_data,
                     damage_taken=self.damage_taken_last_turn,
                     character=self.player
@@ -390,7 +433,10 @@ class BattleView(discord.ui.View):
             m_res = [{"type": "none", "value": 0}]
         else:
             m_card = target.decide_action()
-            m_res = m_card.use_card(target.attack, target.defense)
+            m_res = m_card.use_card(
+                battle_engine.effective_combat_stat(target, "attack"),
+                battle_engine.effective_combat_stat(target, "defense"),
+            )
         m_res = battle_engine.apply_stat_scaling(m_res, target)
         
         # [수정] 배틀 엔진을 통해 아티팩트 효과 처리 (샤일라, 카이안 등)
@@ -513,6 +559,8 @@ class BattleView(discord.ui.View):
         
         mb = target.status_effects.get("bleed", 0)
         if mb > 0: target.status_effects["bleed"] = max(0, mb - 1)
+        battle_engine.tick_freeze_end_of_turn(self.player, self.turn_count)
+        battle_engine.tick_freeze_end_of_turn(target, self.turn_count)
 
         # 전투 종료 판정
         if not self.monsters:
@@ -537,11 +585,7 @@ class BattleView(discord.ui.View):
             return f"{e1*rate}{e2*(10-rate)} ({c}/{m})"
         
         def status_str(char):
-            s = []
-            if char.status_effects.get("bleed", 0) > 0: s.append(f"🩸{char.status_effects['bleed']}")
-            if char.status_effects.get("paralysis", 0) > 0: s.append(f"⚡{char.status_effects['paralysis']}")
-            if char.status_effects.get("stun", 0) > 0: s.append(f"💫{char.status_effects['stun']}")
-            return " ".join(s)
+            return battle_engine.status_summary(char)
 
         p = self.player
         embed.add_field(name=f"👤 {p.name} {status_str(p)}", value=f"HP {bar(p.current_hp, p.max_hp, '❤️', '🖤')}\nMG {bar(p.current_mental, p.max_mental, '🔮', '▫️')}", inline=False)

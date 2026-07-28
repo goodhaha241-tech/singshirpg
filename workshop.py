@@ -577,8 +577,20 @@ class ImprintView(discord.ui.View):
                 "special": "shayla_light",
                 "description": "[각인] '밀키워킹' 사용 시, 다음 턴 상대방 주사위를 랜덤하게 1~3개 파괴 (누적 10회 파괴 시 적 완전 무력화)"
             }
+        elif "영설" in char_data["name"]:
+            imprint_art = {
+                "name": "혹한",
+                "rank": 3,
+                "stats": {"attack": 7, "defense": 5},
+                "special": "yeongseol_severe_cold",
+                "description": (
+                    "[각인] 유효 공격 주사위마다 서리 1스택. 3스택마다 "
+                    "피격 대상 전원에게 빙결 5턴을 부여하고, 빙결 대상에게 "
+                    "가한 실제 HP 피해의 20%를 회복"
+                ),
+            }
         else:
-            return await i.response.send_message("❌ 해당 캐릭터의 전용 각인 로직이 없습니다. (현재 '영산', '루우데', '어즈렉', '센쇼'만 가능)", ephemeral=True)
+            return await i.response.send_message("❌ 해당 캐릭터의 전용 각인 로직이 없습니다.", ephemeral=True)
 
         # 제물 아티팩트 제거
         # 장착 해제 처리

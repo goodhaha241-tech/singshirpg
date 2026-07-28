@@ -290,7 +290,7 @@ class GuildDungeonLobbyView(discord.ui.View):
             return False, "현재 조사 캐릭터를 찾지 못했습니다."
 
         character = Character.from_dict(characters[index])
-        character.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0}
+        character.status_effects = {"bleed": 0, "paralysis": 0, "stun": 0, "freeze": 0}
         character.runtime_cooldowns = {}
         self.participants[user.id] = {
             "user": user,
@@ -1549,7 +1549,10 @@ class GuildDungeonBattleView(discord.ui.View):
         )
         embed.add_field(
             name=self.monster.name,
-            value=f"❤️ {_bar(self.monster.current_hp, self.monster.max_hp, '🟥', '⬛', 15)}",
+            value=(
+                f"❤️ {_bar(self.monster.current_hp, self.monster.max_hp, '🟥', '⬛', 15)}\n"
+                f"{battle_engine.status_summary(self.monster) or '✅ 상태이상 없음'}"
+            ),
             inline=False,
         )
         for user_id, participant in self.run.participants.items():
@@ -1561,6 +1564,7 @@ class GuildDungeonBattleView(discord.ui.View):
                 name=f"{participant['user'].display_name} · {character.name}",
                 value=(
                     f"❤️ {max(0, character.current_hp)}/{character.max_hp}\n"
+                    f"{battle_engine.status_summary(character) or '✅ 상태이상 없음'}\n"
                     f"{state}"
                 ),
                 inline=True,
@@ -1770,13 +1774,13 @@ class GuildDungeonBattleView(discord.ui.View):
                     card_name,
                 )
                 user_result = user_card.use_card(
-                    character.attack,
-                    character.defense,
+                    battle_engine.effective_combat_stat(character, "attack"),
+                    battle_engine.effective_combat_stat(character, "defense"),
                     character.current_mental,
                 )
                 monster_result = monster_card.use_card(
-                    self.monster.attack,
-                    self.monster.defense,
+                    battle_engine.effective_combat_stat(self.monster, "attack"),
+                    battle_engine.effective_combat_stat(self.monster, "defense"),
                     self.monster.current_mental,
                 )
                 user_result = battle_engine.apply_stat_scaling(user_result, character)
@@ -1823,7 +1827,13 @@ class GuildDungeonBattleView(discord.ui.View):
                 if extras:
                     summary += "\n" + " · ".join(extras)
                 turn_logs.append(summary[-700:])
+                battle_engine.tick_freeze_end_of_turn(character, self.turn)
 
+            for participant in self.run.participants.values():
+                battle_engine.tick_freeze_end_of_turn(
+                    participant["char"], self.turn
+                )
+            battle_engine.tick_freeze_end_of_turn(self.monster, self.turn)
             self.logs.extend(turn_logs)
             if self.monster.current_hp <= 0:
                 self.finished = True
