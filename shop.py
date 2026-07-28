@@ -27,16 +27,26 @@ ARTIFACT_TICKET_ITEM = "아티팩트 뽑기권"
 
 def consume_artifact_gacha_cost(user_data):
     """Prefer one inventory ticket, then fall back to 1,000 points."""
+    paid, payment = consume_artifact_gacha_costs(user_data, 1)
+    if not paid:
+        return False, "none"
+    return True, "ticket" if payment["tickets"] else "point"
+
+
+def consume_artifact_gacha_costs(user_data, count):
+    """Pay for several draws atomically, consuming tickets before points."""
+    count = max(1, int(count))
     inventory = user_data.setdefault("inventory", {})
     tickets = int(inventory.get(ARTIFACT_TICKET_ITEM, 0))
-    if tickets > 0:
-        inventory[ARTIFACT_TICKET_ITEM] = tickets - 1
-        return True, "ticket"
     points = int(user_data.get("pt", 0))
-    if points < ARTIFACT_GACHA_COST:
-        return False, "none"
-    user_data["pt"] = points - ARTIFACT_GACHA_COST
-    return True, "point"
+    ticket_uses = min(tickets, count)
+    point_draws = count - ticket_uses
+    point_cost = point_draws * ARTIFACT_GACHA_COST
+    if points < point_cost:
+        return False, {"tickets": 0, "points": 0}
+    inventory[ARTIFACT_TICKET_ITEM] = tickets - ticket_uses
+    user_data["pt"] = points - point_cost
+    return True, {"tickets": ticket_uses, "points": point_cost}
 
 # [설정] 지역별 카드 해금 조건
 # 여기에 정의된 카드는 해당 지역을 해금해야만 상점에 등장합니다.
@@ -191,9 +201,17 @@ class PointShopView(discord.ui.View):
             self.add_item(btn)
         
         # 2. 뽑기 버튼
-        gacha_btn = discord.ui.Button(label="🎲 아티팩트 뽑기 (뽑기권/1,000pt)", style=discord.ButtonStyle.primary, row=1)
+        gacha_btn = discord.ui.Button(label="🎲 1회 뽑기", style=discord.ButtonStyle.primary, row=1)
         gacha_btn.callback = self.artifact_gacha_callback
         self.add_item(gacha_btn)
+
+        gacha_ten_btn = discord.ui.Button(
+            label="🎲 10회 뽑기",
+            style=discord.ButtonStyle.danger,
+            row=1,
+        )
+        gacha_ten_btn.callback = self.artifact_gacha_ten_callback
+        self.add_item(gacha_ten_btn)
         
         # 3. 뒤로가기
         back_btn = discord.ui.Button(label="⬅️ 메인으로", style=discord.ButtonStyle.secondary, row=2)
@@ -220,31 +238,74 @@ class PointShopView(discord.ui.View):
 
     @auto_defer(reload_data=True)
     async def artifact_gacha_callback(self, interaction: discord.Interaction):
-        paid, payment = consume_artifact_gacha_cost(self.user_data)
+        await self._draw_artifacts(interaction, 1)
+
+    @auto_defer(reload_data=True)
+    async def artifact_gacha_ten_callback(self, interaction: discord.Interaction):
+        await self._draw_artifacts(interaction, 10)
+
+    async def _draw_artifacts(self, interaction: discord.Interaction, count: int):
+        paid, payment = consume_artifact_gacha_costs(self.user_data, count)
         if not paid:
             current_pt = self.user_data.get("pt", 0)
+            current_tickets = self.user_data.get("inventory", {}).get(
+                ARTIFACT_TICKET_ITEM, 0
+            )
             return await interaction.followup.send(
-                f"❌ 아티팩트 뽑기권 또는 {ARTIFACT_GACHA_COST:,}pt가 필요합니다! "
-                f"(보유: {current_pt}pt)",
+                f"❌ {count}회 뽑기에는 뽑기권과 포인트 환산분을 합쳐 "
+                f"{count}회분이 필요합니다! "
+                f"(보유: 뽑기권 {current_tickets}개 · {current_pt:,}pt)",
                 ephemeral=True,
             )
-        new_artifact = generate_artifact()
-        if "artifacts" not in self.user_data:
-            self.user_data["artifacts"] = []
-        self.user_data["artifacts"].append(new_artifact)
+        new_artifacts = [generate_artifact() for _ in range(count)]
+        self.user_data.setdefault("artifacts", []).extend(new_artifacts)
         
         await self.save_func(self.author.id, self.user_data)
         
-        res_embed = discord.Embed(title="🎉 아티팩트 획득!", color=discord.Color.purple())
-        res_embed.add_field(name=new_artifact["name"], value=new_artifact["description"], inline=False)
-        if payment == "ticket":
-            remaining = self.user_data.get("inventory", {}).get(ARTIFACT_TICKET_ITEM, 0)
-            res_embed.set_footer(text=f"뽑기권 사용 · 남은 뽑기권: {remaining}개")
+        res_embed = discord.Embed(
+            title=f"🎉 아티팩트 {count}개 획득!",
+            color=discord.Color.purple(),
+        )
+        if count == 1:
+            artifact = new_artifacts[0]
+            res_embed.add_field(
+                name=artifact["name"],
+                value=artifact["description"],
+                inline=False,
+            )
         else:
-            res_embed.set_footer(text=f"포인트 사용 · 남은 포인트: {self.user_data['pt']}pt")
+            result_lines = [
+                f"{index}. **{artifact['name']}**"
+                for index, artifact in enumerate(new_artifacts, 1)
+            ]
+            rank_counts = {
+                rank: sum(1 for artifact in new_artifacts if int(artifact["rank"]) == rank)
+                for rank in (1, 2, 3)
+            }
+            res_embed.description = "\n".join(result_lines)
+            res_embed.add_field(
+                name="등급 결과",
+                value=" · ".join(
+                    f"{'⭐' * rank} {rank_counts[rank]}개" for rank in (1, 2, 3)
+                ),
+                inline=False,
+            )
+        remaining = self.user_data.get("inventory", {}).get(ARTIFACT_TICKET_ITEM, 0)
+        res_embed.set_footer(
+            text=(
+                f"사용: 뽑기권 {payment['tickets']}개"
+                f" · 포인트 {payment['points']:,}pt"
+                f" | 남은 뽑기권 {remaining}개"
+                f" · 포인트 {self.user_data.get('pt', 0):,}pt"
+            )
+        )
         
         # 화면 유지
-        await interaction.edit_original_response(content="🎲 뽑기 완료!", embed=res_embed, view=self)
+        await interaction.edit_original_response(
+            content=f"🎲 {count}회 뽑기 완료!",
+            embed=res_embed,
+            view=self,
+        )
 
     @auto_defer()
     async def back_callback(self, interaction: discord.Interaction):

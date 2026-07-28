@@ -33,6 +33,22 @@ PREFIXES = {
     ]
 }
 
+# 전용 각인 접두사는 제작소에서만 획득한다. 일반 뽑기에서 등장하는
+# 접두사는 아래 목록에서 동일 확률로 선택해 특정 효과 쏠림을 막는다.
+RANDOM_ARTIFACT_PREFIXES = {
+    1: tuple(PREFIXES[1]),
+    2: tuple(PREFIXES[2]),
+    3: (
+        "꼼꼼한",
+        "맹렬한",
+        "견고한",
+        "앙심품은",
+        "고조된",
+        "번뜩이는",
+        "불멸의",
+    ),
+}
+
 # 3성 접두사별 특수 능력 코드 매핑
 SPECIAL_EFFECTS = {
     "꼼꼼한": "reuse_last_dice",
@@ -154,24 +170,33 @@ def _make_description(stats, special=None):
 
     return "\n".join(desc_parts)
 
-def generate_artifact(rank=None):
+def roll_artifact_prefix(rank, rng=None):
+    """일반 획득 가능한 접두사를 같은 확률로 하나 선택한다."""
+    roller = rng or random
+    pool = RANDOM_ARTIFACT_PREFIXES.get(int(rank), ())
+    if not pool:
+        raise ValueError(f"지원하지 않는 아티팩트 등급입니다: {rank}")
+    return roller.choice(pool)
+
+
+def generate_artifact(rank=None, rng=None):
     """
     새로운 아티팩트를 생성합니다.
     """
+    roller = rng or random
     if rank is None:
-        roll = random.randint(1, 100)
+        roll = roller.randint(1, 100)
         if roll <= 60: rank = 1
         elif roll <= 85: rank = 2
         else: rank = 3
 
     # 이름 생성
-    pool = ARTIFACT_TYPES
-    if rank == 3: pool += ARTIFACT_TYPES_3STAR
+    pool = list(ARTIFACT_TYPES)
+    if rank == 3:
+        pool += ARTIFACT_TYPES_3STAR
     
-    base_name = random.choice(pool)
-    prefix = random.choice(PREFIXES[rank])
-    # 3성은 황금의(히든) 제외하고 생성
-    if rank == 3 and prefix in ["황금의", "악몽의", "믿음어린", "별똥별의", "시간의", "빛나는", "혹한의"]: prefix = "고조된"
+    base_name = roller.choice(pool)
+    prefix = roll_artifact_prefix(rank, roller)
     
     full_name = f"{'⭐'*rank} {prefix} {base_name}"
 
@@ -181,6 +206,8 @@ def generate_artifact(rank=None):
         special = SPECIAL_EFFECTS.get(prefix)
 
     # 스탯 생성
+    # 기존 스탯 생성기는 전역 random을 사용하므로 기본 호출의 저장 형식과
+    # 밸런스는 유지한다. 고정 RNG는 접두사/등급 분포 테스트에만 사용한다.
     stats = _generate_stats(rank)
     description = _make_description(stats, special)
 
