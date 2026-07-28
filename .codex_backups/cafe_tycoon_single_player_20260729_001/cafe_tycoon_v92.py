@@ -1,6 +1,6 @@
 # cafe-rewards-v9.3.2
 # cafe-tycoon-v9.3
-"""Persistent 1-4 player café tycoon run by shared turns."""
+"""Persistent 2-4 player café tycoon run by shared turns."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from data_manager import get_db_pool
 from items import ITEM_CATEGORIES
 
 
-MIN_PLAYERS = 1
+MIN_PLAYERS = 2
 MAX_PLAYERS = 4
 LOBBIES_PER_PAGE = 8
 RARE_REWARDS = tuple(
@@ -1045,7 +1045,7 @@ async def start_session(user_id: int, session_id: int) -> tuple[bool, str]:
                 count = len(await cur.fetchall())
                 if count < MIN_PLAYERS:
                     await conn.rollback()
-                    return False, f"카페 타이쿤은 최소 {MIN_PLAYERS}명이 필요합니다."
+                    return False, "카페 타이쿤은 최소 2명이 필요합니다."
                 state = _normalize_state(_loads(session["state_json"], _default_state()))
                 if not state.get("season_shop"):
                     state["season_shop"] = _season_shop(
@@ -1998,7 +1998,7 @@ def _status_embed(session: dict[str, Any], members: list[dict[str, Any]]) -> dis
             inline=False,
         )
     if status == "lobby":
-        embed.set_footer(text="1~4명이 참가한 뒤 방장이 영업을 시작합니다.")
+        embed.set_footer(text="2~4명이 참가한 뒤 방장이 영업을 시작합니다.")
     elif status == "running":
         embed.set_footer(
             text="이번 사이클에 행동한 참여자들만 모두 마치면 다음 사이클로 진행됩니다."
@@ -2097,7 +2097,7 @@ class CafeTycoonEntryView(discord.ui.View):
         return discord.Embed(
             title="🏪 카페 타이쿤",
             description=(
-                "1~4명이 함께 꾸미고 운영하는 영구 카페입니다.\n"
+                "2~4명이 함께 꾸미고 운영하는 영구 카페입니다.\n"
                 "그 사이클에 실제로 행동한 멤버들만 영업을 마치면 진행됩니다.\n"
                 "명성 100부터 과반수 동의로 시즌을 결산하고 장식·레시피를 이어가세요."
             ),

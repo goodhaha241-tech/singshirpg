@@ -482,7 +482,15 @@ class BattleView(discord.ui.View):
 
         # 합 및 데미지 계산
         clash_log, dmg_p, dmg_m = battle_engine.process_clash_loop(
-            self.player, target, p_res, m_res, effects, [], self.turn_count, is_stunned1=is_stunned
+            self.player,
+            target,
+            p_res,
+            m_res,
+            effects,
+            [],
+            self.turn_count,
+            is_stunned1=is_stunned,
+            is_stunned2=is_monster_stunned,
         ) # is_stunned2는 battle_engine 내부에서 m_res가 none일 때 자동 처리됨 (혹은 추가 인자로 넘길 수도 있음)
         
         # [시간가속] 적립된 보너스 적용
@@ -553,12 +561,6 @@ class BattleView(discord.ui.View):
                     # 횟수 소진
                     pass
 
-        # 출혈 상태이상 감소
-        pb = self.player.status_effects.get("bleed", 0)
-        if pb > 0: self.player.status_effects["bleed"] = max(0, pb - 1)
-        
-        mb = target.status_effects.get("bleed", 0)
-        if mb > 0: target.status_effects["bleed"] = max(0, mb - 1)
         battle_engine.tick_freeze_end_of_turn(self.player, self.turn_count)
         battle_engine.tick_freeze_end_of_turn(target, self.turn_count)
 

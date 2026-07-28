@@ -88,7 +88,7 @@ def _reset_battle_runtime(participant: dict) -> None:
     for turns that the new encounter might never reach.
     """
     character = participant["char"]
-    character.runtime_cooldowns = {}
+    battle_engine.reset_encounter_runtime(character)
     participant["revived"] = False
 
 
@@ -1756,11 +1756,19 @@ class GuildDungeonBattleView(discord.ui.View):
                 return
             await self.run.advance_shared_turn(1)
             turn_logs = [f"--- {self.turn}턴 ---"]
+            monster_stunned = (
+                battle_engine.ensure_status_effects(self.monster).get("stun", 0) > 0
+            )
+            if monster_stunned:
+                turn_logs.append(f"💫 **{self.monster.name}** 기절로 행동 불가!")
             for user_id in alive:
                 if self.monster.current_hp <= 0:
                     break
                 participant = self.run.participants[user_id]
                 character = participant["char"]
+                user_stunned = (
+                    battle_engine.ensure_status_effects(character).get("stun", 0) > 0
+                )
                 card_name = self.selected_cards[user_id]
                 user_card = get_card(card_name)
                 monster_card = self.monster.decide_action() or get_card("기본공격")
@@ -1773,15 +1781,23 @@ class GuildDungeonBattleView(discord.ui.View):
                     self.turn,
                     card_name,
                 )
-                user_result = user_card.use_card(
-                    battle_engine.effective_combat_stat(character, "attack"),
-                    battle_engine.effective_combat_stat(character, "defense"),
-                    character.current_mental,
+                user_result = (
+                    [{"type": "none", "value": 0}]
+                    if user_stunned
+                    else user_card.use_card(
+                        battle_engine.effective_combat_stat(character, "attack"),
+                        battle_engine.effective_combat_stat(character, "defense"),
+                        character.current_mental,
+                    )
                 )
-                monster_result = monster_card.use_card(
-                    battle_engine.effective_combat_stat(self.monster, "attack"),
-                    battle_engine.effective_combat_stat(self.monster, "defense"),
-                    self.monster.current_mental,
+                monster_result = (
+                    [{"type": "none", "value": 0}]
+                    if monster_stunned
+                    else monster_card.use_card(
+                        battle_engine.effective_combat_stat(self.monster, "attack"),
+                        battle_engine.effective_combat_stat(self.monster, "defense"),
+                        self.monster.current_mental,
+                    )
                 )
                 user_result = battle_engine.apply_stat_scaling(user_result, character)
                 monster_result = battle_engine.apply_stat_scaling(
@@ -1799,9 +1815,9 @@ class GuildDungeonBattleView(discord.ui.View):
                     card_name,
                 )
                 self.shayla_triggers[user_id] = trigger
-                if "escalation" in effects:
+                if "escalation" in effects and not user_stunned:
                     apply_escalation_to_dice(character, user_result)
-                if "ripple" in effects:
+                if "ripple" in effects and not user_stunned:
                     apply_ripple_to_dice(character, user_result, self.turn)
 
                 before_hp = character.current_hp
@@ -1814,6 +1830,8 @@ class GuildDungeonBattleView(discord.ui.View):
                     effects,
                     [],
                     self.turn,
+                    is_stunned1=user_stunned,
+                    is_stunned2=monster_stunned,
                 )
                 notes = self._tool_after_clash(
                     participant,

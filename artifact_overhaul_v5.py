@@ -58,6 +58,12 @@ ARTIFACT_DUST_FIXED_OFFERS = {
         "item": ARTIFACT_TICKET_ITEM,
         "count": 1,
     },
+    "support_fragment": {
+        "label": "랜덤 캐릭터 조각 ×1",
+        "price": 250,
+        "kind": "support_fragment",
+        "count": 1,
+    },
 }
 
 
@@ -179,6 +185,15 @@ def buy_artifact_dust_offer(user_data, offer_key, date_key=None):
     if dust < price:
         return False, f"유물 가루가 부족합니다. 필요: {price}개 / 보유: {dust}개"
     inventory[ARTIFACT_DUST_ITEM] = dust - price
+    if offer.get("kind") == "support_fragment":
+        from boss_training import add_support_fragment
+
+        result = add_support_fragment(user_data)
+        return (
+            True,
+            f"🤝 유물 가루 {price}개로 **{result['name']} 조각 ×1**을 구매했습니다. "
+            f"(보유 {result['total']}개 · +{result['upgrade']}강)",
+        )
     item, count = offer["item"], int(offer["count"])
     inventory[item] = int(inventory.get(item, 0)) + count
     return True, f"✅ 유물 가루 {price}개로 {item} ×{count}을(를) 구매했습니다."
@@ -505,7 +520,14 @@ class ArtifactDustShopView(discord.ui.View):
         if offer:
             embed.add_field(
                 name=offer["label"],
-                value=f"가격: 유물 가루 {offer['price']:,}개",
+                value=(
+                    f"가격: 유물 가루 {offer['price']:,}개"
+                    + (
+                        "\n전체 지원 가능 캐릭터 중 하나의 전용 조각을 무작위로 받습니다."
+                        if offer.get("kind") == "support_fragment"
+                        else ""
+                    )
+                ),
                 inline=False,
             )
         embed.set_footer(text="순수한 희망과 아티팩트 뽑기권은 상시 판매됩니다.")

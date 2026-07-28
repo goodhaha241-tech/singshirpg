@@ -39,6 +39,7 @@ PURE_HOPE_PRICE = 1_000_000
 RAW_STONE_ITEM = "원석"
 TOOL_TOKEN_ITEM = "도구 증표"
 TOOL_TOKEN_PRICE = 50
+TOOL_TOKEN_FRAGMENT_PRICE = 20
 
 TOOL_GACHA_STONE_WEIGHT = 60
 TOOL_GACHA_TOOL_WEIGHT = 35
@@ -589,11 +590,28 @@ def buy_tool_token_offer(
     user_data: dict[str, Any],
     offer_key: str,
 ) -> tuple[bool, str, dict[str, Any] | None]:
-    """Exchange 50 tool tokens for one deterministic shop offer."""
+    """Exchange tool tokens for one selected shop offer."""
     inventory = _inventory(user_data)
     tokens = int(inventory.get(TOOL_TOKEN_ITEM, 0))
-    if tokens < TOOL_TOKEN_PRICE:
-        return False, f"도구 증표가 부족합니다. 필요: {TOOL_TOKEN_PRICE}개 / 보유: {tokens}개", None
+    price = (
+        TOOL_TOKEN_FRAGMENT_PRICE
+        if offer_key == "support_fragment"
+        else TOOL_TOKEN_PRICE
+    )
+    if tokens < price:
+        return False, f"도구 증표가 부족합니다. 필요: {price}개 / 보유: {tokens}개", None
+
+    if offer_key == "support_fragment":
+        from boss_training import add_support_fragment
+
+        inventory[TOOL_TOKEN_ITEM] = tokens - price
+        result = add_support_fragment(user_data)
+        return (
+            True,
+            f"🤝 도구 증표 {price}개로 **{result['name']} 조각 ×1**을 받았습니다. "
+            f"(보유 {result['total']}개 · +{result['upgrade']}강)",
+            result,
+        )
 
     life = ensure_life_data(user_data)
     if offer_key == "tool":
@@ -1963,6 +1981,7 @@ class ToolTokenShopView(_LifeChildView):
         ("stone", "원석 ×5", "감정할 수 있는 원석 5개"),
         ("hope", "순수한 희망 ×3", "세공 도구 뽑기 재화 3개"),
         ("money", "머니 3,000,000원", "머니 300만 원"),
+        ("support_fragment", "랜덤 캐릭터 조각 ×1", "전체 지원 가능 캐릭터 중 하나의 전용 조각"),
     )
 
     def __init__(self, author, user_data, save_func):
@@ -1995,7 +2014,9 @@ class ToolTokenShopView(_LifeChildView):
         select.callback = self._select_offer
         self.add_item(select)
         buy = discord.ui.Button(
-            label=f"{TOOL_TOKEN_PRICE}개로 교환",
+            label=(
+                f"{TOOL_TOKEN_FRAGMENT_PRICE if self.selected_offer == 'support_fragment' else TOOL_TOKEN_PRICE}개로 교환"
+            ),
             style=discord.ButtonStyle.success,
             row=1,
         )
@@ -2051,7 +2072,12 @@ class ToolTokenShopView(_LifeChildView):
             value=f"{int(inventory.get(TOOL_TOKEN_ITEM, 0)):,}개",
             inline=True,
         )
-        embed.add_field(name="모든 상품 가격", value=f"{TOOL_TOKEN_PRICE}개", inline=True)
+        selected_price = (
+            TOOL_TOKEN_FRAGMENT_PRICE
+            if selected[0] == "support_fragment"
+            else TOOL_TOKEN_PRICE
+        )
+        embed.add_field(name="선택 상품 가격", value=f"{selected_price}개", inline=True)
         embed.add_field(
             name=selected[1],
             value=selected[2],

@@ -200,6 +200,72 @@ class BossTrainingCoreTests(unittest.TestCase):
             boss.user_boss_grade_reward("UF", factor=0.7),
             {"money": 17_500, "pt": 3_500, "contribution": 350},
         )
+
+    def test_dungeon_generation_is_deterministic_and_uses_full_budget(self):
+        completed = {
+            "boss_id": "dungeon-boss",
+            "name": "던전 보스",
+            "power_score": 10_000,
+            "hp": 10_000,
+            "mental": 4_000,
+            "attack": 80,
+            "defense": 70,
+            "factors": [
+                {"kind": "stat", "stat": "hp", "stars": 3},
+                {"kind": "stat", "stat": "attack", "stars": 2},
+                {"kind": "growth", "specialty": "attack", "stars": 3},
+            ],
+            "created_at": "2026-07-28T00:00:00+09:00",
+        }
+        state = boss.default_dungeon_builder_state(completed)
+        state["names"] = ["화염 문지기", "강철 문지기", "서리 문지기"]
+        first = boss.build_dungeon_spec(
+            completed, boss.dungeon_builder_configs(state)
+        )
+        second = boss.build_dungeon_spec(
+            completed, boss.dungeon_builder_configs(state)
+        )
+        self.assertEqual(first, second)
+        self.assertTrue(first["locked"])
+        self.assertEqual(
+            sum(monster["share"] for monster in first["monsters"]),
+            100,
+        )
+        self.assertEqual(first["elite"]["target_score"], 8_000)
+        self.assertEqual(len(first["monsters"]), 3)
+        self.assertTrue(all(len(monster["skills"]) == 3 for monster in first["monsters"]))
+        for monster in [*first["monsters"], first["elite"]]:
+            generated_score = (
+                monster["hp"] // 20
+                + monster["mental"] // 20
+                + monster["attack"] * 25
+                + monster["defense"] * 25
+                + monster["skill_score"]
+            )
+            self.assertEqual(generated_score, monster["target_score"])
+
+    def test_dungeon_factor_rules_and_share_validation(self):
+        completed = {
+            "boss_id": "factor-dungeon",
+            "name": "인자 던전",
+            "power_score": 8_000,
+            "hp": 8_000,
+            "mental": 2_000,
+            "attack": 60,
+            "defense": 50,
+            "factors": [
+                {"kind": "stat", "stat": "hp", "stars": 2},
+                {"kind": "growth", "specialty": "hp", "stars": 3},
+            ],
+        }
+        factors = boss.eligible_dungeon_factors(completed)
+        self.assertGreaterEqual(len(factors), 3)
+        self.assertNotIn("growth", {factor["kind"] for factor in factors})
+        with self.assertRaises(boss.BossTrainingError):
+            boss.validate_dungeon_shares([35, 35, 35])
+        with self.assertRaises(boss.BossTrainingError):
+            boss.validate_dungeon_shares([15, 45, 40])
+        self.assertEqual(boss.validate_dungeon_shares([35, 35, 30]), [35, 35, 30])
         self.assertEqual(boss.USER_BOSS_HOPE_REWARDS["SS"], 2)
         self.assertEqual(boss.USER_BOSS_HOPE_REWARDS["UG"], 3)
         self.assertEqual(boss.USER_BOSS_HOPE_REWARDS["UF"], 4)
@@ -496,6 +562,96 @@ class BossTrainingCoreTests(unittest.TestCase):
 
 
 class BossTrainingViewSmokeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dungeon_builder_uses_button_select_ui_and_short_factor_ids(self):
+        author = type("Author", (), {"id": 1, "display_name": "테스터"})()
+        record = {
+            "boss_id": "builder",
+            "boss_name": "제작 보스",
+            "grade": "UG",
+            "power_score": 10_000,
+            "boss_data": {
+                "boss_id": "builder",
+                "name": "제작 보스",
+                "power_score": 10_000,
+                "hp": 10_000,
+                "mental": 3_000,
+                "attack": 80,
+                "defense": 70,
+                "factors": [
+                    {"kind": "stat", "stat": "hp", "stars": 3},
+                    {"kind": "stat", "stat": "attack", "stars": 2},
+                    {"kind": "stat", "stat": "defense", "stars": 1},
+                ],
+            },
+        }
+        view = boss.BossDungeonBuilderView(
+            author,
+            {"guild_id": 1},
+            active_run=False,
+            record=record,
+        )
+        await view.setup()
+        try:
+            self.assertEqual(len(view.children), 7)
+            self.assertEqual(
+                [getattr(item, "row", None) for item in view.children],
+                [0, 1, 2, 3, 4, 4, 4],
+            )
+            factor_select = view.children[3]
+            self.assertTrue(all(len(option.value) == 32 for option in factor_select.options))
+            self.assertIn("혼합 엘리트", view.get_embed().fields[-1].name)
+        finally:
+            view.stop()
+
+    async def test_public_bosses_are_available_as_inheritance_parents(self):
+        owned = [{
+            "boss_id": "owned",
+            "owner_id": "1",
+            "boss_name": "내 보스",
+            "publish_scope": None,
+        }]
+        guild_public = [{
+            "boss_id": "guild",
+            "owner_id": "2",
+            "boss_name": "길드 보스",
+            "publish_scope": "guild",
+        }]
+        world_public = [
+            {
+                "boss_id": "world",
+                "owner_id": "3",
+                "boss_name": "월드 보스",
+                "publish_scope": "world",
+            },
+            # The guild query can also contain a world boss from this guild;
+            # it must still appear only once.
+            {
+                "boss_id": "guild",
+                "owner_id": "2",
+                "boss_name": "길드 보스",
+                "publish_scope": "guild",
+            },
+        ]
+        with (
+            patch(
+                "boss_training.list_owned_bosses",
+                new=AsyncMock(return_value=owned),
+            ),
+            patch(
+                "boss_training.list_published_bosses",
+                new=AsyncMock(side_effect=[guild_public, world_public]),
+            ),
+        ):
+            rows = await boss.list_inheritance_parent_bosses(1, 99)
+        self.assertEqual(
+            [row["boss_id"] for row in rows],
+            ["owned", "guild", "world"],
+        )
+        self.assertEqual(
+            [boss.inheritance_source_label(row) for row in rows],
+            ["내 보스", "길드 공개", "월드 공개"],
+        )
+
     async def test_button_skill_wizard_and_build_view_construct(self):
         author = type("Author", (), {"id": 1, "display_name": "테스터"})()
         wizard = boss.BossSkillWizardView(
@@ -533,9 +689,18 @@ class BossTrainingViewSmokeTests(unittest.IsolatedAsyncioTestCase):
         with patch("boss_training.get_user_data", new=AsyncMock(return_value=user)):
             embeds = await view.get_embeds()
         self.assertEqual(len(embeds), 3)
+        self.assertNotIn(
+            "교차 성장",
+            [field.name for field in embeds[0].fields],
+        )
+        self.assertEqual(embeds[0].fields[-1].name, "현재 컨디션")
         self.assertIn("훈련별 참가 서포트", embeds[1].title)
         self.assertEqual(embeds[1].fields[0].name, "💞 인연 정보")
         self.assertIn("최근 3턴", embeds[2].title)
+        self.assertIn(
+            "🧬 인자 확인",
+            [getattr(item, "label", None) for item in view.children],
+        )
 
     async def test_factor_text_is_visible_in_archive(self):
         author = type("Author", (), {"id": 1, "display_name": "테스터"})()

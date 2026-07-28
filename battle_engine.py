@@ -10,6 +10,7 @@ from gem_effects import (
     consume_guardian_defense_bonus,
     consume_reuse_failure_bonus,
     empty_slot_guard,
+    equipped_artifacts,
     gem_state,
     low_mental_bonus,
     multi_attack_bonus,
@@ -38,6 +39,7 @@ FREEZE_STAT_MULTIPLIER = 0.85
 SEVERE_COLD_FROST_THRESHOLD = 3
 SEVERE_COLD_DURATION = 5
 SEVERE_COLD_LIFESTEAL_RATIO = 0.20
+NON_ATTACK_DICE_TYPES = frozenset({"defense", "counter", "heal", "mental_heal"})
 
 
 def get_emoji(action_type):
@@ -224,6 +226,65 @@ def tick_freeze_end_of_turn(entity, turn_count):
         statuses["freeze"] = before - 1
         return 1
     return 0
+
+
+def reset_encounter_runtime(entity, preserve_keys=()):
+    """Reset per-encounter artifact/status state while retaining explicit run buffs."""
+    runtime = runtime_cooldowns(entity)
+    preserved = {
+        key: runtime[key]
+        for key in preserve_keys
+        if key in runtime
+    }
+    runtime.clear()
+    runtime.update(preserved)
+    return runtime
+
+
+def consume_die_statuses(entity, die_type, *, took_bleed_damage=False):
+    """Consume statuses whose count falls when a die is resolved.
+
+    Bleed loses one count when its damage actually triggers or when the owner
+    uses a non-attack die.  If both happen in the same clash, the shared
+    ``or`` condition consumes only one count.  Paralysis loses one count for
+    each non-attack die used.
+    """
+    statuses = ensure_status_effects(entity)
+    consumed = {}
+    non_attack = die_type in NON_ATTACK_DICE_TYPES
+    if statuses.get("bleed", 0) > 0 and (took_bleed_damage or non_attack):
+        statuses["bleed"] = max(0, int(statuses["bleed"]) - 1)
+        consumed["bleed"] = 1
+    if statuses.get("paralysis", 0) > 0 and non_attack:
+        statuses["paralysis"] = max(0, int(statuses["paralysis"]) - 1)
+        consumed["paralysis"] = 1
+    return consumed
+
+
+def tick_stun_after_skipped_action(entity, turn_count):
+    """Consume one stun turn once after the affected action was skipped."""
+    statuses = ensure_status_effects(entity)
+    runtime = runtime_cooldowns(entity)
+    if runtime.get("stun_tick_turn") == int(turn_count):
+        return 0
+    runtime["stun_tick_turn"] = int(turn_count)
+    before = int(statuses.get("stun", 0))
+    if before > 0:
+        statuses["stun"] = before - 1
+        return 1
+    return 0
+
+
+def artifact_for_special(entity, special):
+    """Return the equipped normal or engraved artifact owning ``special``."""
+    return next(
+        (
+            artifact
+            for artifact in equipped_artifacts(entity)
+            if artifact.get("special") == special
+        ),
+        {},
+    )
 
 
 def time_accel_multiplier(stacks):
@@ -512,10 +573,6 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
     # 어즈렉 각인용 변수
     total_def1, total_def2 = 0, 0
     first_type1, first_type2 = None, None
-    art1 = getattr(char1, "equipped_artifact", None)
-    art2 = getattr(char2, "equipped_artifact", None)
-    art1 = art1 if isinstance(art1, dict) else {}
-    art2 = art2 if isinstance(art2, dict) else {}
     valid1 = [d for d in res1 if d.get("type") != "none"]
     valid2 = [d for d in res2 if d.get("type") != "none"]
     attack_index1 = attack_index2 = 0
@@ -640,30 +697,32 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         # [꼼꼼한] 재사용
         if "reuse_last_dice" in effs1 and not is_stunned1 and t1 == "none" and t2 != "none" and i > 0:
+            reuse_art1 = artifact_for_special(char1, "reuse_last_dice")
             ld = res1[i-1]
             if ld.get("type") != "none":
                 t1, v1 = ld["type"], ld["value"]
-                bonus = reuse_dice_bonus(art1) + consume_reuse_failure_bonus(art1, state1)
+                bonus = reuse_dice_bonus(reuse_art1) + consume_reuse_failure_bonus(reuse_art1, state1)
                 v1 += bonus
                 clash_log += f"✨ **{char1.name}[꼼꼼한]** 재사용(+{bonus})! "
             else:
-                reuse_failure_bonus(art1, state1)
+                reuse_failure_bonus(reuse_art1, state1)
         if "reuse_last_dice" in effs2 and not is_stunned2 and t2 == "none" and t1 != "none" and i > 0:
+            reuse_art2 = artifact_for_special(char2, "reuse_last_dice")
             ld = res2[i-1]
             if ld.get("type") != "none":
                 t2, v2 = ld["type"], ld["value"]
-                bonus = reuse_dice_bonus(art2) + consume_reuse_failure_bonus(art2, state2)
+                bonus = reuse_dice_bonus(reuse_art2) + consume_reuse_failure_bonus(reuse_art2, state2)
                 v2 += bonus
                 clash_log += f"✨ **{char2.name}[꼼꼼한]** 재사용(+{bonus})! "
             else:
-                reuse_failure_bonus(art2, state2)
+                reuse_failure_bonus(reuse_art2, state2)
         if "reuse_last_dice" in effs1 and t1 == "none" and t2 != "none":
-            guard = empty_slot_guard(art1)
+            guard = empty_slot_guard(artifact_for_special(char1, "reuse_last_dice"))
             if guard > 0:
                 t1, v1 = "defense", guard
                 clash_log += f"🛡️ **{char1.name}[여백]** "
         if "reuse_last_dice" in effs2 and t2 == "none" and t1 != "none":
-            guard = empty_slot_guard(art2)
+            guard = empty_slot_guard(artifact_for_special(char2, "reuse_last_dice"))
             if guard > 0:
                 t2, v2 = "defense", guard
                 clash_log += f"🛡️ **{char2.name}[여백]** "
@@ -677,38 +736,42 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         # [맹렬한] / [견고한] 아티팩트
         if "fierce_attack" in effs1 and t1 == "attack":
+            fierce_art1 = artifact_for_special(char1, "fierce_attack")
             last = runtime1.get("fierce_attack", -10)
-            if turn_count - last >= artifact_trigger_interval(art1, "fierce_attack", 2):
+            if turn_count - last >= artifact_trigger_interval(fierce_art1, "fierce_attack", 2):
                 fierce = artifact_modifier(
-                    art1, "damage", effective_combat_stat(char1, "attack")
+                    fierce_art1, "damage", effective_combat_stat(char1, "attack")
                 )
                 v1 += fierce
                 runtime1["fierce_attack"] = turn_count
-                record_fierce_aftereffect(art1, fierce, state1)
+                record_fierce_aftereffect(fierce_art1, fierce, state1)
                 clash_log += f"🔥 **{char1.name}[맹렬한]** "
         if "fierce_attack" in effs2 and t2 == "attack":
+            fierce_art2 = artifact_for_special(char2, "fierce_attack")
             last = runtime2.get("fierce_attack", -10)
-            if turn_count - last >= artifact_trigger_interval(art2, "fierce_attack", 2):
+            if turn_count - last >= artifact_trigger_interval(fierce_art2, "fierce_attack", 2):
                 fierce = artifact_modifier(
-                    art2, "damage", effective_combat_stat(char2, "attack")
+                    fierce_art2, "damage", effective_combat_stat(char2, "attack")
                 )
                 v2 += fierce
                 runtime2["fierce_attack"] = turn_count
-                record_fierce_aftereffect(art2, fierce, state2)
+                record_fierce_aftereffect(fierce_art2, fierce, state2)
                 clash_log += f"🔥 **{char2.name}[맹렬한]** "
 
         if "sturdy_defense" in effs1 and t1 == "defense":
+            sturdy_art1 = artifact_for_special(char1, "sturdy_defense")
             last = runtime1.get("sturdy_defense", -10)
             if turn_count - last >= 2:
-                heal, shield = sturdy_recovery(art1, char1, (v1 * 2) // 3)
+                heal, shield = sturdy_recovery(sturdy_art1, char1, (v1 * 2) // 3)
                 runtime1["sturdy_defense"] = turn_count
                 clash_log += f"🛡️ **{char1.name}[견고한]**(+{heal}"
                 clash_log += f", 보호막 {shield}" if shield else ""
                 clash_log += ") "
         if "sturdy_defense" in effs2 and t2 == "defense":
+            sturdy_art2 = artifact_for_special(char2, "sturdy_defense")
             last = runtime2.get("sturdy_defense", -10)
             if turn_count - last >= 2:
-                heal, shield = sturdy_recovery(art2, char2, (v2 * 2) // 3)
+                heal, shield = sturdy_recovery(sturdy_art2, char2, (v2 * 2) // 3)
                 runtime2["sturdy_defense"] = turn_count
                 clash_log += f"🛡️ **{char2.name}[견고한]**(+{heal}"
                 clash_log += f", 보호막 {shield}" if shield else ""
@@ -848,13 +911,25 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
             elif incoming == "minor": dmg2 = max(0, round(dmg2 * 0.75))
 
         if "reflection" in effs1 and dmg1 > 0:
-            dmg1 = reflection_incoming_damage(art1, char1, dmg1)
+            dmg1 = reflection_incoming_damage(
+                artifact_for_special(char1, "reflection"), char1, dmg1
+            )
         if "reflection" in effs2 and dmg2 > 0:
-            dmg2 = reflection_incoming_damage(art2, char2, dmg2)
+            dmg2 = reflection_incoming_damage(
+                artifact_for_special(char2, "reflection"), char2, dmg2
+            )
 
-        # 패닉 2배
-        if is_stunned1 and dmg1 > 0: dmg1 *= 2; mental_dmg1 *= 2; clash_log += " (⚠️패닉 2배)"
-        if is_stunned2 and dmg2 > 0: dmg2 *= 2; mental_dmg2 *= 2; clash_log += " (⚠️패닉 2배)"
+        # 패닉/기절 중에는 행동할 수 없고 받는 피해가 2배가 된다.
+        if is_stunned1 and dmg1 > 0:
+            dmg1 *= 2
+            mental_dmg1 *= 2
+            reason = "기절" if char1.status_effects.get("stun", 0) > 0 else "패닉"
+            clash_log += f" (⚠️{reason} 피격 2배)"
+        if is_stunned2 and dmg2 > 0:
+            dmg2 *= 2
+            mental_dmg2 *= 2
+            reason = "기절" if char2.status_effects.get("stun", 0) > 0 else "패닉"
+            clash_log += f" (⚠️{reason} 피격 2배)"
 
         if state1.get("guardian_turn") != turn_count:
             state1["guardian_turn"] = turn_count
@@ -872,22 +947,40 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
         mental_dmg2 = reduce_guardian_mental_damage(char2, mental_dmg2, state2)
 
         # 출혈 추가 피해
+        took_bleed_damage1 = False
+        took_bleed_damage2 = False
         bleed1 = char1.status_effects.get("bleed", 0)
         if bleed1 > 0 and dmg2 > 0:
             b_dmg1 = int(dmg2 * 0.5 * bleed1)
-            if b_dmg1 > 0: char1.current_hp = max(0, char1.current_hp - b_dmg1); clash_log += f" 🩸출혈(-{b_dmg1})"; damage_taken1 += b_dmg1
+            if b_dmg1 > 0:
+                char1.current_hp = max(0, char1.current_hp - b_dmg1)
+                clash_log += f" 🩸출혈(-{b_dmg1})"
+                damage_taken1 += b_dmg1
+                took_bleed_damage1 = True
 
         bleed2 = char2.status_effects.get("bleed", 0)
         if bleed2 > 0 and dmg1 > 0:
             b_dmg2 = int(dmg1 * 0.5 * bleed2)
-            if b_dmg2 > 0: char2.current_hp = max(0, char2.current_hp - b_dmg2); clash_log += f" 🩸출혈(-{b_dmg2})"; damage_taken2 += b_dmg2
+            if b_dmg2 > 0:
+                char2.current_hp = max(0, char2.current_hp - b_dmg2)
+                clash_log += f" 🩸출혈(-{b_dmg2})"
+                damage_taken2 += b_dmg2
+                took_bleed_damage2 = True
 
         # 반사 / 흡혈
         if "reflection" in effs1 and dmg1 > 0:
-            refl = reflection_damage(art1, char1, (dmg1 * 3) // 4)
+            refl = reflection_damage(
+                artifact_for_special(char1, "reflection"),
+                char1,
+                (dmg1 * 3) // 4,
+            )
             if refl > 0: char2.current_hp = max(0, char2.current_hp - refl); clash_log += f" 💢반사(-{refl})"
         if "reflection" in effs2 and dmg2 > 0:
-            refl = reflection_damage(art2, char2, (dmg2 * 3) // 4)
+            refl = reflection_damage(
+                artifact_for_special(char2, "reflection"),
+                char2,
+                (dmg2 * 3) // 4,
+            )
             if refl > 0: char1.current_hp = max(0, char1.current_hp - refl); clash_log += f" 💢반사(-{refl})"
 
         absorb1 = next(
@@ -972,16 +1065,30 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
 
         if dmg2 > 0: clash_log += f" 💥{char2.name} HP-{dmg2}"; damage_taken2 += dmg2
         if dmg1 > 0: clash_log += f" 🩸{char1.name} HP-{dmg1}"; damage_taken1 += dmg1
+
+        consumed1 = consume_die_statuses(
+            char1, t1, took_bleed_damage=took_bleed_damage1
+        )
+        consumed2 = consume_die_statuses(
+            char2, t2, took_bleed_damage=took_bleed_damage2
+        )
+        if "bleed" in consumed1:
+            clash_log += f" · {char1.name} 출혈 {char1.status_effects['bleed']}"
+        if "bleed" in consumed2:
+            clash_log += f" · {char2.name} 출혈 {char2.status_effects['bleed']}"
+        if "paralysis" in consumed1:
+            clash_log += f" · {char1.name} 마비 {char1.status_effects['paralysis']}"
+        if "paralysis" in consumed2:
+            clash_log += f" · {char2.name} 마비 {char2.status_effects['paralysis']}"
         
         log += clash_log
-        
-        # 상태이상 턴 감소
-        if t1 in ["defense", "heal", "mental_heal"] and char1.status_effects.get("paralysis", 0) > 0: char1.status_effects["paralysis"] -= 1
-        if t2 in ["defense", "heal", "mental_heal"] and char2.status_effects.get("paralysis", 0) > 0: char2.status_effects["paralysis"] -= 1
-        if char1.status_effects.get("stun", 0) > 0: char1.status_effects["stun"] -= 1
-        if char2.status_effects.get("stun", 0) > 0: char2.status_effects["stun"] -= 1
 
         if char1.current_hp <= 0 or char2.current_hp <= 0: break
+
+    if is_stunned1:
+        tick_stun_after_skipped_action(char1, turn_count)
+    if is_stunned2:
+        tick_stun_after_skipped_action(char2, turn_count)
 
     # [어즈렉 각인: 믿음어린]
     if "earthreg_faith" in effs1 and first_type1 == "defense":

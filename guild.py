@@ -7,6 +7,8 @@ import discord
 import random
 import json
 import asyncio
+import math
+from copy import deepcopy
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from discord.ui import View, Select, Button, Modal, TextInput
@@ -1580,10 +1582,22 @@ class GuildWarehouseView(discord.ui.View):
 # ==================================================================================
 RAID_TURN_LIMIT = 100
 RAID_STATUS_EFFECTS = {
-    "bleed": ("🩸", "출혈", "피해를 받을 때 스택에 비례한 추가 피해"),
-    "paralysis": ("⚡", "마비", "주사위 위력 스택당 -2"),
-    "stun": ("💫", "기절", "행동 제한 및 피격 피해 증가"),
-    "freeze": ("❄️", "빙결", "주사위 1~2개 봉쇄 · 공격/방어 -15%"),
+    "bleed": (
+        "🩸",
+        "출혈",
+        "피격 시 스택 비례 추가 피해 · 발동 또는 비공격 주사위 사용 시 -1",
+    ),
+    "paralysis": (
+        "⚡",
+        "마비",
+        "주사위 위력 스택당 -2 · 비공격 주사위 사용 시 -1",
+    ),
+    "stun": ("💫", "기절", "행동 불가·피격 피해 2배 · 행동을 건너뛴 뒤 -1"),
+    "freeze": (
+        "❄️",
+        "빙결",
+        "주사위 1~2개 봉쇄·공격/방어 -15% · 턴 종료 시 -1",
+    ),
 }
 
 
@@ -1616,11 +1630,12 @@ def raid_status_effect_text(entity, *, include_defenses=False):
 class RaidCardSelectView(discord.ui.View):
     PER_PAGE = 4
 
-    def __init__(self, author, cards, callback_func, turn):
+    def __init__(self, author, cards, callback_func, turn, card_objects=None):
         super().__init__(timeout=60)
         self.author = author
         self.callback_func = callback_func
         self.cards = list(cards)
+        self.card_objects = dict(card_objects or {})
         self.turn = int(turn)
         self.page = 0
         self.rebuild()
@@ -1665,7 +1680,7 @@ class RaidCardSelectView(discord.ui.View):
         start = self.page * self.PER_PAGE
         lines = []
         for card_name in self.cards[start:start + self.PER_PAGE]:
-            card_obj = get_card(card_name)
+            card_obj = self.card_objects.get(card_name) or get_card(card_name)
             description = card_obj.description if card_obj else "효과 정보 없음"
             lines.append(f"**{card_name}**\n{description}")
         return discord.Embed(
@@ -1736,6 +1751,36 @@ class RaidBattleView(discord.ui.View):
         self.resolve_lock = asyncio.Lock()
         self.finished = False
         self.user_boss_record = getattr(lobby_view, "user_boss_record", None)
+        self.dungeon = {}
+        self.floor_specs = []
+        self.floor_index = 0
+        if self.user_boss_record:
+            from boss_training import dungeon_is_ready
+
+            boss_data = self.user_boss_record.get("boss_data", {})
+            if dungeon_is_ready(boss_data):
+                self.dungeon = boss_data["dungeon"]
+                self.floor_specs = [
+                    *deepcopy(self.dungeon.get("monsters", [])),
+                    deepcopy(self.dungeon.get("elite", {})),
+                    {"kind": "boss", "name": self.user_boss_record.get("boss_name", "보스")},
+                ]
+        self.is_dungeon_raid = len(self.floor_specs) == 5
+        self.inherited_factor_keys = set()
+        self.inherited_factor_labels = []
+        self.floor_results = []
+        for participant in self.participants.values():
+            participant.setdefault("dungeon_factor_bonuses", {
+                "hp": 0, "mental": 0, "attack": 0, "defense": 0
+            })
+            participant.setdefault("dungeon_skill_cards", {})
+            participant.setdefault("dungeon_skill_cooldowns", {})
+            participant.setdefault("dungeon_passives", {})
+            participant.setdefault("dungeon_passive_state", {})
+            participant.setdefault(
+                "base_general_passives",
+                set(getattr(participant["char"], "general_passives", set()) or set()),
+            )
         self.battle_id = getattr(lobby_view, "battle_id", None)
         self.boss_control_user_id = getattr(lobby_view, "boss_control_user_id", None)
         self.boss_control_user = getattr(lobby_view, "boss_control_user", None)
@@ -1750,6 +1795,21 @@ class RaidBattleView(discord.ui.View):
         if not self.user_boss_record:
             self.remove_item(self.btn_boss_pick)
         self.decide_boss_action()
+
+    def _on_final_floor(self):
+        return not self.is_dungeon_raid or self.floor_index == 4
+
+    def _owner_controls_current_floor(self):
+        return bool(
+            self.user_boss_record
+            and self.boss_control_user_id
+            and self._on_final_floor()
+        )
+
+    def _floor_label(self):
+        if not self.is_dungeon_raid:
+            return ""
+        return f"{self.floor_index + 1}/5층"
 
     def attackers_can_choose(self):
         return not self.finished and self.boss_intent is not None
@@ -1782,7 +1842,9 @@ class RaidBattleView(discord.ui.View):
         return ", ".join(names) or "대상 없음"
 
     def decide_boss_action(self):
-        if self.user_boss_record and self.boss_control_user_id:
+        if hasattr(self, "btn_boss_pick"):
+            self.btn_boss_pick.disabled = not self._owner_controls_current_floor()
+        if self._owner_controls_current_floor():
             self.boss_intent = None
             self.boss_target_ids = []
             if self.boss_choice_task and not self.boss_choice_task.done():
@@ -1805,12 +1867,17 @@ class RaidBattleView(discord.ui.View):
         await self._refresh_command_panels()
 
     def get_status_embed(self):
-        embed = discord.Embed(
-            title=f"📊 레이드 스탯 · {self.boss.name}",
-            description=(
+        floor_prefix = f" · {self._floor_label()}" if self.is_dungeon_raid else ""
+        if self._on_final_floor():
+            turn_text = (
                 f"**{self.turn}/{RAID_TURN_LIMIT}턴** · "
                 f"{RAID_TURN_LIMIT}턴을 모두 버티면 보스가 자동 승리합니다."
-            ),
+            )
+        else:
+            turn_text = f"**{self.turn}턴** · 중간층에는 턴 제한이 없습니다."
+        embed = discord.Embed(
+            title=f"📊 레이드 스탯{floor_prefix} · {self.boss.name}",
+            description=turn_text,
             color=discord.Color.dark_red(),
         )
         p = max(0.0, min(1.0, self.boss.current_hp / self.boss.max_hp))
@@ -1875,6 +1942,15 @@ class RaidBattleView(discord.ui.View):
             else f"🎴 공격자 커맨드 입력 가능 · 준비 {ready}/{alive}"
         )
         embed.add_field(name="🕹️ 커맨드 창", value=command_status, inline=False)
+        if self.is_dungeon_raid:
+            embed.add_field(
+                name="🧬 원정 계승",
+                value=(
+                    "\n".join(f"• {label}" for label in self.inherited_factor_labels)
+                    or "아직 계승한 인자가 없습니다."
+                )[:1024],
+                inline=False,
+            )
         return embed
 
     def get_log_embed(self):
@@ -1882,7 +1958,11 @@ class RaidBattleView(discord.ui.View):
         if len(log_text) > 3900:
             log_text = "…(이전 로그 생략)\n" + log_text[-3870:]
         return discord.Embed(
-            title=f"📜 레이드 로그 · {self.log_turn}턴",
+            title=(
+                f"📜 레이드 로그"
+                f"{' · ' + self._floor_label() if self.is_dungeon_raid else ''}"
+                f" · {self.log_turn}턴"
+            ),
             description=log_text,
             color=discord.Color.orange(),
         )
@@ -1979,12 +2059,24 @@ class RaidBattleView(discord.ui.View):
 
     def _new_command_view(self, uid):
         participant = self.participants[uid]
-        cards = list(getattr(participant["char"], "equipped_cards", []) or [])
+        temporary = participant.get("dungeon_skill_cards", {})
+        cooldowns = participant.get("dungeon_skill_cooldowns", {})
+        cards = [
+            name
+            for name in list(getattr(participant["char"], "equipped_cards", []) or [])
+            if name not in temporary or int(cooldowns.get(name, 0)) <= 0
+        ]
+        cards.extend(
+            name for name in temporary
+            if name not in cards
+            and int(cooldowns.get(name, 0)) <= 0
+        )
         return RaidCardSelectView(
             participant["user"],
             cards,
             self._make_raid_card_callback(uid, self.turn),
             self.turn,
+            card_objects=participant.get("dungeon_skill_cards", {}),
         )
 
     async def _refresh_command_panels(self):
@@ -2056,7 +2148,18 @@ class RaidBattleView(discord.ui.View):
         if char_info['char'].current_hp <= 0: return await interaction.response.send_message("행동 불가 상태입니다.", ephemeral=True)
         if uid in self.selected_cards: return await interaction.response.send_message("이미 선택했습니다.", ephemeral=True)
 
-        cards = list(getattr(char_info['char'], "equipped_cards", []) or [])
+        temporary = char_info.get("dungeon_skill_cards", {})
+        cooldowns = char_info.get("dungeon_skill_cooldowns", {})
+        cards = [
+            name
+            for name in list(getattr(char_info['char'], "equipped_cards", []) or [])
+            if name not in temporary or int(cooldowns.get(name, 0)) <= 0
+        ]
+        cards.extend(
+            name for name in temporary
+            if name not in cards
+            and int(cooldowns.get(name, 0)) <= 0
+        )
         if not cards:
             return await interaction.response.send_message("선택 가능한 카드가 없습니다.", ephemeral=True)
         view = self._new_command_view(uid)
@@ -2068,7 +2171,11 @@ class RaidBattleView(discord.ui.View):
 
     @discord.ui.button(label="👑 보스 커맨드", style=discord.ButtonStyle.danger)
     async def btn_boss_pick(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.user_boss_record or interaction.user.id != self.boss_control_user_id:
+        if (
+            not self.user_boss_record
+            or interaction.user.id != self.boss_control_user_id
+            or not self._on_final_floor()
+        ):
             return await interaction.response.send_message("이번 보스의 조작자가 아닙니다.", ephemeral=True)
         if self.finished:
             return await interaction.response.send_message("이미 종료된 레이드입니다.", ephemeral=True)
@@ -2101,6 +2208,216 @@ class RaidBattleView(discord.ui.View):
         view = BossRaidCardSelectView(interaction.user, cards, choose, self.turn)
         await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 
+    def _attacker_card(self, participant, card_name):
+        return (
+            participant.get("dungeon_skill_cards", {}).get(card_name)
+            or get_card(card_name)
+        )
+
+    def _apply_dungeon_factor(self, factor):
+        from boss_training import (
+            BossSkillCard,
+            FACTOR_STAT_VALUES,
+            factor_display_text,
+            dungeon_factor_key,
+        )
+
+        key = dungeon_factor_key(factor)
+        if key in self.inherited_factor_keys:
+            return
+        self.inherited_factor_keys.add(key)
+        self.inherited_factor_labels.append(factor_display_text(factor))
+        stars = max(1, min(3, int(factor.get("stars", 1))))
+        kind = factor.get("kind")
+        for participant in self.participants.values():
+            char = participant["char"]
+            if kind == "stat":
+                stat = str(factor.get("stat", ""))
+                amount = int(FACTOR_STAT_VALUES.get(stat, {}).get(stars, 0))
+                bonuses = participant["dungeon_factor_bonuses"]
+                bonuses[stat] = int(bonuses.get(stat, 0)) + amount
+                if stat == "hp":
+                    char.max_hp += amount
+                    char.current_hp += amount
+                elif stat == "mental":
+                    char.max_mental += amount
+                    char.current_mental += amount
+                elif stat in {"attack", "defense"}:
+                    setattr(char, stat, int(getattr(char, stat)) + amount)
+            elif kind == "skill":
+                spec = deepcopy(factor.get("skill", {}))
+                if spec.get("name"):
+                    participant["dungeon_skill_cards"].setdefault(
+                        spec["name"], BossSkillCard(spec)
+                    )
+            elif kind == "passive_discount":
+                passive = str(factor.get("passive", ""))
+                potency = {1: 0.50, 2: 0.75, 3: 1.0}[stars]
+                current = float(
+                    participant["dungeon_passives"].get(passive, 0.0)
+                )
+                participant["dungeon_passives"][passive] = max(
+                    current, potency
+                )
+
+    def _prepare_dungeon_passives(self, participant, user_results):
+        char = participant["char"]
+        passives = participant.get("dungeon_passives", {})
+        potency = float(passives.get("low_hp_attack", 0.0))
+        if potency and char.current_hp <= char.max_hp * 0.50:
+            multiplier = 1.0 + 0.20 * potency
+            for result in user_results:
+                if result.get("type") == "attack":
+                    result["value"] = max(
+                        1, int(result.get("value", 0) * multiplier)
+                    )
+        status_potency = float(passives.get("status_extend", 0.0))
+        existing = set(participant.get("base_general_passives", set()))
+        if status_potency and random.random() < status_potency:
+            existing.add("status_extend")
+        char.general_passives = existing
+        return char.current_hp
+
+    def _finish_dungeon_passives(self, participant, hp_before):
+        char = participant["char"]
+        passives = participant.get("dungeon_passives", {})
+        state = participant.setdefault("dungeon_passive_state", {})
+        damage = max(0, int(hp_before) - int(char.current_hp))
+        guard = float(passives.get("first_guard", 0.0))
+        if damage and guard and not state.get("first_guard_used"):
+            restored = min(
+                damage,
+                max(1, math.floor(damage * 0.20 * guard)),
+            )
+            char.current_hp = min(char.max_hp, char.current_hp + restored)
+            state["first_guard_used"] = True
+            self.logs.append(f"🛡️ **{char.name}** 계승 초격 방어 · 피해 {restored} 감소")
+
+        hp_regen = float(passives.get("hp_regen", 0.0))
+        if hp_regen and char.current_hp > 0:
+            healed = min(
+                char.max_hp - char.current_hp,
+                max(1, math.floor(char.max_hp * 0.02 * hp_regen)),
+            )
+            char.current_hp += healed
+        mental_regen = float(passives.get("mental_regen", 0.0))
+        if mental_regen and char.current_hp > 0:
+            healed = min(
+                char.max_mental - char.current_mental,
+                max(1, math.floor(char.max_mental * 0.03 * mental_regen)),
+            )
+            char.current_mental += healed
+        recovery = float(passives.get("last_recovery", 0.0))
+        if (
+            recovery
+            and char.current_hp <= char.max_hp * 0.25
+            and not state.get("last_recovery_used")
+        ):
+            hp = max(1, math.floor(char.max_hp * 0.10 * recovery))
+            mental = max(1, math.floor(char.max_mental * 0.10 * recovery))
+            char.current_hp = min(char.max_hp, char.current_hp + hp)
+            char.current_mental = min(char.max_mental, char.current_mental + mental)
+            state["last_recovery_used"] = True
+            self.logs.append(
+                f"🌱 **{char.name}** 계승 최후의 회복 · HP +{hp} · 정신 +{mental}"
+            )
+
+    def _remove_dungeon_factors(self, participant):
+        char = participant["char"]
+        bonuses = participant.get("dungeon_factor_bonuses", {})
+        hp = int(bonuses.get("hp", 0))
+        mental = int(bonuses.get("mental", 0))
+        attack = int(bonuses.get("attack", 0))
+        defense = int(bonuses.get("defense", 0))
+        char.max_hp = max(1, char.max_hp - hp)
+        char.current_hp = max(1, min(char.max_hp, char.current_hp - hp))
+        char.max_mental = max(1, char.max_mental - mental)
+        char.current_mental = max(
+            0, min(char.max_mental, char.current_mental - mental)
+        )
+        char.attack -= attack
+        char.defense -= defense
+        participant["dungeon_factor_bonuses"] = {
+            "hp": 0, "mental": 0, "attack": 0, "defense": 0
+        }
+        participant["dungeon_skill_cards"] = {}
+        participant["dungeon_skill_cooldowns"] = {}
+        participant["dungeon_passives"] = {}
+        participant["dungeon_passive_state"] = {}
+        if hasattr(char, "general_passives"):
+            char.general_passives = set(
+                participant.get("base_general_passives", set())
+            )
+
+    async def _advance_dungeon_floor(self, interaction):
+        if not self.is_dungeon_raid or self.floor_index >= 4:
+            return False
+        cleared = self.floor_specs[self.floor_index]
+        reward_factors = list(cleared.get("factors", []))
+        for factor in reward_factors:
+            self._apply_dungeon_factor(factor)
+        self.floor_results.append({
+            "floor": self.floor_index + 1,
+            "name": self.boss.name,
+            "result": "clear",
+            "turns": self.turn,
+            "factors": deepcopy(reward_factors),
+        })
+        recovery_logs = []
+        for participant in self.participants.values():
+            char = participant["char"]
+            hp = max(1, math.floor(char.max_hp * 0.20))
+            mental = max(1, math.floor(char.max_mental * 0.20))
+            was_down = char.current_hp <= 0
+            char.current_hp = (
+                hp if was_down else min(char.max_hp, char.current_hp + hp)
+            )
+            char.current_mental = (
+                mental
+                if was_down
+                else min(char.max_mental, char.current_mental + mental)
+            )
+            for key in getattr(char, "status_effects", {}):
+                char.status_effects[key] = 0
+            battle_engine.reset_encounter_runtime(
+                char,
+                preserve_keys=("guild_attack_bonus", "guild_defense_bonus"),
+            )
+            participant["revived"] = False
+            participant["raid_revive_turn"] = None
+            participant["dungeon_skill_cooldowns"] = {}
+            recovery_logs.append(
+                f"{'🌅 부활' if was_down else '🩹 회복'} **{char.name}** · "
+                f"HP {char.current_hp}/{char.max_hp} · "
+                f"정신 {char.current_mental}/{char.max_mental}"
+            )
+
+        self.floor_index += 1
+        if self.floor_index < 4:
+            from boss_training import DungeonRaidMonster
+
+            self.boss = DungeonRaidMonster(self.floor_specs[self.floor_index])
+        else:
+            from boss_training import UserBossMonster
+
+            self.boss = UserBossMonster(self.user_boss_record)
+        self.turn = 1
+        self.log_turn = 1
+        self.selected_cards = {}
+        self.pending_turn_logs = []
+        self.shayla_triggers = {uid: False for uid in self.participants}
+        self.boss_intent = None
+        self.boss_target_ids = []
+        self.logs = [
+            f"✅ {self.floor_index}층 돌파 · 인자 {len(reward_factors)}개 계승",
+            *recovery_logs,
+            f"🚪 {self.floor_index + 1}층 진입 · **{self.boss.name}**",
+        ]
+        self.decide_boss_action()
+        await self._refresh_public_windows(getattr(interaction, "channel", None))
+        await self._refresh_command_panels()
+        return True
+
     async def resolve_turn(self, interaction):
         if self.finished:
             return
@@ -2128,7 +2445,12 @@ class RaidBattleView(discord.ui.View):
             participant["data"] = await advance_guild_world_turn(participant["user"], 1)
 
         boss_card = self.boss_intent
-        if hasattr(self.boss, "commit_card"):
+        boss_stunned = (
+            battle_engine.ensure_status_effects(self.boss).get("stun", 0) > 0
+        )
+        if boss_stunned:
+            self.logs.append(f"💫 **{self.boss.name}** 기절로 행동 불가!")
+        elif hasattr(self.boss, "commit_card"):
             self.boss.commit_card(boss_card)
         if hasattr(self.boss, "on_turn_start"):
             boss_start_log = self.boss.on_turn_start(self.turn, len(alive))
@@ -2145,9 +2467,25 @@ class RaidBattleView(discord.ui.View):
             self.boss_target_ids = list(targets)
         
         for uid in alive:
-            char = self.participants[uid]['char']
+            participant = self.participants[uid]
+            char = participant['char']
+            user_stunned = (
+                battle_engine.ensure_status_effects(char).get("stun", 0) > 0
+            )
             u_card_name = self.selected_cards[uid]
-            u_card = get_card(u_card_name)
+            u_card = self._attacker_card(participant, u_card_name)
+            if u_card is None:
+                self.logs.append(
+                    f"⚠️ **{char.name}**의 기술 {u_card_name}을 찾지 못해 기본공격으로 대체"
+                )
+                u_card = get_card("기본공격")
+            cooldowns = participant.get("dungeon_skill_cooldowns", {})
+            for name in list(cooldowns):
+                cooldowns[name] = max(0, int(cooldowns[name]) - 1)
+            if u_card_name in participant.get("dungeon_skill_cards", {}):
+                cooldowns[u_card_name] = max(
+                    0, int(getattr(u_card, "cooldown", 2)) - 1
+                )
 
             gem_log = process_gem_turn_start(
                 char, self.boss, self.turn, u_card_name
@@ -2157,19 +2495,28 @@ class RaidBattleView(discord.ui.View):
             if self.boss.current_hp <= 0:
                 break
             
-            boss_res = boss_card.use_card(
-                battle_engine.effective_combat_stat(self.boss, "attack"),
-                battle_engine.effective_combat_stat(self.boss, "defense"),
+            boss_res = (
+                [{"type": "none", "value": 0}]
+                if boss_stunned
+                else boss_card.use_card(
+                    battle_engine.effective_combat_stat(self.boss, "attack"),
+                    battle_engine.effective_combat_stat(self.boss, "defense"),
+                )
             )
             boss_res = battle_engine.apply_stat_scaling(boss_res, self.boss)
             if hasattr(self.boss, "modify_outgoing_dice"):
                 self.boss.modify_outgoing_dice(boss_res, self.turn, len(alive))
-            user_res = u_card.use_card(
-                battle_engine.effective_combat_stat(char, "attack"),
-                battle_engine.effective_combat_stat(char, "defense"),
-                char.current_mental,
+            user_res = (
+                [{"type": "none", "value": 0}]
+                if user_stunned
+                else u_card.use_card(
+                    battle_engine.effective_combat_stat(char, "attack"),
+                    battle_engine.effective_combat_stat(char, "defense"),
+                    char.current_mental,
+                )
             )
             user_res = battle_engine.apply_stat_scaling(user_res, char)
+            hp_before = self._prepare_dungeon_passives(participant, user_res)
             if hasattr(self.boss, "modify_opponent_dice"):
                 boss_special_log = self.boss.modify_opponent_dice(user_res, char)
                 if boss_special_log:
@@ -2188,7 +2535,7 @@ class RaidBattleView(discord.ui.View):
             self.shayla_triggers[uid] = next_trig
             if art_log: self.logs.append(art_log)
 
-            if "escalation" in u_effs:
+            if "escalation" in u_effs and not user_stunned:
                 escalation = apply_escalation_to_dice(char, user_res)
                 if escalation:
                     summary = ", ".join(
@@ -2197,7 +2544,7 @@ class RaidBattleView(discord.ui.View):
                         for entry in escalation
                     )
                     self.logs.append(f"⚡ **{char.name}[고조]** {summary}")
-            if "ripple" in u_effs:
+            if "ripple" in u_effs and not user_stunned:
                 ripple = apply_ripple_to_dice(char, user_res, self.turn)
                 if ripple:
                     amounts = " → ".join(
@@ -2222,17 +2569,34 @@ class RaidBattleView(discord.ui.View):
             is_target = (uid in targets)
             if is_target:
                 clash_log, dmg_p, dmg_b = battle_engine.process_clash_loop(
-                    char, self.boss, user_res, boss_res, u_effs, boss_effects, self.turn
+                    char,
+                    self.boss,
+                    user_res,
+                    boss_res,
+                    u_effs,
+                    boss_effects,
+                    self.turn,
+                    is_stunned1=user_stunned,
+                    is_stunned2=boss_stunned,
                 )
                 self.logs.append(f"⚔️ **{char.name}** vs **보스**" + clash_log)
             else:
                 for d in boss_res:
                     if d['type'] == 'attack': d['type'] = 'none'; d['value'] = 0
                 clash_log, dmg_p, dmg_b = battle_engine.process_clash_loop(
-                    char, self.boss, user_res, boss_res, u_effs, boss_effects, self.turn
+                    char,
+                    self.boss,
+                    user_res,
+                    boss_res,
+                    u_effs,
+                    boss_effects,
+                    self.turn,
+                    is_stunned1=user_stunned,
+                    is_stunned2=boss_stunned,
                 )
                 self.logs.append(f"🗡️ **{char.name}** 일방 공격!" + clash_log)
 
+            self._finish_dungeon_passives(participant, hp_before)
             if char.current_hp <= 0:
                 if "immortality" in u_effs and not self.participants[uid].get("revived"):
                     self.participants[uid]["revived"] = True
@@ -2258,7 +2622,10 @@ class RaidBattleView(discord.ui.View):
 
         battle_engine.tick_freeze_end_of_turn(self.boss, self.turn)
 
-        if self.boss.current_hp <= 0: return await self.end_raid(interaction, True)
+        if self.boss.current_hp <= 0:
+            if await self._advance_dungeon_floor(interaction):
+                return
+            return await self.end_raid(interaction, True)
         if not any(
             participant["char"].current_hp > 0
             for participant in self.participants.values()
@@ -2273,7 +2640,7 @@ class RaidBattleView(discord.ui.View):
             if boss_end_log:
                 self.logs.append(f"👑 {boss_end_log}")
 
-        if self.turn >= RAID_TURN_LIMIT:
+        if self._on_final_floor() and self.turn >= RAID_TURN_LIMIT:
             self.logs.append(
                 f"⏳ {RAID_TURN_LIMIT}턴 종료 · 제한 시간 생존으로 보스 자동 승리!"
             )
@@ -2387,6 +2754,16 @@ class RaidBattleView(discord.ui.View):
         if self.boss_choice_task and not self.boss_choice_task.done():
             self.boss_choice_task.cancel()
         self.clear_items()
+        if self.is_dungeon_raid and not any(
+            int(entry.get("floor", 0)) == self.floor_index + 1
+            for entry in self.floor_results
+        ):
+            self.floor_results.append({
+                "floor": self.floor_index + 1,
+                "name": self.boss.name,
+                "result": "clear" if win else "failed",
+                "turns": self.turn,
+            })
         embed = None
         if win:
             self.logs.append(f"🎉 공격대 승리 · {self.boss.name} 토벌 완료")
@@ -2407,6 +2784,7 @@ class RaidBattleView(discord.ui.View):
             for uid, p in self.participants.items():
                 if hasattr(p['char'], "remove_battle_buffs"):
                     p['char'].remove_battle_buffs()
+                self._remove_dungeon_factors(p)
                 battle_end_gem_heal(p['char'])
                 p['char'].current_hp = p['char'].max_hp
                 result = await self._save_participant_result(uid, p, win=True)
@@ -2458,6 +2836,7 @@ class RaidBattleView(discord.ui.View):
             for uid, p in self.participants.items():
                 if hasattr(p['char'], "remove_battle_buffs"):
                     p['char'].remove_battle_buffs()
+                self._remove_dungeon_factors(p)
                 p['char'].current_hp = 1 
                 result = await self._save_participant_result(uid, p, win=False)
                 if result["reward_granted"]:
@@ -2485,6 +2864,11 @@ class RaidBattleView(discord.ui.View):
                         else None
                     ),
                     self_challenge=self.self_challenge,
+                    battle_data={
+                        "dungeon_version": self.dungeon.get("version"),
+                        "floors": deepcopy(self.floor_results),
+                        "inherited_factors": list(self.inherited_factor_labels),
+                    } if self.is_dungeon_raid else None,
                 )
                 reward = rating["owner_reward"]
                 if rating.get("self_challenge"):
@@ -2525,6 +2909,16 @@ class RaidBattleView(discord.ui.View):
         if self.finished:
             return
         self.finished = True
+        if self.is_dungeon_raid and not any(
+            int(entry.get("floor", 0)) == self.floor_index + 1
+            for entry in self.floor_results
+        ):
+            self.floor_results.append({
+                "floor": self.floor_index + 1,
+                "name": self.boss.name,
+                "result": "timeout",
+                "turns": self.turn,
+            })
         if self.boss_choice_task and not self.boss_choice_task.done():
             self.boss_choice_task.cancel()
         if self.user_boss_record and self.battle_id:
@@ -2543,6 +2937,12 @@ class RaidBattleView(discord.ui.View):
                         else None
                     ),
                     self_challenge=self.self_challenge,
+                    battle_data={
+                        "dungeon_version": self.dungeon.get("version"),
+                        "floors": deepcopy(self.floor_results),
+                        "inherited_factors": list(self.inherited_factor_labels),
+                        "timeout": True,
+                    } if self.is_dungeon_raid else {"timeout": True},
                 )
             except Exception:
                 pass
@@ -2622,7 +3022,7 @@ class RaidLobbyView(discord.ui.View):
             title = f"👑 [{self.user_boss_record['grade']}] {self.user_boss_record['boss_name']} 도전"
             description = (
                 f"{'월드' if self.scope == 'world' else '길드'} 공개 유저 보스입니다. "
-                "최대 4명이 참가하며, 보스 주인이 로비에서 직접 조작에 참여할 수 있습니다."
+                "최대 4명이 5층을 연속 공략하며, 보스 주인은 5층에서 직접 조작할 수 있습니다."
             )
         else:
             title = f"🛡️ [{self.guild_info['name']}] 레이드 모집"
@@ -2631,6 +3031,34 @@ class RaidLobbyView(discord.ui.View):
         members = [f"{i+1}. {p['user'].display_name} (Lv.{p['char'].attack+p['char'].defense})" for i, p in enumerate(self.participants.values())]
         embed.add_field(name=f"파티원 ({len(self.participants)}/4)", value="\n".join(members), inline=False)
         if self.user_boss_record:
+            dungeon = self.user_boss_record.get("boss_data", {}).get("dungeon", {})
+            from boss_training import factor_display_text
+
+            floor_lines = [
+                (
+                    f"{index}. {monster.get('name')} · "
+                    f"{monster.get('role_label', monster.get('role'))}\n"
+                    + "   🧬 "
+                    + (
+                        ", ".join(
+                            factor_display_text(factor)
+                            for factor in monster.get("factors", [])
+                        )
+                        or "인자 없음"
+                    )
+                )
+                for index, monster in enumerate(dungeon.get("monsters", []), 1)
+            ]
+            if dungeon.get("elite"):
+                floor_lines.append(f"4. {dungeon['elite'].get('name')} · 혼합 엘리트")
+            floor_lines.append(f"5. {self.user_boss_record.get('boss_name')}")
+            embed.add_field(
+                name="🏰 원정 경로",
+                value=(
+                    "\n".join(floor_lines) or "던전 구성을 불러오지 못했습니다."
+                )[:1024],
+                inline=False,
+            )
             owner_joined = any(
                 str(uid) == str(self.user_boss_record.get("owner_id"))
                 for uid in self.participants
@@ -2693,11 +3121,20 @@ class RaidLobbyView(discord.ui.View):
 
         boss = None
         if self.user_boss_record:
-            from boss_training import UserBossMonster, begin_boss_battle
+            from boss_training import (
+                DungeonRaidMonster,
+                begin_boss_battle,
+                dungeon_is_ready,
+            )
 
             try:
+                boss_data = self.user_boss_record.get("boss_data", {})
+                if not dungeon_is_ready(boss_data):
+                    raise ValueError("던전 몬스터 3종이 확정되지 않은 보스입니다.")
                 self.battle_id = await begin_boss_battle(self.user_boss_record["boss_id"])
-                boss = UserBossMonster(self.user_boss_record)
+                boss = DungeonRaidMonster(
+                    boss_data["dungeon"]["monsters"][0]
+                )
             except Exception as exc:
                 self.started = False
                 return await interaction.response.send_message(
@@ -2925,7 +3362,7 @@ class GuildTrainingView(discord.ui.View):
         view.rebuild()
         await interaction.response.edit_message(embed=view.get_embed(), view=view)
 
-    @discord.ui.button(label="👑 보스 육성", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="🏰 던전 육성", style=discord.ButtonStyle.primary, row=0)
     async def btn_boss_training(self, interaction, button):
         from boss_training import BossTrainingHubView
 
@@ -3166,16 +3603,30 @@ class TrainingBattleView(discord.ui.View):
         await advance_guild_world_turn(self.author, 1)
 
         bag_card = self.sandbag.decide_action() or get_card("기본공격")
-        gem_log = process_gem_turn_start(self.character, self.sandbag, self.turn, card_name)
-        user_res = user_card.use_card(
-            self.character.attack,
-            self.character.defense,
-            self.character.current_mental,
+        user_stunned = (
+            battle_engine.ensure_status_effects(self.character).get("stun", 0) > 0
         )
-        bag_res = bag_card.use_card(
-            self.sandbag.attack,
-            self.sandbag.defense,
-            self.sandbag.current_mental,
+        bag_stunned = (
+            battle_engine.ensure_status_effects(self.sandbag).get("stun", 0) > 0
+        )
+        gem_log = process_gem_turn_start(self.character, self.sandbag, self.turn, card_name)
+        user_res = (
+            [{"type": "none", "value": 0}]
+            if user_stunned
+            else user_card.use_card(
+                self.character.attack,
+                self.character.defense,
+                self.character.current_mental,
+            )
+        )
+        bag_res = (
+            [{"type": "none", "value": 0}]
+            if bag_stunned
+            else bag_card.use_card(
+                self.sandbag.attack,
+                self.sandbag.defense,
+                self.sandbag.current_mental,
+            )
         )
         user_res = battle_engine.apply_stat_scaling(user_res, self.character)
         bag_res = battle_engine.apply_stat_scaling(bag_res, self.sandbag)
@@ -3197,7 +3648,7 @@ class TrainingBattleView(discord.ui.View):
         )
         escalation_summary = ""
         ripple_summary = ""
-        if "escalation" in effects:
+        if "escalation" in effects and not user_stunned:
             escalation = apply_escalation_to_dice(self.character, user_res)
             if escalation:
                 escalation_summary = "⚡ 고조: " + ", ".join(
@@ -3205,7 +3656,7 @@ class TrainingBattleView(discord.ui.View):
                     + (f"(연쇄 +{entry['chained']})" if entry["chained"] else "")
                     for entry in escalation
                 )
-        if "ripple" in effects:
+        if "ripple" in effects and not user_stunned:
             ripple = apply_ripple_to_dice(
                 self.character, user_res, self.turn
             )
@@ -3222,7 +3673,11 @@ class TrainingBattleView(discord.ui.View):
             effects,
             [],
             self.turn,
+            is_stunned1=user_stunned,
+            is_stunned2=bag_stunned,
         )
+        battle_engine.tick_freeze_end_of_turn(self.character, self.turn)
+        battle_engine.tick_freeze_end_of_turn(self.sandbag, self.turn)
         scored_dice = [
             max(0, int(dice.get("resolved_value", dice.get("value", 0)) or 0))
             for dice in user_res

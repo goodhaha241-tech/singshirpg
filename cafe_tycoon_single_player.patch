@@ -1,0 +1,26 @@
+*** Begin Patch
+*** Update File: H:\디코봇\cafe_tycoon_v92.py
+@@
+-"""Persistent 2-4 player café tycoon run by shared turns."""
++"""Persistent 1-4 player café tycoon run by shared turns."""
+@@
+-MIN_PLAYERS = 2
++MIN_PLAYERS = 1
+@@
+-                    return False, "카페 타이쿤은 최소 2명이 필요합니다."
++                    return False, f"카페 타이쿤은 최소 {MIN_PLAYERS}명이 필요합니다."
+@@
+-        embed.set_footer(text="2~4명이 참가한 뒤 방장이 영업을 시작합니다.")
++        embed.set_footer(text="1~4명이 참가한 뒤 방장이 영업을 시작합니다.")
+@@
+-                "2~4명이 함께 꾸미고 운영하는 영구 카페입니다.\n"
++                "1~4명이 함께 꾸미고 운영하는 영구 카페입니다.\n"
+*** Update File: H:\디코봇\tests\test_cafe_tycoon_seasons.py
+@@
+ class CafeTycoonSeasonTests(unittest.TestCase):
++    def test_single_player_mode_is_supported(self):
++        self.assertEqual(cafe.MIN_PLAYERS, 1)
++        self.assertEqual(cafe._season_vote_needed(1), 1)
++
+     def test_non_participants_do_not_block_cycle(self):
+*** End Patch

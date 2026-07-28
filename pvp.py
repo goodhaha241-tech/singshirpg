@@ -696,8 +696,12 @@ class PVPBattleView(discord.ui.View):
         if self.p2_char.current_hp <= 0:
             self.p2_card = None
 
+        p1_status_stunned = self.p1_char.status_effects.get("stun", 0) > 0
         p1_res = []
-        if self.p1_card is None: 
+        if p1_status_stunned:
+            p1_res = [{"type": "none", "value": 0}]
+            log += f"💫 **{self.p1_char.name}** 기절로 행동 불가!\n"
+        elif self.p1_card is None:
             self.p1_char.current_mental += self.p1_char.max_mental//2
             log += f"😵 **{self.p1_char.name}** 패닉 회복!\n"
         else:
@@ -715,8 +719,12 @@ class PVPBattleView(discord.ui.View):
             p1_res = battle_engine.apply_stat_scaling(p1_res, self.p1_char)
             battle_engine.apply_time_accel_power(p1_res, accel_stacks1)
 
+        p2_status_stunned = self.p2_char.status_effects.get("stun", 0) > 0
         p2_res = []
-        if self.p2_card is None:
+        if p2_status_stunned:
+            p2_res = [{"type": "none", "value": 0}]
+            log += f"💫 **{self.p2_char.name}** 기절로 행동 불가!\n"
+        elif self.p2_card is None:
             self.p2_char.current_mental += self.p2_char.max_mental//2
             log += f"😵 **{self.p2_char.name}** 패닉 회복!\n"
         else:
@@ -771,7 +779,10 @@ class PVPBattleView(discord.ui.View):
             (self.p1_char, p1_res, effs1, "🔵"),
             (self.p2_char, p2_res, effs2, "🔴"),
         ):
-            if "escalation" in effects:
+            status_stunned = (
+                p1_status_stunned if char is self.p1_char else p2_status_stunned
+            )
+            if "escalation" in effects and not status_stunned:
                 escalation = apply_escalation_to_dice(char, results)
                 if escalation:
                     summary = ", ".join(
@@ -780,7 +791,7 @@ class PVPBattleView(discord.ui.View):
                         for entry in escalation
                     )
                     log += f"{marker} ⚡ **{char.name}[고조]** {summary}\n"
-            if "ripple" in effects:
+            if "ripple" in effects and not status_stunned:
                 ripple = apply_ripple_to_dice(char, results, self.turn_count)
                 if ripple:
                     amounts = " → ".join(
@@ -797,7 +808,8 @@ class PVPBattleView(discord.ui.View):
         # [수정] battle_engine을 사용한 합 진행
         clash_log, dmg1, dmg2 = battle_engine.process_clash_loop(
             self.p1_char, self.p2_char, p1_res, p2_res, effs1, effs2, self.turn_count,
-            is_stunned1=(self.p1_card is None), is_stunned2=(self.p2_card is None)
+            is_stunned1=(self.p1_card is None or p1_status_stunned),
+            is_stunned2=(self.p2_card is None or p2_status_stunned),
         )
         
         # [시간가속] 적립된 보너스 적용
@@ -813,8 +825,6 @@ class PVPBattleView(discord.ui.View):
         self.p1_damage_last = dmg1
         self.p2_damage_last = dmg2
 
-        if self.p1_char.status_effects.get("bleed", 0) > 0: self.p1_char.status_effects["bleed"] = max(0, self.p1_char.status_effects["bleed"] - 1)
-        if self.p2_char.status_effects.get("bleed", 0) > 0: self.p2_char.status_effects["bleed"] = max(0, self.p2_char.status_effects["bleed"] - 1)
         battle_engine.tick_freeze_end_of_turn(self.p1_char, self.turn_count)
         battle_engine.tick_freeze_end_of_turn(self.p2_char, self.turn_count)
 

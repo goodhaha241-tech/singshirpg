@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import guild
+import boss_training
 
 
 class DummyCard:
@@ -77,7 +78,199 @@ def make_lobby(*, controlled):
     )
 
 
+def make_dungeon_lobby(*, controlled=False):
+    lobby = make_lobby(controlled=controlled)
+    factors = [
+        {"kind": "stat", "stat": "hp", "stars": 1},
+        {"kind": "stat", "stat": "attack", "stars": 1},
+        {"kind": "stat", "stat": "defense", "stars": 1},
+    ]
+    monsters = []
+    for index, factor in enumerate(factors):
+        monsters.append({
+            "slot": index,
+            "name": f"수문장 {index + 1}",
+            "role": ("attack", "defense", "control")[index],
+            "role_label": ("공격형", "방어형", "제어형")[index],
+            "target_score": 1_000,
+            "hp": 100,
+            "mental": 100,
+            "attack": 5,
+            "defense": 5,
+            "skills": [{
+                "name": f"수문장 기술 {index + 1}",
+                "dice": [{"type": "attack", "min": 5, "max": 9}],
+                "effects": [],
+                "cooldown": 2,
+                "is_aoe": False,
+            }],
+            "factors": [factor],
+        })
+    elite = {
+        "slot": 3,
+        "name": "혼합체",
+        "role": "elite",
+        "role_label": "혼합 엘리트",
+        "target_score": 2_400,
+        "hp": 200,
+        "mental": 200,
+        "attack": 8,
+        "defense": 8,
+        "skills": monsters[0]["skills"],
+        "factors": [],
+    }
+    lobby.user_boss_record = {
+        "boss_id": "boss",
+        "boss_name": "최종 보스",
+        "owner_id": "99",
+        "grade": "S",
+        "boss_data": {
+            "name": "최종 보스",
+            "hp": 1_000,
+            "mental": 500,
+            "attack": 20,
+            "defense": 20,
+            "build": {"skills": monsters[0]["skills"], "ai_style": "balanced"},
+            "dungeon": {
+                "version": boss_training.DUNGEON_VERSION,
+                "locked": True,
+                "monsters": monsters,
+                "elite": elite,
+            },
+        },
+    }
+    return lobby
+
+
 class RaidFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dungeon_floor_clear_grants_factor_and_recovers_party(self):
+        lobby = make_dungeon_lobby()
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        view._refresh_public_windows = AsyncMock()
+        view._refresh_command_panels = AsyncMock()
+        char = view.participants[1]["char"]
+        char.current_hp = 500
+        char.current_mental = 50
+        char.runtime_cooldowns = {
+            "guild_attack_bonus": 3,
+            "gem_state": {"ripple_last_turn": 8},
+            "fierce_attack": 8,
+        }
+        view.participants[1]["revived"] = True
+        interaction = SimpleNamespace(channel=SimpleNamespace())
+
+        advanced = await view._advance_dungeon_floor(interaction)
+
+        self.assertTrue(advanced)
+        self.assertEqual(view.floor_index, 1)
+        self.assertEqual(char.max_hp, 1_150)
+        self.assertEqual(char.attack, 10)
+        self.assertGreater(char.current_hp, 500)
+        self.assertTrue(view.inherited_factor_labels)
+        self.assertEqual(view.turn, 1)
+        self.assertEqual(char.runtime_cooldowns, {"guild_attack_bonus": 3})
+        self.assertFalse(view.participants[1]["revived"])
+
+    async def test_middle_dungeon_floors_do_not_use_hundred_turn_limit(self):
+        lobby = make_dungeon_lobby()
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        view.turn = guild.RAID_TURN_LIMIT
+        view.selected_cards = {1: "기본공격"}
+        view.end_raid = AsyncMock()
+        view._refresh_public_windows = AsyncMock()
+        view._refresh_command_panels = AsyncMock()
+        interaction = SimpleNamespace(channel=SimpleNamespace())
+
+        with (
+            patch("guild.advance_guild_world_turn", new=AsyncMock(return_value={})),
+            patch("guild.get_card", return_value=DummyCard()),
+            patch("guild.process_gem_turn_start", return_value=""),
+            patch(
+                "guild.battle_engine.apply_stat_scaling",
+                side_effect=lambda results, actor: results,
+            ),
+            patch(
+                "guild.battle_engine.process_turn_start_artifacts",
+                return_value=("", False),
+            ),
+            patch(
+                "guild.battle_engine.process_clash_loop",
+                return_value=("", 0, 0),
+            ),
+        ):
+            await view.resolve_turn(interaction)
+
+        view.end_raid.assert_not_awaited()
+        self.assertEqual(view.turn, guild.RAID_TURN_LIMIT + 1)
+
+    async def test_four_clears_reach_owner_controlled_final_boss(self):
+        lobby = make_dungeon_lobby(controlled=True)
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        view._refresh_public_windows = AsyncMock()
+        view._refresh_command_panels = AsyncMock()
+        interaction = SimpleNamespace(channel=SimpleNamespace())
+        try:
+            for expected_floor in range(1, 5):
+                advanced = await view._advance_dungeon_floor(interaction)
+                self.assertTrue(advanced)
+                self.assertEqual(view.floor_index, expected_floor)
+            self.assertTrue(view._on_final_floor())
+            self.assertTrue(view._owner_controls_current_floor())
+            self.assertIsInstance(view.boss, boss_training.UserBossMonster)
+            self.assertIsNone(view.boss_intent)
+            self.assertEqual(len(view.floor_results), 4)
+        finally:
+            if view.boss_choice_task:
+                view.boss_choice_task.cancel()
+
+    async def test_skill_and_passive_factors_become_temporary_combat_bonuses(self):
+        lobby = make_dungeon_lobby()
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        participant = view.participants[1]
+        view._apply_dungeon_factor({
+            "kind": "skill",
+            "stars": 2,
+            "skill": {
+                "name": "계승의 일격",
+                "dice": [{"type": "attack", "min": 8, "max": 14}],
+                "effects": [],
+                "cooldown": 2,
+                "is_aoe": False,
+            },
+        })
+        view._apply_dungeon_factor({
+            "kind": "passive_discount",
+            "passive": "low_hp_attack",
+            "stars": 2,
+        })
+        self.assertIn("계승의 일격", participant["dungeon_skill_cards"])
+        self.assertEqual(participant["dungeon_passives"]["low_hp_attack"], 0.75)
+        self.assertIn("계승의 일격", view._new_command_view(1).cards)
+
+        view._remove_dungeon_factors(participant)
+        self.assertEqual(participant["dungeon_skill_cards"], {})
+        self.assertEqual(participant["dungeon_passives"], {})
+
     async def test_raid_status_embed_shows_effects_immunity_and_resistance(self):
         view = guild.RaidBattleView(make_lobby(controlled=False), DummyBoss())
         view.boss.status_effects = {"bleed": 2, "paralysis": 1, "stun": 0}

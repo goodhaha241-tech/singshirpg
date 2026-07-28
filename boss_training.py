@@ -174,6 +174,20 @@ FACTOR_SKILL_ROLL = 0.45
 FACTOR_HINT_ROLL = 0.25
 FACTOR_PASSIVE_ROLL = 0.30
 FACTOR_VERSION = 1
+DUNGEON_VERSION = 1
+DUNGEON_ROLE_LABELS = {
+    "attack": "공격형",
+    "defense": "방어형",
+    "control": "제어형",
+    "recovery": "회복형",
+}
+DUNGEON_ROLE_WEIGHTS = {
+    # hp, mental, attack, defense, skill
+    "attack": {"hp": 20, "mental": 10, "attack": 30, "defense": 10, "skill": 30},
+    "defense": {"hp": 30, "mental": 15, "attack": 10, "defense": 25, "skill": 20},
+    "control": {"hp": 20, "mental": 20, "attack": 15, "defense": 15, "skill": 30},
+    "recovery": {"hp": 25, "mental": 25, "attack": 10, "defense": 20, "skill": 20},
+}
 
 USER_BOSS_REWARD_MULTIPLIERS = {
     "C": 1.0, "B": 1.2, "A": 1.5, "S": 2.0,
@@ -1655,6 +1669,337 @@ def finalize_training_run(run: dict[str, Any]) -> dict[str, Any]:
     return boss
 
 
+def dungeon_is_ready(data: dict[str, Any] | None) -> bool:
+    dungeon = (data or {}).get("dungeon", {})
+    return bool(
+        isinstance(dungeon, dict)
+        and int(dungeon.get("version", 0)) >= DUNGEON_VERSION
+        and dungeon.get("locked")
+        and len(dungeon.get("monsters", [])) == 3
+        and isinstance(dungeon.get("elite"), dict)
+    )
+
+
+def dungeon_factor_key(factor: dict[str, Any]) -> str:
+    return json.dumps(factor, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def dungeon_factor_token(factor: dict[str, Any]) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, dungeon_factor_key(factor)).hex
+
+
+def eligible_dungeon_factors(boss: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return deterministic, unique raid factors and guarantee at least three."""
+    allowed = {"stat", "skill", "passive_discount"}
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for factor in boss.get("factors", []):
+        if factor.get("kind") not in allowed:
+            continue
+        copied = deepcopy(factor)
+        key = dungeon_factor_key(copied)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(copied)
+
+    represented_stats = {
+        str(factor.get("stat"))
+        for factor in result
+        if factor.get("kind") == "stat"
+    }
+    stat_scores = {
+        "hp": int(boss.get("hp", 0)) / 20,
+        "mental": int(boss.get("mental", 0)) / 20,
+        "attack": int(boss.get("attack", 0)) * 25,
+        "defense": int(boss.get("defense", 0)) * 25,
+    }
+    for stat, _score in sorted(
+        stat_scores.items(), key=lambda item: (-item[1], item[0])
+    ):
+        if len(result) >= 3:
+            break
+        if stat in represented_stats:
+            continue
+        factor = {
+            "kind": "stat",
+            "stat": stat,
+            "stars": 1,
+            "dungeon_supplement": True,
+        }
+        result.append(factor)
+        represented_stats.add(stat)
+    while len(result) < 3:
+        # Extremely old/corrupt bosses can have every stat absent or zero.
+        stat = ("hp", "mental", "attack", "defense")[len(result) % 4]
+        factor = {
+            "kind": "stat",
+            "stat": stat,
+            "stars": 1,
+            "dungeon_supplement": True,
+            "supplement_index": len(result),
+        }
+        result.append(factor)
+    return result
+
+
+def validate_dungeon_shares(shares: list[int]) -> list[int]:
+    values = [int(value) for value in shares]
+    if len(values) != 3:
+        raise BossTrainingError("몬스터 점수 배분은 정확히 3개여야 합니다.")
+    if any(value < 20 or value > 60 or value % 5 for value in values):
+        raise BossTrainingError("점수 배분은 종마다 20~60%, 5% 단위여야 합니다.")
+    if sum(values) != 100:
+        raise BossTrainingError("세 몬스터의 점수 배분 합계는 정확히 100%여야 합니다.")
+    return values
+
+
+def _dungeon_tier(score: int, slot: int = 0) -> tuple[int, int]:
+    thresholds = (
+        ((18, 30), 4_500),
+        ((12, 20), 2_500),
+        ((8, 14), 1_300),
+    )
+    adjusted = max(0, int(score) - slot * 650)
+    for dice_range, threshold in thresholds:
+        if adjusted >= threshold:
+            return dice_range
+    return (5, 9)
+
+
+def _dungeon_role_skills(
+    name: str,
+    role: str,
+    target_score: int,
+) -> list[dict[str, Any]]:
+    first = _dungeon_tier(target_score, 0)
+    second = _dungeon_tier(target_score, 1)
+    third = _dungeon_tier(target_score, 2)
+
+    def die(action: str, values: tuple[int, int], effect: str | None = None):
+        item = {"type": action, "min": values[0], "max": values[1]}
+        if effect:
+            item["effect"] = effect
+        return item
+
+    if role == "attack":
+        return [
+            {"name": f"{name}의 강습", "dice": [die("attack", first)], "effects": [], "cooldown": 2, "is_aoe": False},
+            {"name": f"{name}의 난격", "dice": [die("attack", second), die("attack", third)], "effects": ["bleed"], "cooldown": 3, "is_aoe": False},
+            {"name": f"{name}의 포식", "dice": [die("attack", second)], "effects": ["lifesteal"], "cooldown": 3, "is_aoe": False},
+        ]
+    if role == "defense":
+        return [
+            {"name": f"{name}의 방벽", "dice": [die("defense", first), die("counter", second)], "effects": [], "cooldown": 2, "is_aoe": False},
+            {"name": f"{name}의 응수", "dice": [die("attack", second), die("defense", second)], "effects": [], "cooldown": 2, "is_aoe": False},
+            {"name": f"{name}의 수복", "dice": [die("defense", second), die("heal", third)], "effects": [], "cooldown": 3, "is_aoe": False},
+        ]
+    if role == "control":
+        return [
+            {"name": f"{name}의 동결", "dice": [die("attack", first, "freeze_2_on_win")], "effects": ["freeze"], "cooldown": 3, "is_aoe": False},
+            {"name": f"{name}의 마비", "dice": [die("attack", second, "paralysis_1_on_win"), die("defense", third)], "effects": ["paralysis"], "cooldown": 3, "is_aoe": False},
+            {"name": f"{name}의 봉쇄", "dice": [die("attack", second)], "effects": ["stun"], "cooldown": 4, "is_aoe": False},
+        ]
+    return [
+        {"name": f"{name}의 흡수", "dice": [die("attack", second)], "effects": ["lifesteal"], "cooldown": 3, "is_aoe": False},
+        {"name": f"{name}의 치유", "dice": [die("defense", second), die("heal", first)], "effects": [], "cooldown": 3, "is_aoe": False},
+        {"name": f"{name}의 명상", "dice": [die("mental_heal", first), die("heal", third)], "effects": [], "cooldown": 3, "is_aoe": False},
+    ]
+
+
+def generate_dungeon_monster(
+    boss: dict[str, Any],
+    *,
+    slot: int,
+    name: str,
+    role: str,
+    share: int,
+    factors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if role not in DUNGEON_ROLE_WEIGHTS:
+        raise BossTrainingError("알 수 없는 던전 몬스터 역할입니다.")
+    if not 0 <= int(slot) < 3:
+        raise BossTrainingError("던전 몬스터 슬롯이 올바르지 않습니다.")
+    clean_name = str(name).strip()
+    if not 2 <= len(clean_name) <= 30:
+        raise BossTrainingError("몬스터 이름은 2~30자로 입력해주세요.")
+    share = int(share)
+    if share < 20 or share > 60 or share % 5:
+        raise BossTrainingError("몬스터 점수는 20~60%, 5% 단위여야 합니다.")
+    if not 1 <= len(factors) <= 2:
+        raise BossTrainingError("몬스터마다 인자를 1~2개 배정해야 합니다.")
+
+    target = max(1, math.floor(int(boss["power_score"]) * share / 100))
+    weights = DUNGEON_ROLE_WEIGHTS[role]
+    skills = _dungeon_role_skills(clean_name, role, target)
+    skill_score = sum(skill_sp_cost(skill) for skill in skills)
+    stat_budget = max(1, target - skill_score)
+    stat_weight_total = sum(weights[key] for key in ("hp", "mental", "attack", "defense"))
+    hp = max(100, math.floor(stat_budget * weights["hp"] / stat_weight_total) * 20)
+    mental = max(100, math.floor(stat_budget * weights["mental"] / stat_weight_total) * 20)
+    attack = max(1, math.floor(stat_budget * weights["attack"] / stat_weight_total / 25))
+    defense = max(1, math.floor(stat_budget * weights["defense"] / stat_weight_total / 25))
+    actual = hp // 20 + mental // 20 + attack * 25 + defense * 25 + skill_score
+    if actual < target:
+        hp += (target - actual) * 20
+    seed_payload = (
+        f"{boss.get('boss_id')}:{DUNGEON_VERSION}:{slot}:{clean_name}:"
+        f"{role}:{share}:{','.join(dungeon_factor_key(f) for f in factors)}"
+    )
+    return {
+        "slot": int(slot),
+        "name": clean_name,
+        "role": role,
+        "role_label": DUNGEON_ROLE_LABELS[role],
+        "share": share,
+        "target_score": target,
+        "hp": hp,
+        "mental": mental,
+        "attack": attack,
+        "defense": defense,
+        "skills": skills,
+        "skill_score": skill_score,
+        "factors": deepcopy(factors),
+        "seed": uuid.uuid5(uuid.NAMESPACE_URL, seed_payload).hex,
+    }
+
+
+def generate_dungeon_elite(
+    boss: dict[str, Any],
+    monsters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if len(monsters) != 3:
+        raise BossTrainingError("혼합 엘리트 생성에는 몬스터 3종이 필요합니다.")
+    target = max(1, math.floor(int(boss["power_score"]) * 0.80))
+    roles = [str(monster["role"]) for monster in monsters]
+    averaged = {
+        key: sum(DUNGEON_ROLE_WEIGHTS[role][key] for role in roles) / 3
+        for key in ("hp", "mental", "attack", "defense")
+    }
+    signatures = [deepcopy(monster["skills"][0]) for monster in monsters]
+    elite_name = f"{boss.get('name', '보스')}의 융합체"
+    fusion_range = _dungeon_tier(target, 0)
+    fusion = {
+        "name": f"{elite_name}의 혼합 폭주",
+        "dice": [
+            {"type": "attack", "min": fusion_range[0], "max": fusion_range[1]},
+            {"type": "defense", "min": fusion_range[0], "max": fusion_range[1]},
+        ],
+        "effects": [],
+        "cooldown": 3,
+        "is_aoe": True,
+    }
+    skills = [*signatures, fusion]
+    skill_score = sum(skill_sp_cost(skill) for skill in skills)
+    stat_total = max(1.0, sum(averaged.values()))
+    stat_budget = max(1, target - skill_score)
+    hp = max(100, math.floor(stat_budget * averaged["hp"] / stat_total) * 20)
+    mental = max(100, math.floor(stat_budget * averaged["mental"] / stat_total) * 20)
+    attack = max(1, math.floor(stat_budget * averaged["attack"] / stat_total / 25))
+    defense = max(1, math.floor(stat_budget * averaged["defense"] / stat_total / 25))
+    actual = hp // 20 + mental // 20 + attack * 25 + defense * 25 + skill_score
+    if actual < target:
+        hp += (target - actual) * 20
+    return {
+        "slot": 3,
+        "name": elite_name,
+        "role": "elite",
+        "role_label": "혼합 엘리트",
+        "target_score": target,
+        "hp": hp,
+        "mental": mental,
+        "attack": attack,
+        "defense": defense,
+        "skills": skills,
+        "skill_score": skill_score,
+        "factors": [],
+    }
+
+
+def build_dungeon_spec(
+    boss: dict[str, Any],
+    configs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if len(configs) != 3:
+        raise BossTrainingError("던전 몬스터 3종을 모두 설정해주세요.")
+    names = [str(item.get("name", "")).strip() for item in configs]
+    if len(set(names)) != 3:
+        raise BossTrainingError("세 던전 몬스터의 이름은 서로 달라야 합니다.")
+    shares = validate_dungeon_shares([int(item.get("share", 0)) for item in configs])
+    available = {
+        dungeon_factor_key(factor): factor
+        for factor in eligible_dungeon_factors(boss)
+    }
+    used: set[str] = set()
+    monsters = []
+    for slot, (config, share) in enumerate(zip(configs, shares)):
+        selected = []
+        for raw_factor in config.get("factors", []):
+            key = dungeon_factor_key(raw_factor)
+            if key not in available:
+                raise BossTrainingError("보스가 보유하지 않은 인자가 포함되어 있습니다.")
+            if key in used:
+                raise BossTrainingError("같은 인자를 여러 몬스터에게 배정할 수 없습니다.")
+            used.add(key)
+            selected.append(available[key])
+        monsters.append(
+            generate_dungeon_monster(
+                boss,
+                slot=slot,
+                name=config.get("name", ""),
+                role=str(config.get("role", "")),
+                share=share,
+                factors=selected,
+            )
+        )
+    if not 3 <= len(used) <= 6:
+        raise BossTrainingError("던전에는 서로 다른 인자를 총 3~6개 배정해야 합니다.")
+    return {
+        "version": DUNGEON_VERSION,
+        "locked": True,
+        "locked_at": str(boss.get("created_at") or datetime.now(KST).isoformat()),
+        "budget_total": int(boss["power_score"]),
+        "monsters": monsters,
+        "elite": generate_dungeon_elite(boss, monsters),
+    }
+
+
+def default_dungeon_builder_state(boss: dict[str, Any]) -> dict[str, Any]:
+    factors = eligible_dungeon_factors(boss)
+    return {
+        "boss": deepcopy(boss),
+        "shares": [35, 35, 30],
+        "names": ["첫 번째 수문장", "두 번째 수문장", "세 번째 수문장"],
+        "roles": ["attack", "defense", "control"],
+        "factor_keys": [
+            [dungeon_factor_token(factors[0])],
+            [dungeon_factor_token(factors[1])],
+            [dungeon_factor_token(factors[2])],
+        ],
+    }
+
+
+def dungeon_builder_configs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    boss = state["boss"]
+    factors = {
+        dungeon_factor_token(factor): factor
+        for factor in eligible_dungeon_factors(boss)
+    }
+    return [
+        {
+            "name": state["names"][index],
+            "role": state["roles"][index],
+            "share": int(state["shares"][index]),
+            "factors": [
+                factors[key]
+                for key in state["factor_keys"][index]
+                if key in factors
+            ],
+        }
+        for index in range(3)
+    ]
+
+
 def _effect_code(effect: str) -> str | None:
     return {
         "bleed": "bleed_1_on_win",
@@ -1931,6 +2276,37 @@ class UserBossMonster(Monster):
         return " · ".join(logs)
 
 
+class DungeonRaidMonster(UserBossMonster):
+    """Runtime monster generated from a locked user-dungeon floor spec."""
+
+    def __init__(self, spec: dict[str, Any]):
+        self.dungeon_spec = deepcopy(spec)
+        role = str(spec.get("role", "control"))
+        ai_style = {
+            "attack": "aggressive",
+            "defense": "defensive",
+            "control": "balanced",
+            "recovery": "defensive",
+            "elite": "balanced",
+        }.get(role, "balanced")
+        data = {
+            "name": spec.get("name", "던전 몬스터"),
+            "hp": int(spec.get("hp", 100)),
+            "mental": int(spec.get("mental", 100)),
+            "attack": int(spec.get("attack", 1)),
+            "defense": int(spec.get("defense", 1)),
+            "build": {
+                "skills": deepcopy(spec.get("skills", _default_skills()[:3])),
+                "ai_style": ai_style,
+                "passives": [],
+                "resistances": {},
+            },
+        }
+        super().__init__({"boss_data": data, "boss_name": data["name"]})
+        self.role = role
+        self.reward_factors = deepcopy(spec.get("factors", []))
+
+
 def _row_to_dict(row: Any, columns: tuple[str, ...] = ()) -> dict[str, Any]:
     if isinstance(row, dict):
         return dict(row)
@@ -2008,6 +2384,44 @@ async def save_completed_boss(owner_id: int | str, guild_id: int, boss: dict[str
             await conn.commit()
 
 
+async def save_legacy_boss_dungeon(
+    owner_id: int | str,
+    boss_id: str,
+    dungeon: dict[str, Any],
+) -> None:
+    if not dungeon_is_ready({"dungeon": dungeon}):
+        raise BossTrainingError("완성되지 않은 던전 명세는 저장할 수 없습니다.")
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await conn.begin()
+            await cur.execute(
+                "SELECT owner_id,boss_data,active_battles FROM user_bosses WHERE boss_id=%s FOR UPDATE",
+                (boss_id,),
+            )
+            row = await cur.fetchone()
+            if not row or str(row["owner_id"]) != str(owner_id):
+                await conn.rollback()
+                raise BossTrainingError("본인의 보스를 찾지 못했습니다.")
+            data = row["boss_data"]
+            if isinstance(data, str):
+                data = json.loads(data)
+            if dungeon_is_ready(data):
+                await conn.rollback()
+                raise BossTrainingError("이미 확정된 던전은 다시 편집할 수 없습니다.")
+            if int(row.get("active_battles", 0) or 0) > 0:
+                await conn.rollback()
+                raise BossTrainingError("진행 중인 원정이 있어 던전을 확정할 수 없습니다.")
+            data["dungeon"] = deepcopy(dungeon)
+            await cur.execute(
+                """UPDATE user_bosses
+                   SET boss_data=%s,is_published=0
+                   WHERE boss_id=%s AND owner_id=%s""",
+                (json.dumps(data, ensure_ascii=False), boss_id, str(owner_id)),
+            )
+            await conn.commit()
+
+
 async def list_owned_bosses(owner_id: int | str) -> list[dict[str, Any]]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -2055,7 +2469,53 @@ async def list_published_bosses(
                        ORDER BY weekly_elo DESC,power_score DESC LIMIT %s""",
                     (int(guild_id), int(limit)),
                 )
-            return await _normalize_boss_rows(conn, cur, list(await cur.fetchall()))
+            rows = await _normalize_boss_rows(conn, cur, list(await cur.fetchall()))
+            return [
+                row for row in rows
+                if dungeon_is_ready(row.get("boss_data", {}))
+            ]
+
+
+async def list_inheritance_parent_bosses(
+    owner_id: int | str,
+    guild_id: int,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Return private owned bosses plus guild/world bosses currently published."""
+    owned, guild_public, world_public = await asyncio.gather(
+        list_owned_bosses(owner_id),
+        list_published_bosses(guild_id, "guild", limit=limit),
+        list_published_bosses(guild_id, "world", limit=limit),
+    )
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source, rows in (
+        ("owned", owned),
+        ("guild", guild_public),
+        ("world", world_public),
+    ):
+        for original in rows:
+            boss_id = str(original.get("boss_id", ""))
+            if not boss_id or boss_id in seen:
+                continue
+            seen.add(boss_id)
+            row = dict(original)
+            if str(row.get("owner_id")) == str(owner_id):
+                row["inheritance_source"] = "owned"
+            elif str(row.get("publish_scope")) == "world":
+                row["inheritance_source"] = "world"
+            else:
+                row["inheritance_source"] = source
+            merged.append(row)
+    return merged
+
+
+def inheritance_source_label(record: dict[str, Any]) -> str:
+    return {
+        "owned": "내 보스",
+        "guild": "길드 공개",
+        "world": "월드 공개",
+    }.get(str(record.get("inheritance_source", "")), "공개")
 
 
 async def get_boss_rankings(limit: int = 10) -> dict[str, list[dict[str, Any]]]:
@@ -2077,9 +2537,13 @@ async def get_boss_rankings(limit: int = 10) -> dict[str, list[dict[str, Any]]]:
                         ORDER BY {ordering} LIMIT %s""",
                     (int(limit),),
                 )
-                result[key] = await _normalize_boss_rows(
+                normalized = await _normalize_boss_rows(
                     conn, cur, list(await cur.fetchall())
                 )
+                result[key] = [
+                    row for row in normalized
+                    if dungeon_is_ready(row.get("boss_data", {}))
+                ]
     return result
 
 
@@ -2091,7 +2555,7 @@ async def publish_boss(owner_id: int | str, boss_id: str, scope: str | None) -> 
         async with conn.cursor() as cur:
             await conn.begin()
             await cur.execute(
-                "SELECT owner_id,active_battles FROM user_bosses WHERE boss_id=%s FOR UPDATE",
+                "SELECT owner_id,active_battles,boss_data FROM user_bosses WHERE boss_id=%s FOR UPDATE",
                 (boss_id,),
             )
             row = await cur.fetchone()
@@ -2099,6 +2563,14 @@ async def publish_boss(owner_id: int | str, boss_id: str, scope: str | None) -> 
                 await conn.rollback()
                 raise BossTrainingError("본인의 보스를 찾지 못했습니다.")
             if scope:
+                raw_data = row[2]
+                if isinstance(raw_data, str):
+                    raw_data = json.loads(raw_data)
+                if not dungeon_is_ready(raw_data):
+                    await conn.rollback()
+                    raise BossTrainingError(
+                        "던전 몬스터 3종을 제작·확정한 뒤 공개할 수 있습니다."
+                    )
                 await cur.execute(
                     "UPDATE user_bosses SET is_published=0 WHERE owner_id=%s",
                     (str(owner_id),),
@@ -2192,6 +2664,7 @@ async def finish_boss_battle(
     owner_name: str | None = None,
     *,
     self_challenge: bool = False,
+    battle_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     boss_id = record["boss_id"]
     key = weekly_key()
@@ -2222,13 +2695,11 @@ async def finish_boss_battle(
                     battle_id, boss_id, str(challenger_id),
                     "attacker_win" if attackers_won else "boss_win",
                     key, current, updated,
-                    json.dumps(
-                        {
-                            "attackers_won": attackers_won,
-                            "self_challenge": bool(self_challenge),
-                        },
-                        ensure_ascii=False,
-                    ),
+                    json.dumps({
+                        "attackers_won": attackers_won,
+                        "self_challenge": bool(self_challenge),
+                        **deepcopy(battle_data or {}),
+                    }, ensure_ascii=False),
                 ),
             )
             inserted = cur.rowcount == 1
@@ -2391,15 +2862,18 @@ class BossTrainingHubView(_OwnerView):
         bosses = await list_owned_bosses(self.author.id)
         published = next((row for row in bosses if row.get("is_published")), None)
         embed = discord.Embed(
-            title="👑 유저 보스 육성",
+            title="🏰 유저 던전 육성",
             description=message or (
-                "70턴 동안 보스를 육성하고 스킬·면역·패시브를 설계한 뒤 "
-                "길드 또는 월드 레이드에 공개합니다."
+                "70턴 보스 육성 → 최종 빌드 → 던전 몬스터 3종 제작을 마친 뒤 "
+                "5층 길드·월드 원정으로 공개합니다."
             ),
             color=discord.Color.dark_purple(),
         )
         if run:
-            phase = "최종 빌드" if run.get("phase") == "build" else "육성"
+            phase = {
+                "build": "최종 빌드",
+                "dungeon_build": "던전 제작",
+            }.get(run.get("phase"), "육성")
             embed.add_field(
                 name="진행 중",
                 value=(
@@ -2435,6 +2909,16 @@ class BossTrainingHubView(_OwnerView):
         data = await get_user_data(self.author.id, self.author.display_name)
         run = ensure_boss_training_data(data).get("active_run")
         if run:
+            if run.get("phase") == "dungeon_build":
+                view = BossDungeonBuilderView(
+                    self.author,
+                    self.guild_info,
+                    active_run=True,
+                )
+                await view.setup()
+                return await interaction.response.edit_message(
+                    embed=view.get_embed(), view=view
+                )
             if run.get("phase") == "build":
                 view = BossBuildView(self.author, self.guild_info)
                 return await interaction.response.edit_message(
@@ -2558,14 +3042,17 @@ class BossSetupView(_OwnerView):
         self.growth_rates = {"hp": 10, "attack": 5, "defense": 5, "mental": 5, "tactics": 5}
         self.base_tokens = {key: 0 for key in ("hp", "mental", "attack", "defense")}
         self.innate_passive: str | None = None
-        self.owned_bosses: list[dict[str, Any]] = []
+        self.inheritance_bosses: list[dict[str, Any]] = []
         self.parent_ids: list[str] = []
         self.scenario_id = "normal"
 
     async def setup(self, user_data):
         self.user_data = user_data
         self.guild_supports = await get_public_supports(self.guild_info["guild_id"], self.author.id)
-        self.owned_bosses = await list_owned_bosses(self.author.id)
+        self.inheritance_bosses = await list_inheritance_parent_bosses(
+            self.author.id,
+            self.guild_info["guild_id"],
+        )
         self.rebuild()
 
     def rebuild(self):
@@ -2707,11 +3194,13 @@ class BossSetupView(_OwnerView):
             inline=False,
         )
         selected_parents = [
-            row for row in self.owned_bosses if str(row.get("boss_id")) in self.parent_ids
+            row for row in self.inheritance_bosses
+            if str(row.get("boss_id")) in self.parent_ids
         ]
         scenario = SCENARIOS.get(self.scenario_id, SCENARIOS["normal"])
         parent_text = ", ".join(
-            f"{row.get('boss_name')} [{row.get('grade')}]"
+            f"{row.get('boss_name')} [{row.get('grade')}] · "
+            f"{inheritance_source_label(row)}"
             for row in selected_parents
         ) or "없음"
         embed.add_field(
@@ -2734,13 +3223,16 @@ class BossSetupView(_OwnerView):
                 raise BossTrainingError("본인 서포트 3명을 선택해주세요.")
             if self.guild_index is None:
                 raise BossTrainingError("길드 공개 서포트 1명을 선택해주세요.")
-            current_bosses = await list_owned_bosses(self.author.id)
+            current_bosses = await list_inheritance_parent_bosses(
+                self.author.id,
+                self.guild_info["guild_id"],
+            )
             current_ids = {str(row.get("boss_id")) for row in current_bosses}
             if any(parent_id not in current_ids for parent_id in self.parent_ids):
                 raise BossTrainingError(
-                    "선택한 부모 보스가 판매되었거나 더 이상 존재하지 않습니다. 고급 설정에서 다시 선택해주세요."
+                    "선택한 부모 보스가 판매·비공개되었거나 더 이상 존재하지 않습니다. 고급 설정에서 다시 선택해주세요."
                 )
-            self.owned_bosses = current_bosses
+            self.inheritance_bosses = current_bosses
 
             def create(latest):
                 create_training_run(
@@ -2748,7 +3240,7 @@ class BossSetupView(_OwnerView):
                     self.guild_supports[self.guild_index],
                     base_tokens=self.base_tokens, innate_passive=self.innate_passive,
                     parent_records=[
-                        row for row in self.owned_bosses
+                        row for row in self.inheritance_bosses
                         if str(row.get("boss_id")) in self.parent_ids
                     ],
                     scenario_id=self.scenario_id,
@@ -2779,7 +3271,7 @@ class BossAdvancedSetupView(_OwnerView):
 
     def rebuild(self):
         self.clear_items()
-        bosses = self.setup_view.owned_bosses
+        bosses = self.setup_view.inheritance_bosses
         total_pages = max(1, math.ceil(len(bosses) / self.PER_PAGE))
         self.page = max(0, min(self.page, total_pages - 1))
         start = self.page * self.PER_PAGE
@@ -2787,7 +3279,10 @@ class BossAdvancedSetupView(_OwnerView):
             boss_id = str(row["boss_id"])
             selected = boss_id in self.setup_view.parent_ids
             button = Button(
-                label=f"{'✅ ' if selected else ''}{row['boss_name']} [{row['grade']}]"[:80],
+                label=(
+                    f"{'✅ ' if selected else ''}{row['boss_name']} [{row['grade']}] "
+                    f"· {inheritance_source_label(row)}"
+                )[:80],
                 style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
                 row=offset // 2,
             )
@@ -2865,7 +3360,7 @@ class BossAdvancedSetupView(_OwnerView):
         self.add_item(back)
 
     def get_embed(self) -> discord.Embed:
-        bosses = self.setup_view.owned_bosses
+        bosses = self.setup_view.inheritance_bosses
         total_pages = max(1, math.ceil(len(bosses) / self.PER_PAGE))
         selected = [
             row for row in bosses
@@ -2875,7 +3370,8 @@ class BossAdvancedSetupView(_OwnerView):
         for row in selected:
             factors = row.get("boss_data", {}).get("factors", [])
             factor_lines.append(
-                f"• **{row['boss_name']} [{row['grade']}]** · 인자 {len(factors)}개"
+                f"• **{row['boss_name']} [{row['grade']}]** · "
+                f"{inheritance_source_label(row)} · 인자 {len(factors)}개"
             )
         scenario = SCENARIOS.get(
             self.setup_view.scenario_id, SCENARIOS["normal"]
@@ -2883,7 +3379,8 @@ class BossAdvancedSetupView(_OwnerView):
         embed = discord.Embed(
             title="🧬 계승 부모·시나리오 설정",
             description=(
-                "완성 보스 0~2체를 선택합니다. 인자는 시작·35턴·60턴에 각각 판정되며, "
+                "내 완성 보스 또는 현재 공개 중인 길드·월드 보스에서 0~2체를 선택합니다. "
+                "인자는 시작·35턴·60턴에 각각 판정되며, "
                 "육성을 시작하면 부모 정보가 스냅샷으로 고정됩니다."
             ),
             color=discord.Color.purple(),
@@ -2984,6 +3481,23 @@ class BossTrainingRunView(_OwnerView):
 
         abort.callback = abort_run
         self.add_item(abort)
+        factors = Button(label="🧬 인자 확인", style=discord.ButtonStyle.secondary, row=2)
+
+        async def show_factors(interaction):
+            data = await get_user_data(self.author.id, self.author.display_name)
+            active = ensure_boss_training_data(data).get("active_run")
+            if not active:
+                return await interaction.response.send_message(
+                    "진행 중인 육성이 없습니다.",
+                    ephemeral=True,
+                )
+            await interaction.response.send_message(
+                embed=self.make_inheritance_embed(active),
+                ephemeral=True,
+            )
+
+        factors.callback = show_factors
+        self.add_item(factors)
         back = Button(label="허브로", style=discord.ButtonStyle.secondary, row=2)
 
         async def back_to_hub(interaction):
@@ -2993,6 +3507,62 @@ class BossTrainingRunView(_OwnerView):
         back.callback = back_to_hub
         self.add_item(back)
 
+    @staticmethod
+    def make_inheritance_embed(run: dict[str, Any]) -> discord.Embed:
+        embed = discord.Embed(
+            title="🧬 계승 인자 상세",
+            description=(
+                "부모 인자는 시작·35턴·60턴에 독립 판정됩니다.\n"
+                f"완료 시점: {', '.join(run.get('inheritance_events_done', [])) or '없음'}"
+            ),
+            color=discord.Color.purple(),
+        )
+        for parent in run.get("inheritance_parents", []):
+            factors = parent.get("factors", [])
+            embed.add_field(
+                name=f"{parent.get('name', '부모')} [{parent.get('grade', 'C')}]",
+                value=(
+                    "\n".join(
+                        f"• {factor_display_text(factor)}"
+                        for factor in factors
+                    )
+                    or "인자 없음"
+                )[:1024],
+                inline=False,
+            )
+        inherited_stats = " · ".join(
+            f"{key} +{value}"
+            for key, value in run.get("inheritance_totals", {}).get("stats", {}).items()
+            if int(value)
+        ) or "없음"
+        growth_bonus = " · ".join(
+            f"{GROWTH_LABELS.get(key, key)} +{value}%"
+            for key, value in run.get("inherited_growth_bonus", {}).items()
+            if int(value)
+        ) or "없음"
+        passive_discounts = " · ".join(
+            f"{GENERAL_PASSIVES[key][0]} {value}%"
+            for key, value in run.get("passive_factor_discounts", {}).items()
+            if key in GENERAL_PASSIVES and int(value)
+        ) or "없음"
+        inherited_hints = sum(
+            int(value.get("hint_count", 0))
+            for value in run.get("inherited_skill_offers", {}).values()
+        )
+        embed.add_field(
+            name="현재까지 적용된 계승",
+            value=(
+                f"스탯: {inherited_stats}\n"
+                f"성장률: {growth_bonus}\n"
+                f"패시브 할인: {passive_discounts}\n"
+                f"스킬 힌트 Lv. 합계: {inherited_hints}"
+            )[:1024],
+            inline=False,
+        )
+        if not run.get("inheritance_parents"):
+            embed.description += "\n선택한 부모 보스가 없습니다."
+        return embed
+
     async def get_embeds(self, message: str | None = None) -> list[discord.Embed]:
         data = await get_user_data(self.author.id, self.author.display_name)
         run = ensure_boss_training_data(data).get("active_run")
@@ -3001,13 +3571,9 @@ class BossTrainingRunView(_OwnerView):
         _refresh_support_specialties(run)
         self.rebuild(run)
         energy = max(0, min(100, int(run["energy"])))
-        status_text = (
-            f"체력 {'🟩' * (energy // 10)}{'⬜' * (10 - energy // 10)} {energy}/100 · "
-            f"기분 {'★' * int(run['mood'])}{'☆' * (5 - int(run['mood']))}"
-        )
         main_embed = discord.Embed(
             title=f"👑 {run['name']} · {int(run['turn'])}/70턴",
-            description=status_text + (f"\n\n{message}" if message else ""),
+            description=message or "훈련을 선택해주세요.",
             color=discord.Color.dark_purple(),
         )
         main_embed.add_field(
@@ -3022,76 +3588,12 @@ class BossTrainingRunView(_OwnerView):
         success_rate = 100 - training_failure_rate(run)
         main_embed.add_field(
             name="훈련 성공률",
-            value=" · ".join(
-                f"{GROWTH_LABELS[action]} **{success_rate}%**"
-                for action in GROWTH_KEYS
-            ) + (" · 부상 페널티 적용 중" if run.get("injured") else ""),
-            inline=False,
-        )
-        main_embed.add_field(
-            name="교차 성장",
             value=(
-                "❤️ HP: 방어 +2 · 정신 +30 · SP +8\n"
-                "🔮 정신: 공격 +2 · 방어 +1 · SP +8\n"
-                "🛡️ 방어: HP +180 · 정신 +30 · SP +8\n"
-                "⚔️ 공격: 정신 +110 · SP +12\n"
-                "📘 전술: 공격 +2 · 정신 +30 · SP +35 · **체력 +5**"
+                f"모든 훈련 **{success_rate}%**"
+                + (" · 🤕 부상 페널티 적용 중" if run.get("injured") else "")
             ),
             inline=False,
         )
-        parent_names = [
-            f"{parent.get('name', '부모')} [{parent.get('grade', 'C')}]"
-            for parent in run.get("inheritance_parents", [])
-        ]
-        growth_bonus = " · ".join(
-            f"{GROWTH_LABELS.get(key, key)} +{value}%"
-            for key, value in run.get("inherited_growth_bonus", {}).items()
-            if int(value)
-        ) or "없음"
-        passive_discounts = " · ".join(
-            f"{GENERAL_PASSIVES[key][0]} {value}%"
-            for key, value in run.get("passive_factor_discounts", {}).items()
-            if key in GENERAL_PASSIVES and int(value)
-        ) or "없음"
-        inherited_stats = " · ".join(
-            f"{key} +{value}"
-            for key, value in run.get("inheritance_totals", {}).get("stats", {}).items()
-            if int(value)
-        ) or "없음"
-        inherited_hints = sum(
-            int(value.get("hint_count", 0))
-            for value in run.get("inherited_skill_offers", {}).values()
-        )
-        scenario = SCENARIOS.get(run.get("scenario_id", "normal"), SCENARIOS["normal"])
-        main_embed.add_field(
-            name="🧬 계승·시나리오",
-            value=(
-                f"부모: {', '.join(parent_names) or '없음'}\n"
-                f"시나리오: **{scenario['name']}**\n"
-                f"완료 시점: {', '.join(run.get('inheritance_events_done', [])) or '없음'}\n"
-                f"누적 스탯: {inherited_stats}\n"
-                f"누적 성장률: {growth_bonus}\n"
-                f"패시브 할인: {passive_discounts}\n"
-                f"계승 스킬 힌트: Lv. 합계 {inherited_hints}"
-            )[:1024],
-            inline=False,
-        )
-        parent_factor_lines = []
-        for parent in run.get("inheritance_parents", []):
-            factor_lines = [
-                f"└ {factor_display_text(factor)}"
-                for factor in parent.get("factors", [])
-            ]
-            parent_factor_lines.append(
-                f"**{parent.get('name', '부모')} [{parent.get('grade', 'C')}]**\n"
-                + ("\n".join(factor_lines) if factor_lines else "└ 인자 없음")
-            )
-        if parent_factor_lines:
-            main_embed.add_field(
-                name="🔎 부모 보스 인자",
-                value="\n\n".join(parent_factor_lines)[:1024],
-                inline=False,
-            )
         if run.get("pending_event_choice"):
             main_embed.add_field(
                 name="✨ 연속 이벤트 2단계",
@@ -3105,6 +3607,15 @@ class BossTrainingRunView(_OwnerView):
                 value=f"{last['rank']} · {'승리' if last['win'] else '패배'} · SP +{last['sp']}",
                 inline=False,
             )
+        main_embed.add_field(
+            name="현재 컨디션",
+            value=(
+                f"체력 {'🟩' * (energy // 10)}{'⬜' * (10 - energy // 10)} "
+                f"**{energy}/100**\n"
+                f"기분 {'★' * int(run['mood'])}{'☆' * (5 - int(run['mood']))}"
+            ),
+            inline=False,
+        )
 
         placement_lines = []
         placements = run.get("support_placements", {})
@@ -3933,7 +4444,7 @@ class BossBuildView(_OwnerView):
         ai = Button(label="🤖 AI 변경", style=discord.ButtonStyle.secondary, row=3)
         ai.callback = self.rotate_ai
         self.add_item(ai)
-        finish = Button(label="✅ 보스 완성", style=discord.ButtonStyle.success, row=4)
+        finish = Button(label="✅ 던전 제작으로", style=discord.ButtonStyle.success, row=4)
         finish.callback = self.finalize
         self.add_item(finish)
         back = Button(label="허브로", style=discord.ButtonStyle.secondary, row=4)
@@ -4080,20 +4591,349 @@ class BossBuildView(_OwnerView):
                 if not run:
                     raise BossTrainingError("진행 중인 육성이 없습니다.")
                 boss = finalize_training_run(run)
-                await save_completed_boss(self.author.id, self.guild_info["guild_id"], boss)
+                builder_state = default_dungeon_builder_state(boss)
 
-                def clear(current):
+                def advance(current):
                     state = ensure_boss_training_data(current)
                     active = state.get("active_run")
                     if active and active.get("run_id") == run.get("run_id"):
-                        state["active_run"] = None
+                        active["phase"] = "dungeon_build"
+                        active["dungeon_builder"] = builder_state
 
-                await mutate_user_data(self.author.id, clear, self.author.display_name)
+                await mutate_user_data(self.author.id, advance, self.author.display_name)
+                view = BossDungeonBuilderView(
+                    self.author,
+                    self.guild_info,
+                    active_run=True,
+                )
+                await view.setup()
+                await interaction.edit_original_response(
+                    embed=view.get_embed(
+                        f"보스 빌드를 잠갔습니다. 평가 {boss['power_score']:,}점을 "
+                        "세 몬스터에게 배분해주세요."
+                    ),
+                    view=view,
+                )
+            except Exception as exc:
+                await _reply_error(interaction, exc)
+
+    async def back(self, interaction):
+        hub = BossTrainingHubView(self.author, self.guild_info)
+        await interaction.response.edit_message(embed=await hub.get_embed(), view=hub)
+
+
+class DungeonMonsterNameModal(Modal, title="던전 몬스터 이름"):
+    monster_name = TextInput(label="몬스터 이름", min_length=2, max_length=30)
+
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.monster_name.default = parent.state["names"][parent.selected_slot]
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await self.parent.update_state(
+                interaction,
+                lambda state: state["names"].__setitem__(
+                    self.parent.selected_slot, self.monster_name.value.strip()
+                ),
+                "몬스터 이름을 변경했습니다.",
+            )
+        except Exception as exc:
+            await _reply_error(interaction, exc)
+
+
+class BossDungeonBuilderView(_OwnerView):
+    """One-time, deterministic three-monster dungeon builder."""
+
+    def __init__(
+        self,
+        author,
+        guild_info,
+        *,
+        active_run: bool,
+        record: dict[str, Any] | None = None,
+    ):
+        super().__init__(author, timeout=600)
+        self.guild_info = guild_info
+        self.active_run = active_run
+        self.record = record
+        self.state: dict[str, Any] = {}
+        self.selected_slot = 0
+        self.confirm_lock = asyncio.Lock()
+
+    async def setup(self):
+        if self.active_run:
+            data = await get_user_data(self.author.id, self.author.display_name)
+            run = ensure_boss_training_data(data).get("active_run")
+            if not run or run.get("phase") != "dungeon_build":
+                raise BossTrainingError("진행 중인 던전 제작이 없습니다.")
+            if not run.get("dungeon_builder"):
+                raise BossTrainingError("던전 제작 초안이 없습니다.")
+            self.state = deepcopy(run["dungeon_builder"])
+        else:
+            if not self.record:
+                raise BossTrainingError("제작할 기존 보스를 찾지 못했습니다.")
+            boss = deepcopy(self.record.get("boss_data", {}))
+            boss.setdefault("boss_id", self.record.get("boss_id"))
+            boss.setdefault("name", self.record.get("boss_name", "육성 보스"))
+            boss.setdefault("grade", self.record.get("grade", "C"))
+            boss.setdefault("power_score", int(self.record.get("power_score", 0)))
+            if dungeon_is_ready(boss):
+                raise BossTrainingError("이미 확정된 던전은 다시 편집할 수 없습니다.")
+            self.state = default_dungeon_builder_state(boss)
+        self.rebuild()
+
+    @property
+    def boss(self) -> dict[str, Any]:
+        return self.state["boss"]
+
+    def rebuild(self):
+        self.clear_items()
+        slot_select = Select(
+            placeholder=f"{self.selected_slot + 1}번 몬스터 편집 중",
+            options=[
+                discord.SelectOption(
+                    label=f"{index + 1}층 · {self.state['names'][index]}"[:100],
+                    value=str(index),
+                    default=index == self.selected_slot,
+                )
+                for index in range(3)
+            ],
+            row=0,
+        )
+
+        async def choose_slot(interaction):
+            self.selected_slot = int(interaction.data["values"][0])
+            self.rebuild()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+        slot_select.callback = choose_slot
+        self.add_item(slot_select)
+
+        role_select = Select(
+            placeholder="전투 역할 선택",
+            options=[
+                discord.SelectOption(
+                    label=label,
+                    value=key,
+                    default=self.state["roles"][self.selected_slot] == key,
+                )
+                for key, label in DUNGEON_ROLE_LABELS.items()
+            ],
+            row=1,
+        )
+
+        async def choose_role(interaction):
+            value = interaction.data["values"][0]
+            await self.update_state(
+                interaction,
+                lambda state: state["roles"].__setitem__(self.selected_slot, value),
+                "몬스터 역할을 변경했습니다.",
+            )
+
+        role_select.callback = choose_role
+        self.add_item(role_select)
+
+        share_select = Select(
+            placeholder="평가점 배분 선택",
+            options=[
+                discord.SelectOption(
+                    label=f"{value}% · {math.floor(int(self.boss['power_score']) * value / 100):,}점",
+                    value=str(value),
+                    default=int(self.state["shares"][self.selected_slot]) == value,
+                )
+                for value in range(20, 61, 5)
+            ],
+            row=2,
+        )
+
+        async def choose_share(interaction):
+            value = int(interaction.data["values"][0])
+            await self.update_state(
+                interaction,
+                lambda state: state["shares"].__setitem__(self.selected_slot, value),
+                "점수 배분을 변경했습니다.",
+            )
+
+        share_select.callback = choose_share
+        self.add_item(share_select)
+
+        all_factors = eligible_dungeon_factors(self.boss)
+        selected_keys = set(self.state["factor_keys"][self.selected_slot])
+        assigned_elsewhere = {
+            key: index
+            for index, keys in enumerate(self.state["factor_keys"])
+            if index != self.selected_slot
+            for key in keys
+        }
+        factor_select = Select(
+            placeholder="계승 인자 1~2개 선택",
+            min_values=1,
+            max_values=min(2, len(all_factors)),
+            options=[
+                discord.SelectOption(
+                    label=factor_display_text(factor)[:100],
+                    value=dungeon_factor_token(factor),
+                    description=(
+                        f"{assigned_elsewhere[dungeon_factor_token(factor)] + 1}층에 배정됨 · 선택 시 이동"
+                        if dungeon_factor_token(factor) in assigned_elsewhere
+                        else "처치 시 공격대가 원정 동안 계승"
+                    )[:100],
+                    default=dungeon_factor_token(factor) in selected_keys,
+                )
+                for factor in all_factors[:25]
+            ],
+            row=3,
+        )
+
+        async def choose_factors(interaction):
+            values = list(interaction.data.get("values", []))
+
+            def assign(state):
+                for index, keys in enumerate(state["factor_keys"]):
+                    if index != self.selected_slot:
+                        state["factor_keys"][index] = [
+                            key for key in keys if key not in values
+                        ]
+                state["factor_keys"][self.selected_slot] = values
+
+            await self.update_state(interaction, assign, "계승 인자를 배정했습니다.")
+
+        factor_select.callback = choose_factors
+        self.add_item(factor_select)
+
+        rename = Button(label="✏️ 이름", style=discord.ButtonStyle.secondary, row=4)
+        rename.callback = lambda interaction: interaction.response.send_modal(
+            DungeonMonsterNameModal(self)
+        )
+        self.add_item(rename)
+        confirm = Button(label="🔒 최종 확정", style=discord.ButtonStyle.success, row=4)
+        confirm.callback = self.confirm
+        self.add_item(confirm)
+        back = Button(label="허브로", style=discord.ButtonStyle.secondary, row=4)
+        back.callback = self.back
+        self.add_item(back)
+
+    async def update_state(self, interaction, updater, message: str):
+        updater(self.state)
+        if self.active_run:
+            snapshot = deepcopy(self.state)
+
+            def save(latest):
+                run = ensure_boss_training_data(latest).get("active_run")
+                if not run or run.get("phase") != "dungeon_build":
+                    raise BossTrainingError("진행 중인 던전 제작이 없습니다.")
+                run["dungeon_builder"] = snapshot
+
+            await mutate_user_data(self.author.id, save, self.author.display_name)
+        self.rebuild()
+        await interaction.response.edit_message(
+            embed=self.get_embed(message),
+            view=self,
+        )
+
+    def get_embed(self, message: str | None = None) -> discord.Embed:
+        shares = [int(value) for value in self.state.get("shares", [])]
+        total = sum(shares)
+        embed = discord.Embed(
+            title=f"🏰 {self.boss.get('name', '보스')} 던전 제작",
+            description=message or (
+                "몬스터 이름만 입력하고 역할·점수·인자를 선택하면 "
+                "스탯과 기술이 고정 시드로 자동 생성됩니다."
+            ),
+            color=discord.Color.dark_purple(),
+        )
+        embed.add_field(
+            name="제작 예산",
+            value=(
+                f"보스 평가 **{int(self.boss['power_score']):,}점** · "
+                f"현재 배분 **{total}%**\n"
+                "각 20~60%, 5% 단위 · 합계 100%"
+            ),
+            inline=False,
+        )
+        configs = dungeon_builder_configs(self.state)
+        for index, config in enumerate(configs):
+            try:
+                monster = generate_dungeon_monster(
+                    self.boss,
+                    slot=index,
+                    name=config["name"],
+                    role=config["role"],
+                    share=config["share"],
+                    factors=config["factors"],
+                )
+                skills = ", ".join(skill["name"] for skill in monster["skills"])
+                factors = "\n".join(
+                    f"• {factor_display_text(factor)}"
+                    for factor in monster["factors"]
+                )
+                value = (
+                    f"{monster['role_label']} · {monster['share']}% · "
+                    f"목표 {monster['target_score']:,}점\n"
+                    f"HP {monster['hp']:,} · 정신 {monster['mental']:,} · "
+                    f"공격 {monster['attack']} · 방어 {monster['defense']}\n"
+                    f"기술: {skills}\n{factors}"
+                )
+            except BossTrainingError as exc:
+                value = f"⚠️ {exc}"
+            embed.add_field(
+                name=f"{'➡️ ' if index == self.selected_slot else ''}{index + 1}층 · {config['name']}",
+                value=value[:1024],
+                inline=False,
+            )
+        embed.add_field(
+            name="4층 · 혼합 엘리트",
+            value=(
+                f"세 종의 대표 기술 + 혼합 광역기 · "
+                f"목표 {math.floor(int(self.boss['power_score']) * 0.8):,}점\n"
+                "처치 시 추가 인자는 지급하지 않습니다."
+            ),
+            inline=False,
+        )
+        return embed
+
+    async def confirm(self, interaction):
+        async with self.confirm_lock:
+            try:
+                dungeon = build_dungeon_spec(
+                    self.boss,
+                    dungeon_builder_configs(self.state),
+                )
+                await interaction.response.defer()
+                if self.active_run:
+                    boss = deepcopy(self.boss)
+                    boss["dungeon"] = dungeon
+                    await save_completed_boss(
+                        self.author.id,
+                        self.guild_info["guild_id"],
+                        boss,
+                    )
+
+                    def clear(latest):
+                        state = ensure_boss_training_data(latest)
+                        active = state.get("active_run")
+                        if active and active.get("phase") == "dungeon_build":
+                            state["active_run"] = None
+
+                    await mutate_user_data(
+                        self.author.id, clear, self.author.display_name
+                    )
+                    message = (
+                        f"🎉 **{boss['name']}** 던전 완성 · {boss['grade']} 등급 · "
+                        f"평가 {boss['power_score']:,}"
+                    )
+                else:
+                    await save_legacy_boss_dungeon(
+                        self.author.id,
+                        self.record["boss_id"],
+                        dungeon,
+                    )
+                    message = "기존 보스의 5층 던전을 확정했습니다. 이제 다시 공개할 수 있습니다."
                 hub = BossTrainingHubView(self.author, self.guild_info)
                 await interaction.edit_original_response(
-                    embed=await hub.get_embed(
-                        f"🎉 **{boss['name']}** 완성 · {boss['grade']} 등급 · 평가 {boss['power_score']:,}"
-                    ),
+                    embed=await hub.get_embed(message),
                     view=hub,
                 )
             except Exception as exc:
@@ -4310,6 +5150,9 @@ class BossArchiveView(_OwnerView):
         sell = Button(label="판매", style=discord.ButtonStyle.danger, row=2)
         sell.callback = self.sell
         self.add_item(sell)
+        dungeon = Button(label="🏰 던전 제작", style=discord.ButtonStyle.primary, row=2)
+        dungeon.callback = self.build_dungeon
+        self.add_item(dungeon)
         back = Button(label="허브로", style=discord.ButtonStyle.secondary, row=2)
         back.callback = self.back
         self.add_item(back)
@@ -4345,6 +5188,28 @@ class BossArchiveView(_OwnerView):
                 )[:1024],
                 inline=False,
             )
+            dungeon = data.get("dungeon", {})
+            if dungeon_is_ready(data):
+                floor_lines = [
+                    f"{index}. **{monster['name']}** · {monster.get('role_label', monster.get('role'))} "
+                    f"· {int(monster.get('target_score', 0)):,}점"
+                    for index, monster in enumerate(dungeon.get("monsters", []), 1)
+                ]
+                floor_lines.append(
+                    f"4. **{dungeon.get('elite', {}).get('name', '혼합 엘리트')}** · "
+                    f"{int(dungeon.get('elite', {}).get('target_score', 0)):,}점"
+                )
+                floor_lines.append(f"5. **{row['boss_name']}**")
+                dungeon_text = "\n".join(floor_lines)
+            else:
+                dungeon_text = (
+                    "⚠️ 던전 미제작 · 공개하려면 몬스터 3종을 한 번 확정해야 합니다."
+                )
+            embed.add_field(
+                name="🏰 5층 던전",
+                value=dungeon_text[:1024],
+                inline=False,
+            )
         return embed
 
     async def publish(self, interaction, scope):
@@ -4364,6 +5229,25 @@ class BossArchiveView(_OwnerView):
         if not row:
             return await _reply_error(interaction, BossTrainingError("판매할 보스를 선택해주세요."))
         await interaction.response.send_modal(SellBossModal(self, row))
+
+    async def build_dungeon(self, interaction):
+        row = self.selected()
+        if not row:
+            return await _reply_error(
+                interaction, BossTrainingError("던전을 제작할 보스를 선택해주세요.")
+            )
+        if dungeon_is_ready(row.get("boss_data", {})):
+            return await _reply_error(
+                interaction, BossTrainingError("이미 확정된 던전은 다시 편집할 수 없습니다.")
+            )
+        view = BossDungeonBuilderView(
+            self.author,
+            self.guild_info,
+            active_run=False,
+            record=row,
+        )
+        await view.setup()
+        await interaction.response.edit_message(embed=view.get_embed(), view=view)
 
     async def back(self, interaction):
         hub = BossTrainingHubView(self.author, self.guild_info)
@@ -4425,11 +5309,35 @@ class BossChallengeView(_OwnerView):
             f"평가 {int(row['power_score']):,}"
             for row in self.records
         ]
-        return discord.Embed(
+        embed = discord.Embed(
             title=f"⚔️ {'월드' if self.scope == 'world' else '길드'} 유저 보스",
             description="\n".join(lines) or "현재 공개된 보스가 없습니다.",
             color=discord.Color.red(),
         )
+        selected = next(
+            (row for row in self.records if row["boss_id"] == self.selected_id),
+            None,
+        )
+        if selected and dungeon_is_ready(selected.get("boss_data", {})):
+            dungeon = selected["boss_data"]["dungeon"]
+            floor_lines = []
+            for index, monster in enumerate(dungeon["monsters"], 1):
+                factors = ", ".join(
+                    factor_display_text(factor)
+                    for factor in monster.get("factors", [])
+                )
+                floor_lines.append(
+                    f"{index}. **{monster['name']}** · {monster.get('role_label')} "
+                    f"· {factors or '인자 없음'}"
+                )
+            floor_lines.append(f"4. **{dungeon['elite']['name']}** · 혼합 엘리트")
+            floor_lines.append(f"5. **{selected['boss_name']}** · 최종 보스")
+            embed.add_field(
+                name="🏰 5층 구성·계승 인자",
+                value="\n".join(floor_lines)[:1024],
+                inline=False,
+            )
+        return embed
 
     async def toggle_scope(self, interaction):
         self.scope = "world" if self.scope == "guild" else "guild"

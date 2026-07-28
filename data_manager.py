@@ -224,6 +224,20 @@ async def check_schema(pool):
                 INDEX idx_user_boss_battle_week (weekly_key, elo_after),
                 FOREIGN KEY (boss_id) REFERENCES user_bosses(boss_id) ON DELETE CASCADE
             )""")
+            # User-boss raids now require a locked five-floor dungeon.  Legacy
+            # bosses remain owned, but must be configured once before republishing.
+            try:
+                await cur.execute(
+                    """UPDATE user_bosses
+                       SET is_published=0
+                       WHERE is_published=1
+                         AND (
+                           JSON_EXTRACT(boss_data, '$.dungeon.locked') IS NULL
+                           OR JSON_UNQUOTE(JSON_EXTRACT(boss_data, '$.dungeon.locked')) <> 'true'
+                         )"""
+                )
+            except Exception as e:
+                logger.warning("User boss dungeon migration skipped: %s", e)
             # Discord views do not survive a process restart; no user-boss
             # battle can still be active when schema initialization runs.
             await cur.execute("UPDATE user_bosses SET active_battles=0 WHERE active_battles<>0")
