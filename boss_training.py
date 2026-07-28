@@ -21,7 +21,12 @@ import aiomysql
 import discord
 from discord.ui import Button, Modal, Select, TextInput
 
-from cards import Dice, SkillCard, get_card
+from cards import (
+    Dice,
+    SkillCard,
+    get_card,
+    register_boss_reward_cards,
+)
 from data_manager import (
     add_guild_contribution,
     get_db_pool,
@@ -465,6 +470,141 @@ SALE_REWARDS = {
 
 class BossTrainingError(ValueError):
     pass
+
+
+def boss_reward_card_name(
+    boss_id: str,
+    boss_name: str,
+    skill_name: str,
+    slot: int,
+) -> str:
+    return (
+        f"👑 {str(boss_name)[:20]} · {str(skill_name)[:35]} "
+        f"[{str(boss_id)[:6]}-{int(slot) + 1}]"
+    )
+
+
+def ensure_boss_skill_reward_data(user_data: dict[str, Any]) -> dict[str, Any]:
+    life = user_data.setdefault("life_data", {})
+    rewards = life.setdefault("boss_skill_rewards", {})
+    rewards.setdefault("pending", {})
+    rewards.setdefault("claimed", {})
+    rewards.setdefault("skills", {})
+    rewards["claimed"] = dict(
+        list(dict(rewards["claimed"]).items())[-500:]
+    )
+    return rewards
+
+
+def schedule_boss_skill_reward(
+    user_data: dict[str, Any],
+    battle_id: str,
+    record: dict[str, Any],
+) -> bool:
+    """Snapshot one post-victory skill choice without granting it yet."""
+    if not battle_id:
+        return False
+    rewards = ensure_boss_skill_reward_data(user_data)
+    battle_key = str(battle_id)
+    if battle_key in rewards["claimed"] or battle_key in rewards["pending"]:
+        return False
+    boss_data = record.get("boss_data", record)
+    build = boss_data.get("build", {}) if isinstance(boss_data, dict) else {}
+    boss_id = str(record.get("boss_id", boss_data.get("boss_id", "boss")))
+    boss_name = str(
+        record.get("boss_name") or boss_data.get("name") or "육성 보스"
+    )
+    choices = []
+    for slot, raw_spec in enumerate(build.get("skills", [])):
+        spec = deepcopy(raw_spec) if isinstance(raw_spec, dict) else {}
+        if not spec.get("name") or not spec.get("dice"):
+            continue
+        card_name = boss_reward_card_name(
+            boss_id, boss_name, spec["name"], slot
+        )
+        if card_name in rewards["skills"]:
+            continue
+        choices.append({
+            "slot": slot,
+            "card_name": card_name,
+            "source_name": str(spec["name"]),
+            "spec": spec,
+        })
+    if not choices:
+        return False
+    rewards["pending"][battle_key] = {
+        "battle_id": battle_key,
+        "boss_id": boss_id,
+        "boss_name": boss_name,
+        "grade": str(record.get("grade", "C")),
+        "choices": choices,
+        "created_at": datetime.now(KST).isoformat(),
+    }
+    return True
+
+
+def pending_boss_skill_rewards(user_data: dict[str, Any]) -> list[dict[str, Any]]:
+    rewards = ensure_boss_skill_reward_data(user_data)
+    return [
+        deepcopy(entry)
+        for entry in rewards["pending"].values()
+        if isinstance(entry, dict) and entry.get("choices")
+    ]
+
+
+async def claim_boss_skill_reward(
+    user_id: int | str,
+    battle_id: str,
+    slot: int,
+    user_name: str | None = None,
+) -> dict[str, Any]:
+    claimed: dict[str, Any] = {}
+    battle_key = str(battle_id)
+    wanted_slot = int(slot)
+
+    def mutate(latest):
+        rewards = ensure_boss_skill_reward_data(latest)
+        if battle_key in rewards["claimed"]:
+            raise BossTrainingError("이미 이 전투의 보스 기술을 받았습니다.")
+        pending = rewards["pending"].get(battle_key)
+        if not isinstance(pending, dict):
+            raise BossTrainingError("받을 수 있는 보스 기술 보상이 없습니다.")
+        choice = next(
+            (
+                item
+                for item in pending.get("choices", [])
+                if int(item.get("slot", -1)) == wanted_slot
+            ),
+            None,
+        )
+        if not choice:
+            raise BossTrainingError("선택한 보스 기술을 찾지 못했습니다.")
+        card_name = str(choice["card_name"])
+        if card_name in rewards["skills"]:
+            raise BossTrainingError("이미 보유한 보스 기술입니다.")
+        rewards["skills"][card_name] = {
+            "boss_id": pending.get("boss_id"),
+            "boss_name": pending.get("boss_name"),
+            "source_name": choice.get("source_name"),
+            "spec": deepcopy(choice.get("spec", {})),
+            "obtained_battle_id": battle_key,
+            "obtained_at": datetime.now(KST).isoformat(),
+        }
+        cards = latest.setdefault("cards", [])
+        if card_name not in cards:
+            cards.append(card_name)
+        rewards["claimed"][battle_key] = card_name
+        rewards["pending"].pop(battle_key, None)
+        claimed.update({
+            "card_name": card_name,
+            "boss_name": pending.get("boss_name", "육성 보스"),
+            "source_name": choice.get("source_name", "보스 기술"),
+            "spec": deepcopy(choice.get("spec", {})),
+        })
+
+    latest = await mutate_user_data(user_id, mutate, user_name)
+    register_boss_reward_cards(latest.get("life_data", {}))
+    return claimed
 
 
 def ensure_boss_training_data(user_data: dict[str, Any]) -> dict[str, Any]:
@@ -2977,6 +3117,152 @@ class _OwnerView(discord.ui.View):
         return False
 
 
+class BossSkillRewardSelectView(_OwnerView):
+    def __init__(self, author, pending):
+        super().__init__(author, timeout=180)
+        self.pending = deepcopy(pending)
+        options = [
+            discord.SelectOption(
+                label=str(choice.get("source_name", "보스 기술"))[:100],
+                value=str(int(choice.get("slot", 0))),
+                description=BossSkillCard(choice.get("spec", {})).description[:100],
+                emoji="👑",
+            )
+            for choice in self.pending.get("choices", [])[:25]
+        ]
+        select = Select(
+            placeholder="받을 보스 기술 1개 선택",
+            options=options,
+        )
+        select.callback = self.choose
+        self.add_item(select)
+
+    def get_embed(self):
+        lines = []
+        for choice in self.pending.get("choices", []):
+            card = BossSkillCard(choice.get("spec", {}))
+            lines.append(
+                f"**{choice.get('source_name', card.name)}**\n{card.description}"
+            )
+        return discord.Embed(
+            title=(
+                f"🎁 [{self.pending.get('grade', 'C')}] "
+                f"{self.pending.get('boss_name', '육성 보스')} 기술 전리품"
+            ),
+            description=(
+                "이번 승리에서 아래 등록 기술 중 하나를 영구 카드로 받습니다.\n\n"
+                + ("\n\n".join(lines) or "선택 가능한 기술이 없습니다.")
+            )[:4000],
+            color=discord.Color.gold(),
+        )
+
+    async def choose(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            result = await claim_boss_skill_reward(
+                self.author.id,
+                self.pending["battle_id"],
+                int(interaction.data["values"][0]),
+                self.author.display_name,
+            )
+        except BossTrainingError as exc:
+            return await interaction.edit_original_response(
+                content=f"❌ {exc}", embed=None, view=None
+            )
+        await interaction.edit_original_response(
+            content=(
+                f"✅ **{result['source_name']}** 획득!\n"
+                f"카드 관리에서 `{result['card_name']}` 카드를 장착할 수 있습니다."
+            ),
+            embed=None,
+            view=None,
+        )
+
+
+class BossSkillRewardClaimView(discord.ui.View):
+    """Public victory-message button; every winning attacker claims privately."""
+
+    def __init__(self, battle_id, participant_ids):
+        super().__init__(timeout=3600)
+        self.battle_id = str(battle_id)
+        self.participant_ids = {str(uid) for uid in participant_ids}
+
+    @discord.ui.button(
+        label="🎁 보스 기술 선택",
+        style=discord.ButtonStyle.success,
+    )
+    async def open_reward(
+        self, interaction: discord.Interaction, button: Button
+    ):
+        if str(interaction.user.id) not in self.participant_ids:
+            return await interaction.response.send_message(
+                "이 전투에서 승리한 공격자만 받을 수 있습니다.",
+                ephemeral=True,
+            )
+        data = await get_user_data(
+            interaction.user.id, interaction.user.display_name
+        )
+        pending = next(
+            (
+                entry
+                for entry in pending_boss_skill_rewards(data)
+                if str(entry.get("battle_id")) == self.battle_id
+            ),
+            None,
+        )
+        if not pending:
+            return await interaction.response.send_message(
+                "이미 기술을 받았거나 선택 가능한 전리품이 없습니다.",
+                ephemeral=True,
+            )
+        view = BossSkillRewardSelectView(interaction.user, pending)
+        await interaction.response.send_message(
+            embed=view.get_embed(), view=view, ephemeral=True
+        )
+
+
+class BossSkillRewardInboxView(_OwnerView):
+    def __init__(self, author, pending):
+        super().__init__(author, timeout=180)
+        self.pending = {
+            str(entry["battle_id"]): deepcopy(entry)
+            for entry in pending
+        }
+        options = [
+            discord.SelectOption(
+                label=f"[{entry.get('grade', 'C')}] {entry.get('boss_name', '육성 보스')}"[:100],
+                value=str(entry["battle_id"])[:100],
+                description=f"선택 가능한 등록 기술 {len(entry.get('choices', []))}개",
+                emoji="🎁",
+            )
+            for entry in pending[:25]
+        ]
+        select = Select(placeholder="미수령 전투 선택", options=options)
+        select.callback = self.open_battle
+        self.add_item(select)
+
+    def get_embed(self):
+        return discord.Embed(
+            title="🎁 미수령 보스 기술",
+            description=(
+                f"승리 전투 **{len(self.pending)}건**의 기술 선택이 남아 있습니다.\n"
+                "전투를 고른 뒤 등록 기술 하나를 받으세요."
+            ),
+            color=discord.Color.gold(),
+        )
+
+    async def open_battle(self, interaction: discord.Interaction):
+        pending = self.pending.get(str(interaction.data["values"][0]))
+        if not pending:
+            return await interaction.response.send_message(
+                "전리품 정보를 찾지 못했습니다.", ephemeral=True
+            )
+        view = BossSkillRewardSelectView(self.author, pending)
+        await interaction.response.edit_message(
+            embed=view.get_embed(), view=view
+        )
+
+
 class BossTrainingHubView(_OwnerView):
     def __init__(self, author, guild_info, parent_view=None):
         super().__init__(author, timeout=240)
@@ -2986,6 +3272,7 @@ class BossTrainingHubView(_OwnerView):
     async def get_embed(self, message: str | None = None) -> discord.Embed:
         data = await get_user_data(self.author.id, self.author.display_name)
         state = ensure_boss_training_data(data)
+        pending_rewards = pending_boss_skill_rewards(data)
         run = state.get("active_run")
         bosses = await list_owned_bosses(self.author.id)
         published = next((row for row in bosses if row.get("is_published")), None)
@@ -3030,6 +3317,12 @@ class BossTrainingHubView(_OwnerView):
             ),
             inline=False,
         )
+        if pending_rewards:
+            embed.add_field(
+                name="🎁 미수령 보스 기술",
+                value=f"승리 전투 **{len(pending_rewards)}건** · 아래 전리품 버튼에서 선택",
+                inline=False,
+            )
         return embed
 
     @discord.ui.button(label="🌱 시작/계속", style=discord.ButtonStyle.success, row=0)
@@ -3106,6 +3399,21 @@ class BossTrainingHubView(_OwnerView):
             ]
             embed.add_field(name=title, value="\n".join(lines) or "기록 없음", inline=False)
         await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="🎁 전리품", style=discord.ButtonStyle.success, row=1)
+    async def open_skill_rewards(
+        self, interaction: discord.Interaction, button: Button
+    ):
+        data = await get_user_data(self.author.id, self.author.display_name)
+        pending = pending_boss_skill_rewards(data)
+        if not pending:
+            return await interaction.response.send_message(
+                "미수령 보스 기술 전리품이 없습니다.", ephemeral=True
+            )
+        view = BossSkillRewardInboxView(self.author, pending)
+        await interaction.response.send_message(
+            embed=view.get_embed(), view=view, ephemeral=True
+        )
 
     @discord.ui.button(label="수련장으로", style=discord.ButtonStyle.secondary, row=1)
     async def go_back(self, interaction: discord.Interaction, button: Button):

@@ -1581,6 +1581,76 @@ class GuildWarehouseView(discord.ui.View):
 # 4. 레이드 (기존 유지)
 # ==================================================================================
 RAID_TURN_LIMIT = 100
+_DUNGEON_GRADE_MIN_SCORE = {
+    "C": 0,
+    "B": 4_500,
+    "A": 6_000,
+    "S": 7_500,
+    "SS": 9_000,
+    "UG": 11_000,
+    "UF": 13_000,
+}
+_DUNGEON_STRENGTH_TIERS = (
+    (13_000, "UF", 6, 18, 12, (1, 2, 3, 4)),
+    (11_000, "UG", 5, 15, 10, (1, 2, 3, 4)),
+    (9_000, "SS", 4, 12, 8, (1, 2, 3, 4)),
+    (7_500, "S", 3, 9, 6, (2, 3, 4)),
+    (6_000, "A", 2, 6, 4, (3, 4)),
+    (4_500, "B", 1, 3, 2, (4,)),
+    (0, "C", 0, 0, 0, ()),
+)
+_DUNGEON_BLESSING_LABELS = {
+    "assault": "⚔️ 돌격",
+    "bastion": "🛡️ 철벽",
+    "vitality": "🌿 생명",
+}
+
+
+def dungeon_strength_profile(dungeon=None, boss_record=None):
+    """잠긴 던전의 평가점과 원정대 보정 단계를 결정한다."""
+    dungeon = dungeon if isinstance(dungeon, dict) else {}
+    boss_record = boss_record if isinstance(boss_record, dict) else {}
+    boss_data = (
+        boss_record.get("boss_data", {})
+        if isinstance(boss_record.get("boss_data"), dict)
+        else {}
+    )
+
+    score = None
+    if dungeon.get("budget_total") is not None:
+        try:
+            score = max(0, int(dungeon["budget_total"]))
+        except (TypeError, ValueError):
+            score = None
+    if score is None:
+        for source in (boss_record, boss_data):
+            if source.get("power_score") is None:
+                continue
+            try:
+                score = max(0, int(source["power_score"]))
+                break
+            except (TypeError, ValueError):
+                continue
+    if score is None:
+        grade = str(
+            boss_record.get("grade")
+            or boss_data.get("grade")
+            or "C"
+        ).upper()
+        score = _DUNGEON_GRADE_MIN_SCORE.get(grade, 0)
+
+    for threshold, grade, tier, vital_pct, combat_pct, floors in _DUNGEON_STRENGTH_TIERS:
+        if score >= threshold:
+            return {
+                "score": score,
+                "grade": grade,
+                "tier": tier,
+                "vital_pct": vital_pct,
+                "combat_pct": combat_pct,
+                "blessing_floors": tuple(floors),
+            }
+
+
 RAID_STATUS_EFFECTS = {
     "bleed": (
         "🩸",
@@ -1729,6 +1799,58 @@ class BossRaidCardSelectView(discord.ui.View):
         await interaction.response.send_message("보스 조작자만 선택할 수 있습니다.", ephemeral=True)
         return False
 
+
+class RaidBlessingSelectView(discord.ui.View):
+    """층 돌파 후 공격자 한 명이 고르는 개인 원정 축복."""
+
+    def __init__(self, battle_view, uid, floor):
+        super().__init__(timeout=30)
+        self.battle_view = battle_view
+        self.uid = uid
+        self.floor = int(floor)
+        for key, label, style in (
+            ("assault", "⚔️ 돌격", discord.ButtonStyle.danger),
+            ("bastion", "🛡️ 철벽", discord.ButtonStyle.primary),
+            ("vitality", "🌿 생명", discord.ButtonStyle.success),
+        ):
+            button = Button(label=label, style=style)
+
+            async def choose(interaction, selected=key):
+                await self.battle_view.choose_dungeon_blessing(
+                    interaction, self.uid, selected, self.floor
+                )
+
+            button.callback = choose
+            self.add_item(button)
+
+    def get_embed(self):
+        participant = self.battle_view.participants[self.uid]
+        stacks = participant.get("dungeon_blessings", {})
+        return discord.Embed(
+            title=f"✨ {self.floor}층 돌파 축복",
+            description=(
+                "다음 층에 진입하기 전 개인 축복을 하나 고르세요. "
+                "같은 축복은 최대 4회까지 중첩됩니다.\n\n"
+                f"⚔️ **돌격** · 공격/반격 주사위 최종 위력 +5% "
+                f"(현재 {int(stacks.get('assault', 0))}/4)\n"
+                f"🛡️ **철벽** · 피해 감소율 +5%p "
+                f"(현재 {int(stacks.get('bastion', 0))}/4)\n"
+                f"🌿 **생명** · 입장 HP/정신 최대치 +10% 및 즉시 회복 "
+                f"(현재 {int(stacks.get('vitality', 0))}/4)\n\n"
+                "30초 안에 선택하지 않으면 생명이 자동 적용됩니다."
+            ),
+            color=discord.Color.green(),
+        )
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.uid:
+            return True
+        await interaction.response.send_message(
+            "본인의 원정 축복만 선택할 수 있습니다.", ephemeral=True
+        )
+        return False
+
+
 class RaidBattleView(discord.ui.View):
     def __init__(self, lobby_view, boss: Monster, message=None):
         # 직접 조작 보스는 턴마다 최대 30초를 쓰므로 100턴 레이드를
@@ -1766,6 +1888,16 @@ class RaidBattleView(discord.ui.View):
                     {"kind": "boss", "name": self.user_boss_record.get("boss_name", "보스")},
                 ]
         self.is_dungeon_raid = len(self.floor_specs) == 5
+        self.dungeon_strength = dungeon_strength_profile(
+            self.dungeon, self.user_boss_record
+        ) if self.is_dungeon_raid else {
+            "score": 0,
+            "grade": "C",
+            "tier": 0,
+            "vital_pct": 0,
+            "combat_pct": 0,
+            "blessing_floors": (),
+        }
         self.inherited_factor_keys = set()
         self.inherited_factor_labels = []
         self.floor_results = []
@@ -1781,6 +1913,13 @@ class RaidBattleView(discord.ui.View):
                 "base_general_passives",
                 set(getattr(participant["char"], "general_passives", set()) or set()),
             )
+            participant["dungeon_blessings"] = {
+                "assault": 0, "bastion": 0, "vitality": 0
+            }
+            participant["dungeon_blessing_choices"] = []
+            participant["dungeon_strength_runtime"] = {}
+            if self.is_dungeon_raid:
+                self._apply_dungeon_entry_bonus(participant)
         self.battle_id = getattr(lobby_view, "battle_id", None)
         self.boss_control_user_id = getattr(lobby_view, "boss_control_user_id", None)
         self.boss_control_user = getattr(lobby_view, "boss_control_user", None)
@@ -1792,6 +1931,9 @@ class RaidBattleView(discord.ui.View):
             )
         )
         self.boss_choice_task = None
+        self.blessing_choice_task = None
+        self.pending_blessing_floor = None
+        self.pending_blessing_user_ids = set()
         if not self.user_boss_record:
             self.remove_item(self.btn_boss_pick)
         self.decide_boss_action()
@@ -1811,11 +1953,93 @@ class RaidBattleView(discord.ui.View):
             return ""
         return f"{self.floor_index + 1}/5층"
 
+    def _apply_dungeon_entry_bonus(self, participant):
+        char = participant["char"]
+        vital_pct = int(self.dungeon_strength["vital_pct"])
+        combat_pct = int(self.dungeon_strength["combat_pct"])
+        original = {
+            "max_hp": int(char.max_hp),
+            "max_mental": int(char.max_mental),
+            "attack": int(char.attack),
+            "defense": int(char.defense),
+            "defense_rate": int(getattr(char, "defense_rate", 0) or 0),
+        }
+        hp = math.floor(original["max_hp"] * vital_pct / 100)
+        mental = math.floor(original["max_mental"] * vital_pct / 100)
+        attack = math.floor(original["attack"] * combat_pct / 100)
+        defense = math.floor(original["defense"] * combat_pct / 100)
+        if combat_pct:
+            attack = max(1, attack)
+            defense = max(1, defense)
+
+        char.max_hp += hp
+        char.current_hp = min(char.max_hp, char.current_hp + hp)
+        char.max_mental += mental
+        char.current_mental = min(char.max_mental, char.current_mental + mental)
+        char.attack += attack
+        char.defense += defense
+        participant["dungeon_strength_runtime"] = {
+            "original": original,
+            "entry": {
+                "hp": hp,
+                "mental": mental,
+                "attack": attack,
+                "defense": defense,
+            },
+            "vitality_per_stack": {
+                "hp": math.floor(original["max_hp"] * 0.10),
+                "mental": math.floor(original["max_mental"] * 0.10),
+            },
+            "vitality_applied": {"hp": 0, "mental": 0},
+            "bastion_applied": 0,
+            "removed": False,
+        }
+
+    def _remove_dungeon_strength_bonuses(self, participant):
+        runtime = participant.get("dungeon_strength_runtime", {})
+        if not runtime or runtime.get("removed"):
+            return
+        char = participant["char"]
+        entry = runtime.get("entry", {})
+        vitality = runtime.get("vitality_applied", {})
+        hp = int(entry.get("hp", 0)) + int(vitality.get("hp", 0))
+        mental = int(entry.get("mental", 0)) + int(vitality.get("mental", 0))
+        char.max_hp = max(1, int(char.max_hp) - hp)
+        char.current_hp = max(0, min(char.max_hp, int(char.current_hp)))
+        char.max_mental = max(1, int(char.max_mental) - mental)
+        char.current_mental = max(
+            0, min(char.max_mental, int(char.current_mental))
+        )
+        char.attack = int(char.attack) - int(entry.get("attack", 0))
+        char.defense = int(char.defense) - int(entry.get("defense", 0))
+        if hasattr(char, "defense_rate"):
+            char.defense_rate = max(
+                0,
+                int(char.defense_rate) - int(runtime.get("bastion_applied", 0)),
+            )
+        battle_engine.runtime_cooldowns(char).pop(
+            "dungeon_assault_stacks", None
+        )
+        runtime["removed"] = True
+
+    def _blessing_choice_pending(self):
+        return self.pending_blessing_floor is not None
+
     def attackers_can_choose(self):
-        return not self.finished and self.boss_intent is not None
+        return (
+            not self.finished
+            and not self._blessing_choice_pending()
+            and self.boss_intent is not None
+        )
 
     def _sync_command_gate(self):
-        self.btn_pick.disabled = not self.attackers_can_choose()
+        self.btn_pick.disabled = (
+            self.finished
+            or (
+                not self._blessing_choice_pending()
+                and not self.attackers_can_choose()
+            )
+        )
 
     def _lock_boss_targets(self):
         alive = [
@@ -1842,6 +2066,15 @@ class RaidBattleView(discord.ui.View):
         return ", ".join(names) or "대상 없음"
 
     def decide_boss_action(self):
+        if self._blessing_choice_pending():
+            self.boss_intent = None
+            self.boss_target_ids = []
+            if self.boss_choice_task and not self.boss_choice_task.done():
+                self.boss_choice_task.cancel()
+            if hasattr(self, "btn_boss_pick"):
+                self.btn_boss_pick.disabled = True
+            self._sync_command_gate()
+            return
         if hasattr(self, "btn_boss_pick"):
             self.btn_boss_pick.disabled = not self._owner_controls_current_floor()
         if self._owner_controls_current_floor():
@@ -1865,6 +2098,171 @@ class RaidBattleView(discord.ui.View):
             self._sync_command_gate()
         await self._refresh_public_windows()
         await self._refresh_command_panels()
+
+    def _apply_dungeon_blessing(self, uid, blessing, floor):
+        if (
+            not self.is_dungeon_raid
+            or int(floor) != self.pending_blessing_floor
+            or uid not in self.pending_blessing_user_ids
+            or blessing not in _DUNGEON_BLESSING_LABELS
+        ):
+            return False
+        participant = self.participants.get(uid)
+        if not participant:
+            return False
+        stacks = participant["dungeon_blessings"]
+        if int(stacks.get(blessing, 0)) >= 4:
+            return False
+
+        char = participant["char"]
+        runtime = participant["dungeon_strength_runtime"]
+        stacks[blessing] = int(stacks.get(blessing, 0)) + 1
+        if blessing == "assault":
+            battle_engine.runtime_cooldowns(char)[
+                "dungeon_assault_stacks"
+            ] = stacks[blessing]
+        elif blessing == "bastion":
+            char.defense_rate = int(getattr(char, "defense_rate", 0) or 0) + 5
+            runtime["bastion_applied"] = int(
+                runtime.get("bastion_applied", 0)
+            ) + 5
+        elif blessing == "vitality":
+            per_stack = runtime["vitality_per_stack"]
+            hp = int(per_stack.get("hp", 0))
+            mental = int(per_stack.get("mental", 0))
+            char.max_hp += hp
+            char.current_hp = min(char.max_hp, char.current_hp + hp)
+            char.max_mental += mental
+            char.current_mental = min(
+                char.max_mental, char.current_mental + mental
+            )
+            applied = runtime["vitality_applied"]
+            applied["hp"] = int(applied.get("hp", 0)) + hp
+            applied["mental"] = int(applied.get("mental", 0)) + mental
+
+        participant["dungeon_blessing_choices"].append({
+            "floor": int(floor),
+            "blessing": blessing,
+            "stack": stacks[blessing],
+        })
+        self.pending_blessing_user_ids.remove(uid)
+        return True
+
+    def _blessing_summary(self, floor):
+        choices = []
+        for participant in self.participants.values():
+            matching = next(
+                (
+                    entry
+                    for entry in reversed(
+                        participant.get("dungeon_blessing_choices", [])
+                    )
+                    if int(entry.get("floor", 0)) == int(floor)
+                ),
+                None,
+            )
+            if matching:
+                choices.append(
+                    f"{participant['user'].display_name}="
+                    f"{_DUNGEON_BLESSING_LABELS[matching['blessing']]}"
+                )
+        return f"✨ {floor}층 축복 · " + " · ".join(choices)
+
+    async def _complete_dungeon_blessing_phase(self, floor, channel=None):
+        if int(floor) != self.pending_blessing_floor:
+            return
+        if self.pending_blessing_user_ids:
+            return
+        if (
+            self.blessing_choice_task
+            and not self.blessing_choice_task.done()
+            and self.blessing_choice_task is not asyncio.current_task()
+        ):
+            self.blessing_choice_task.cancel()
+        self.logs.append(self._blessing_summary(floor))
+        self.pending_blessing_floor = None
+        self.pending_blessing_user_ids = set()
+        self.blessing_choice_task = None
+        self.decide_boss_action()
+        await self._refresh_public_windows(channel)
+        await self._refresh_command_panels()
+
+    async def _auto_choose_pending_blessings(self, floor, channel=None):
+        async with self.resolve_lock:
+            if (
+                self.finished
+                or int(floor) != self.pending_blessing_floor
+            ):
+                return
+            for uid in list(self.pending_blessing_user_ids):
+                self._apply_dungeon_blessing(uid, "vitality", floor)
+        await self._complete_dungeon_blessing_phase(floor, channel)
+
+    async def _blessing_choice_timeout(self, floor):
+        await asyncio.sleep(30)
+        await self._auto_choose_pending_blessings(floor)
+
+    def _start_dungeon_blessing_phase(self, floor):
+        self.pending_blessing_floor = int(floor)
+        self.pending_blessing_user_ids = set(self.participants)
+        self.boss_intent = None
+        self.boss_target_ids = []
+        self.selected_cards = {}
+        if self.boss_choice_task and not self.boss_choice_task.done():
+            self.boss_choice_task.cancel()
+        if self.blessing_choice_task and not self.blessing_choice_task.done():
+            self.blessing_choice_task.cancel()
+        self.blessing_choice_task = asyncio.create_task(
+            self._blessing_choice_timeout(floor)
+        )
+        self._sync_command_gate()
+
+    async def choose_dungeon_blessing(self, interaction, uid, blessing, floor):
+        completed = False
+        async with self.resolve_lock:
+            if self.finished:
+                return await interaction.response.send_message(
+                    "이미 종료된 원정입니다.", ephemeral=True
+                )
+            if int(floor) != self.pending_blessing_floor:
+                return await interaction.response.send_message(
+                    "이미 종료된 축복 선택입니다.", ephemeral=True
+                )
+            if uid not in self.pending_blessing_user_ids:
+                return await interaction.response.send_message(
+                    "이 층의 축복을 이미 선택했습니다.", ephemeral=True
+                )
+            if not self._apply_dungeon_blessing(uid, blessing, floor):
+                return await interaction.response.send_message(
+                    "이 축복은 더 중첩할 수 없습니다.", ephemeral=True
+                )
+            completed = not self.pending_blessing_user_ids
+            stacks = self.participants[uid]["dungeon_blessings"][blessing]
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="✅ 원정 축복 선택 완료",
+                description=(
+                    f"{_DUNGEON_BLESSING_LABELS[blessing]} "
+                    f"{stacks}/4중첩이 적용되었습니다.\n"
+                    + (
+                        "모든 선택이 끝나 보스 의도가 공개됩니다."
+                        if completed
+                        else "다른 공격자의 선택을 기다립니다."
+                    )
+                ),
+                color=discord.Color.green(),
+            ),
+            view=None,
+        )
+        if completed:
+            await self._complete_dungeon_blessing_phase(
+                floor, getattr(interaction, "channel", None)
+            )
+        else:
+            await self._refresh_public_windows(
+                getattr(interaction, "channel", None)
+            )
 
     def get_status_embed(self):
         floor_prefix = f" · {self._floor_label()}" if self.is_dungeon_raid else ""
@@ -1898,7 +2296,12 @@ class RaidBattleView(discord.ui.View):
             inline=False,
         )
         
-        if self.boss_intent is None:
+        if self._blessing_choice_pending():
+            intent = (
+                f"✨ {self.pending_blessing_floor}층 돌파 축복 선택 중입니다. "
+                "전원이 선택하거나 30초가 지나면 다음 보스 의도가 공개됩니다."
+            )
+        elif self.boss_intent is None:
             intent = "🔒 보스 조작자가 비공개로 행동을 선택하는 중입니다. (30초)"
         else:
             intent = f"**{self.boss_intent.name}**" + (
@@ -1910,9 +2313,32 @@ class RaidBattleView(discord.ui.View):
                 intent += f"\n{description}"
         embed.add_field(name="⚠️ 보스 의도", value=intent[:1024], inline=False)
 
+        if self.is_dungeon_raid:
+            profile = self.dungeon_strength
+            blessing_floors = "·".join(
+                str(value) for value in profile["blessing_floors"]
+            ) or "없음"
+            embed.add_field(
+                name="🏰 원정 난이도",
+                value=(
+                    f"[{profile['grade']}] 평가점 **{profile['score']:,}** · "
+                    f"단계 **{profile['tier']}**\n"
+                    f"입장 HP·정신 +{profile['vital_pct']}% · "
+                    f"공격·방어 +{profile['combat_pct']}%\n"
+                    f"축복 시점: {blessing_floors}층 돌파"
+                ),
+                inline=False,
+            )
+
         for uid, p in self.participants.items():
             char = p['char']
             st = "✅ 준비완료" if uid in self.selected_cards else "💭 고민중..."
+            if self._blessing_choice_pending():
+                st = (
+                    "✨ 축복 선택 중"
+                    if uid in self.pending_blessing_user_ids
+                    else "✅ 축복 선택 완료"
+                )
             if char.current_hp <= 0:
                 revive_turn = p.get("raid_revive_turn")
                 st = (
@@ -1920,13 +2346,29 @@ class RaidBattleView(discord.ui.View):
                     if revive_turn is not None
                     else "💀 행동불가"
                 )
+            expedition_text = ""
+            if self.is_dungeon_raid:
+                runtime = p.get("dungeon_strength_runtime", {})
+                entry = runtime.get("entry", {})
+                blessings = p.get("dungeon_blessings", {})
+                expedition_text = (
+                    "\n🏕️ 입장 증가 "
+                    f"HP +{int(entry.get('hp', 0))} · "
+                    f"정신 +{int(entry.get('mental', 0))} · "
+                    f"공격 +{int(entry.get('attack', 0))} · "
+                    f"방어 +{int(entry.get('defense', 0))}\n"
+                    f"✨ 축복 ⚔️{int(blessings.get('assault', 0))} · "
+                    f"🛡️{int(blessings.get('bastion', 0))} · "
+                    f"🌿{int(blessings.get('vitality', 0))}"
+                )
             embed.add_field(
                 name=f"👤 {p['user'].display_name} · {char.name}",
                 value=(
                     f"❤️ {char.current_hp}/{char.max_hp} · "
                     f"🔮 {char.current_mental}/{char.max_mental}\n"
                     f"⚔️ {char.attack} · 🛡️ {char.defense}\n"
-                    f"{raid_status_effect_text(char)}\n{st}"
+                    f"{raid_status_effect_text(char)}"
+                    f"{expedition_text}\n{st}"
                 ),
                 inline=True,
             )
@@ -1936,11 +2378,16 @@ class RaidBattleView(discord.ui.View):
             if p["char"].current_hp > 0 and uid in self.selected_cards
         )
         alive = sum(1 for p in self.participants.values() if p["char"].current_hp > 0)
-        command_status = (
-            "🔒 보스 행동이 공개될 때까지 공격자 커맨드는 잠깁니다."
-            if self.boss_intent is None
-            else f"🎴 공격자 커맨드 입력 가능 · 준비 {ready}/{alive}"
-        )
+        if self._blessing_choice_pending():
+            command_status = (
+                f"✨ 개인 축복 선택 · 남은 인원 "
+                f"{len(self.pending_blessing_user_ids)}/{len(self.participants)}\n"
+                "`내 커맨드 열기`에서 축복을 선택하세요."
+            )
+        elif self.boss_intent is None:
+            command_status = "🔒 보스 행동이 공개될 때까지 공격자 커맨드는 잠깁니다."
+        else:
+            command_status = f"🎴 공격자 커맨드 입력 가능 · 준비 {ready}/{alive}"
         embed.add_field(name="🕹️ 커맨드 창", value=command_status, inline=False)
         if self.is_dungeon_raid:
             embed.add_field(
@@ -2113,6 +2560,21 @@ class RaidBattleView(discord.ui.View):
                         ),
                         view=None,
                     )
+                elif self._blessing_choice_pending():
+                    if uid in self.pending_blessing_user_ids:
+                        view = RaidBlessingSelectView(
+                            self, uid, self.pending_blessing_floor
+                        )
+                        await message.edit(embed=view.get_embed(), view=view)
+                    else:
+                        await message.edit(
+                            embed=discord.Embed(
+                                title="✅ 원정 축복 선택 완료",
+                                description="다른 공격자의 선택을 기다립니다.",
+                                color=discord.Color.green(),
+                            ),
+                            view=None,
+                        )
                 elif self.boss_intent is None:
                     await message.edit(
                         embed=discord.Embed(
@@ -2136,13 +2598,29 @@ class RaidBattleView(discord.ui.View):
         uid = interaction.user.id
         if uid not in self.participants: return await interaction.response.send_message("참여자가 아닙니다.", ephemeral=True)
         if self.finished: return await interaction.response.send_message("이미 종료된 레이드입니다.", ephemeral=True)
+        if self.public_message is None:
+            self.public_message = interaction.message
+        if self._blessing_choice_pending():
+            if uid not in self.pending_blessing_user_ids:
+                return await interaction.response.send_message(
+                    "이 층의 축복을 이미 선택했습니다.", ephemeral=True
+                )
+            view = RaidBlessingSelectView(
+                self, uid, self.pending_blessing_floor
+            )
+            await interaction.response.send_message(
+                embed=view.get_embed(), view=view, ephemeral=True
+            )
+            try:
+                self.command_messages[uid] = await interaction.original_response()
+            except (discord.NotFound, discord.HTTPException):
+                pass
+            return
         if not self.attackers_can_choose():
             return await interaction.response.send_message(
                 "보스 행동이 공개된 뒤 공격자 커맨드를 선택할 수 있습니다.",
                 ephemeral=True,
             )
-        if self.public_message is None:
-            self.public_message = interaction.message
         
         char_info = self.participants[uid]
         if char_info['char'].current_hp <= 0: return await interaction.response.send_message("행동 불가 상태입니다.", ephemeral=True)
@@ -2179,6 +2657,11 @@ class RaidBattleView(discord.ui.View):
             return await interaction.response.send_message("이번 보스의 조작자가 아닙니다.", ephemeral=True)
         if self.finished:
             return await interaction.response.send_message("이미 종료된 레이드입니다.", ephemeral=True)
+        if self._blessing_choice_pending():
+            return await interaction.response.send_message(
+                "공격자들의 층 돌파 축복 선택이 끝난 뒤 보스 행동을 고를 수 있습니다.",
+                ephemeral=True,
+            )
         if self.boss_intent is not None:
             return await interaction.response.send_message("이미 이번 턴의 행동을 확정했습니다.", ephemeral=True)
         cards = self.boss.available_cards() if hasattr(self.boss, "available_cards") else []
@@ -2352,6 +2835,7 @@ class RaidBattleView(discord.ui.View):
     async def _advance_dungeon_floor(self, interaction):
         if not self.is_dungeon_raid or self.floor_index >= 4:
             return False
+        cleared_floor = self.floor_index + 1
         cleared = self.floor_specs[self.floor_index]
         reward_factors = list(cleared.get("factors", []))
         for factor in reward_factors:
@@ -2381,7 +2865,11 @@ class RaidBattleView(discord.ui.View):
                 char.status_effects[key] = 0
             battle_engine.reset_encounter_runtime(
                 char,
-                preserve_keys=("guild_attack_bonus", "guild_defense_bonus"),
+                preserve_keys=(
+                    "guild_attack_bonus",
+                    "guild_defense_bonus",
+                    "dungeon_assault_stacks",
+                ),
             )
             participant["revived"] = False
             participant["raid_revive_turn"] = None
@@ -2413,7 +2901,10 @@ class RaidBattleView(discord.ui.View):
             *recovery_logs,
             f"🚪 {self.floor_index + 1}층 진입 · **{self.boss.name}**",
         ]
-        self.decide_boss_action()
+        if cleared_floor in self.dungeon_strength["blessing_floors"]:
+            self._start_dungeon_blessing_phase(cleared_floor)
+        else:
+            self.decide_boss_action()
         await self._refresh_public_windows(getattr(interaction, "channel", None))
         await self._refresh_command_panels()
         return True
@@ -2680,6 +3171,7 @@ class RaidBattleView(discord.ui.View):
             from boss_training import (
                 USER_BOSS_HOPE_REWARDS,
                 ensure_boss_training_data,
+                schedule_boss_skill_reward,
                 user_boss_grade_reward,
             )
 
@@ -2698,6 +3190,12 @@ class RaidBattleView(discord.ui.View):
             characters[character_index] = character_data
             if self.user_boss_record:
                 state = ensure_boss_training_data(latest)
+                if win:
+                    schedule_boss_skill_reward(
+                        latest,
+                        self.battle_id,
+                        self.user_boss_record,
+                    )
                 ledger_key = f"{self.battle_id}:{uid}"
                 ledger = state["challenger_rewarded_battle_ids"]
                 if ledger_key in ledger:
@@ -2747,12 +3245,45 @@ class RaidBattleView(discord.ui.View):
         participant["data"] = latest
         return outcome
 
+    def _dungeon_battle_data(self, *, timeout=False):
+        if not self.is_dungeon_raid:
+            return {"timeout": True} if timeout else None
+        profile = self.dungeon_strength
+        data = {
+            "dungeon_version": self.dungeon.get("version"),
+            "floors": deepcopy(self.floor_results),
+            "inherited_factors": list(self.inherited_factor_labels),
+            "difficulty": {
+                "score": int(profile["score"]),
+                "grade": profile["grade"],
+                "tier": int(profile["tier"]),
+                "vital_pct": int(profile["vital_pct"]),
+                "combat_pct": int(profile["combat_pct"]),
+            },
+            "blessings": {
+                str(uid): {
+                    "stacks": deepcopy(
+                        participant.get("dungeon_blessings", {})
+                    ),
+                    "choices": deepcopy(
+                        participant.get("dungeon_blessing_choices", [])
+                    ),
+                }
+                for uid, participant in self.participants.items()
+            },
+        }
+        if timeout:
+            data["timeout"] = True
+        return data
+
     async def end_raid(self, interaction, win, reason=None):
         if self.finished:
             return
         self.finished = True
         if self.boss_choice_task and not self.boss_choice_task.done():
             self.boss_choice_task.cancel()
+        if self.blessing_choice_task and not self.blessing_choice_task.done():
+            self.blessing_choice_task.cancel()
         self.clear_items()
         if self.is_dungeon_raid and not any(
             int(entry.get("floor", 0)) == self.floor_index + 1
@@ -2782,6 +3313,7 @@ class RaidBattleView(discord.ui.View):
             hope_lines = []
             reward_lines = []
             for uid, p in self.participants.items():
+                self._remove_dungeon_strength_bonuses(p)
                 if hasattr(p['char'], "remove_battle_buffs"):
                     p['char'].remove_battle_buffs()
                 self._remove_dungeon_factors(p)
@@ -2834,6 +3366,7 @@ class RaidBattleView(discord.ui.View):
                 color=discord.Color.dark_grey(),
             )
             for uid, p in self.participants.items():
+                self._remove_dungeon_strength_bonuses(p)
                 if hasattr(p['char'], "remove_battle_buffs"):
                     p['char'].remove_battle_buffs()
                 self._remove_dungeon_factors(p)
@@ -2864,11 +3397,7 @@ class RaidBattleView(discord.ui.View):
                         else None
                     ),
                     self_challenge=self.self_challenge,
-                    battle_data={
-                        "dungeon_version": self.dungeon.get("version"),
-                        "floors": deepcopy(self.floor_results),
-                        "inherited_factors": list(self.inherited_factor_labels),
-                    } if self.is_dungeon_raid else None,
+                    battle_data=self._dungeon_battle_data(),
                 )
                 reward = rating["owner_reward"]
                 if rating.get("self_challenge"):
@@ -2890,13 +3419,29 @@ class RaidBattleView(discord.ui.View):
             except Exception as exc:
                 self.logs.append(f"보스 방어 기록 저장 실패: {exc}")
 
+        reward_view = None
+        if win and self.user_boss_record and self.battle_id:
+            from boss_training import BossSkillRewardClaimView
+
+            reward_view = BossSkillRewardClaimView(
+                self.battle_id, self.participants
+            )
+            embed.add_field(
+                name="🎁 보스 등록 기술",
+                value=(
+                    "각 공격자는 아래 버튼에서 보스의 등록 기술 하나를 선택해 "
+                    "영구 카드로 받을 수 있습니다. 놓쳐도 수련장 `전리품`에서 받습니다."
+                ),
+                inline=False,
+            )
+
         if self.public_message:
             try:
-                await self.public_message.edit(embed=embed, view=None)
+                await self.public_message.edit(embed=embed, view=reward_view)
             except (discord.NotFound, discord.HTTPException):
-                await interaction.channel.send(embed=embed)
+                await interaction.channel.send(embed=embed, view=reward_view)
         else:
-            await interaction.channel.send(embed=embed)
+            await interaction.channel.send(embed=embed, view=reward_view)
         if self.log_message:
             try:
                 await self.log_message.edit(embed=self.get_log_embed(), view=None)
@@ -2921,6 +3466,8 @@ class RaidBattleView(discord.ui.View):
             })
         if self.boss_choice_task and not self.boss_choice_task.done():
             self.boss_choice_task.cancel()
+        if self.blessing_choice_task and not self.blessing_choice_task.done():
+            self.blessing_choice_task.cancel()
         if self.user_boss_record and self.battle_id:
             try:
                 from boss_training import finish_boss_battle
@@ -2937,18 +3484,15 @@ class RaidBattleView(discord.ui.View):
                         else None
                     ),
                     self_challenge=self.self_challenge,
-                    battle_data={
-                        "dungeon_version": self.dungeon.get("version"),
-                        "floors": deepcopy(self.floor_results),
-                        "inherited_factors": list(self.inherited_factor_labels),
-                        "timeout": True,
-                    } if self.is_dungeon_raid else {"timeout": True},
+                    battle_data=self._dungeon_battle_data(timeout=True),
                 )
             except Exception:
                 pass
         for p in self.participants.values():
+            self._remove_dungeon_strength_bonuses(p)
             if hasattr(p['char'], "remove_battle_buffs"):
                 p['char'].remove_battle_buffs()
+            self._remove_dungeon_factors(p)
         for child in self.children:
             child.disabled = True
         self.logs.append("⏱️ 장시간 입력이 없어 레이드가 종료되었습니다. 보스 승리.")

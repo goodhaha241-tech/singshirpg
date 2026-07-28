@@ -1,5 +1,7 @@
 # cards.py
+import math
 import random
+from copy import deepcopy
 
 EFFECT_DESCRIPTIONS = {
     "bleed_synergy": "대상의 출혈만큼 위력 증가",
@@ -104,6 +106,93 @@ class SkillCard:
             a_type, val = dice.roll(attack_stat, defense_stat, current_mental)
             results.append({"type": a_type, "value": val, "effect": dice.effect})
         return results
+
+
+_BOSS_REWARD_CARDS = {}
+
+
+def _boss_reward_effect_code(effect):
+    return {
+        "bleed": "bleed_1_on_win",
+        "paralysis": "paralysis_1_on_win",
+        "stun": "stun_1_prob_20",
+        "lifesteal": "absorb_hp_25",
+        "destroy": "destroy_next_on_hit",
+        "freeze": "freeze_2_on_win",
+    }.get(effect)
+
+
+class BossRewardSkillCard(SkillCard):
+    """A user-owned copy of a skill registered on a completed user boss."""
+
+    def __init__(self, card_name, spec):
+        self.spec = deepcopy(spec)
+        effects = list(spec.get("effects", []))
+        effect_codes = [
+            _boss_reward_effect_code(effect)
+            for effect in effects
+            if _boss_reward_effect_code(effect)
+        ]
+        is_aoe = bool(spec.get("is_aoe"))
+        dice_list = []
+        for index, item in enumerate(spec.get("dice", [])):
+            low = int(item.get("min", 1))
+            high = int(item.get("max", low))
+            if is_aoe and item.get("type") == "attack":
+                low = max(1, math.floor(low * 0.75))
+                high = max(1, math.floor(high * 0.75))
+            effect = item.get("effect")
+            if effect is None and index < len(effect_codes):
+                effect = effect_codes[index]
+            dice_list.append(Dice(item.get("type", "attack"), low, high, effect))
+        super().__init__(card_name, dice_list, is_aoe=is_aoe)
+        self.cooldown = int(spec.get("cooldown", 2))
+        self.unassigned_effects = effect_codes[len(dice_list):]
+
+    def use_card(self, attack_stat=0, defense_stat=0, current_mental=0, **kwargs):
+        results = super().use_card(
+            attack_stat, defense_stat, current_mental, **kwargs
+        )
+        if results and self.unassigned_effects:
+            results[0]["extra_effects"] = list(self.unassigned_effects)
+        return results
+
+    @property
+    def description(self):
+        effects = {
+            "bleed": "출혈 1",
+            "paralysis": "마비 1",
+            "stun": "기절 20%",
+            "lifesteal": "흡혈 25%",
+            "destroy": "다음 주사위 파괴",
+            "freeze": "빙결 2턴",
+        }
+        suffix = ", ".join(
+            effects[key]
+            for key in self.spec.get("effects", [])
+            if key in effects
+        )
+        details = f"\n보스 전리품 · 쿨다운 {self.cooldown}턴"
+        if suffix:
+            details += f" · {suffix}"
+        return super().description + details
+
+
+def register_boss_reward_cards(life_data):
+    """Rebuild restart-safe custom cards stored in life_data."""
+    rewards = (
+        life_data.get("boss_skill_rewards", {})
+        if isinstance(life_data, dict)
+        else {}
+    )
+    skills = rewards.get("skills", {}) if isinstance(rewards, dict) else {}
+    for card_name, entry in skills.items():
+        spec = entry.get("spec", {}) if isinstance(entry, dict) else {}
+        if isinstance(spec, dict) and spec.get("dice"):
+            _BOSS_REWARD_CARDS[str(card_name)] = BossRewardSkillCard(
+                str(card_name), spec
+            )
+    return len(skills)
 
 class GoldMechanicCard(SkillCard):
     def __init__(self, name, dice_configs):
@@ -500,6 +589,8 @@ def get_card(name):
     card = SKILL_CARDS.get(name)
     if not card:
         card = BOSS_CARDS.get(name)
+    if not card:
+        card = _BOSS_REWARD_CARDS.get(name)
     return card
 
 CARD_PRICES = {

@@ -241,6 +241,22 @@ def reset_encounter_runtime(entity, preserve_keys=()):
     return runtime
 
 
+def apply_dungeon_assault_value(entity, die_type, value):
+    """Apply the expedition assault blessing after every flat dice modifier."""
+    if die_type not in {"attack", "counter"}:
+        return int(value)
+    stacks = max(
+        0,
+        min(
+            4,
+            int(runtime_cooldowns(entity).get("dungeon_assault_stacks", 0)),
+        ),
+    )
+    if not stacks:
+        return int(value)
+    return max(1, int(int(value) * (1.0 + stacks * 0.05)))
+
+
 def consume_die_statuses(entity, die_type, *, took_bleed_damage=False):
     """Consume statuses whose count falls when a die is resolved.
 
@@ -776,6 +792,9 @@ def process_clash_loop(char1, char2, res1, res2, effs1, effs2, turn_count, is_st
                 clash_log += f"🛡️ **{char2.name}[견고한]**(+{heal}"
                 clash_log += f", 보호막 {shield}" if shield else ""
                 clash_log += ") "
+
+        v1 = apply_dungeon_assault_value(char1, t1, v1)
+        v2 = apply_dungeon_assault_value(char2, t2, v2)
 
         # Keep the final displayed dice values available to callers such as
         # guild training without changing the normal combat dice payload.

@@ -423,7 +423,7 @@ async def get_user_data(user_id, user_name=None):
             await cur.execute("SELECT target FROM user_fertilizers WHERE user_id = %s", (str(user_id),))
             fertilizers = [{"target": r['target']} for r in await cur.fetchall()]
 
-            return {
+            data = {
                 "_data_revision": int(user_row.get("data_revision", 0) or 0),
                 "pt": user_row['pt'] or 0, "money": user_row['money'] or 0,
                 "last_checkin": str(user_row['last_checkin']) if user_row['last_checkin'] else None,
@@ -444,6 +444,10 @@ async def get_user_data(user_id, user_name=None):
                 "guild_data": json.loads(user_row['guild_data']) if user_row.get('guild_data') else {},
                 "life_data": life_data,
             }
+            from cards import register_boss_reward_cards
+
+            register_boss_reward_cards(life_data)
+            return data
 
 def _sync_obtained_wiki(data):
     """현재 보유·성장 데이터를 '한 번 얻은 기록'으로 보존한다."""

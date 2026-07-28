@@ -41,6 +41,7 @@ class DummyCharacter:
     current_mental = 100
     attack = 10
     defense = 10
+    defense_rate = 0
     equipped_cards = ["기본공격"]
     equipped_artifact = None
     equipped_engraved_artifact = None
@@ -78,7 +79,7 @@ def make_lobby(*, controlled):
     )
 
 
-def make_dungeon_lobby(*, controlled=False):
+def make_dungeon_lobby(*, controlled=False, score=0):
     lobby = make_lobby(controlled=controlled)
     factors = [
         {"kind": "stat", "stat": "hp", "stars": 1},
@@ -123,7 +124,10 @@ def make_dungeon_lobby(*, controlled=False):
         "boss_id": "boss",
         "boss_name": "최종 보스",
         "owner_id": "99",
-        "grade": "S",
+        "grade": guild.dungeon_strength_profile(
+            {"budget_total": score}, {}
+        )["grade"],
+        "power_score": score,
         "boss_data": {
             "name": "최종 보스",
             "hp": 1_000,
@@ -134,6 +138,7 @@ def make_dungeon_lobby(*, controlled=False):
             "dungeon": {
                 "version": boss_training.DUNGEON_VERSION,
                 "locked": True,
+                "budget_total": score,
                 "monsters": monsters,
                 "elite": elite,
             },
@@ -143,6 +148,238 @@ def make_dungeon_lobby(*, controlled=False):
 
 
 class RaidFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dungeon_strength_profile_boundaries_and_legacy_fallback(self):
+        cases = (
+            (0, "C", 0, 0, 0, ()),
+            (4_499, "C", 0, 0, 0, ()),
+            (4_500, "B", 1, 3, 2, (4,)),
+            (6_000, "A", 2, 6, 4, (3, 4)),
+            (7_500, "S", 3, 9, 6, (2, 3, 4)),
+            (9_000, "SS", 4, 12, 8, (1, 2, 3, 4)),
+            (11_000, "UG", 5, 15, 10, (1, 2, 3, 4)),
+            (13_000, "UF", 6, 18, 12, (1, 2, 3, 4)),
+        )
+        for score, grade, tier, vital, combat, floors in cases:
+            with self.subTest(score=score):
+                result = guild.dungeon_strength_profile(
+                    {"budget_total": score},
+                    {"grade": "C", "power_score": 99_999},
+                )
+                self.assertEqual(
+                    (
+                        result["grade"],
+                        result["tier"],
+                        result["vital_pct"],
+                        result["combat_pct"],
+                        result["blessing_floors"],
+                    ),
+                    (grade, tier, vital, combat, floors),
+                )
+
+        self.assertEqual(
+            guild.dungeon_strength_profile({}, {"power_score": 11_500})["tier"],
+            5,
+        )
+        self.assertEqual(
+            guild.dungeon_strength_profile({}, {"grade": "SS"})["score"],
+            9_000,
+        )
+
+    async def test_dungeon_entry_bonus_uses_post_artifact_stats_and_cleans_up(self):
+        lobby = make_dungeon_lobby(score=13_000)
+        char = lobby.participants[1]["char"]
+        char.max_hp = char.current_hp = 1_111
+        char.max_mental = char.current_mental = 111
+        char.attack = 7
+        char.defense = 4
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        runtime = view.participants[1]["dungeon_strength_runtime"]
+        self.assertEqual(
+            runtime["entry"],
+            {"hp": 199, "mental": 19, "attack": 1, "defense": 1},
+        )
+        self.assertEqual(
+            (char.max_hp, char.max_mental, char.attack, char.defense),
+            (1_310, 130, 8, 5),
+        )
+
+        view._remove_dungeon_strength_bonuses(view.participants[1])
+        self.assertEqual(
+            (char.max_hp, char.max_mental, char.attack, char.defense),
+            (1_111, 111, 7, 4),
+        )
+
+    async def test_personal_blessings_stack_additively_and_apply_to_combat(self):
+        lobby = make_dungeon_lobby(score=9_000)
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        participant = view.participants[1]
+        char = participant["char"]
+        entry_max_hp = char.max_hp
+        entry_max_mental = char.max_mental
+
+        for floor, blessing in (
+            (1, "vitality"),
+            (2, "vitality"),
+            (3, "bastion"),
+            (4, "assault"),
+        ):
+            view.pending_blessing_floor = floor
+            view.pending_blessing_user_ids = {1}
+            self.assertTrue(view._apply_dungeon_blessing(1, blessing, floor))
+            self.assertFalse(view._apply_dungeon_blessing(1, blessing, floor))
+
+        self.assertEqual(char.max_hp, entry_max_hp + 200)
+        self.assertEqual(char.max_mental, entry_max_mental + 20)
+        self.assertEqual(char.defense_rate, 5)
+        self.assertEqual(
+            [
+                guild.battle_engine.apply_dungeon_assault_value(
+                    char, "attack", 100
+                ),
+                guild.battle_engine.apply_dungeon_assault_value(
+                    char, "counter", 81
+                ),
+                guild.battle_engine.apply_dungeon_assault_value(
+                    char, "defense", 100
+                ),
+            ],
+            [105, 85, 100],
+        )
+
+        view._remove_dungeon_strength_bonuses(participant)
+        self.assertEqual(
+            (char.max_hp, char.max_mental, char.attack, char.defense_rate),
+            (1_000, 100, 10, 0),
+        )
+
+    async def test_assault_multiplies_after_flat_dice_bonuses(self):
+        attacker = DummyCharacter()
+        defender = DummyCharacter()
+        attacker.name = "돌격 공격자"
+        defender.name = "표적"
+        attacker.status_effects = {
+            "bleed": 0, "paralysis": 0, "stun": 0, "freeze": 0
+        }
+        defender.status_effects = dict(attacker.status_effects)
+        attacker.runtime_cooldowns = {
+            "guild_attack_bonus": 3,
+            "dungeon_assault_stacks": 1,
+        }
+        defender.runtime_cooldowns = {}
+        user_results = [{"type": "attack", "value": 100, "effect": None}]
+        boss_results = [{"type": "none", "value": 0, "effect": None}]
+
+        guild.battle_engine.process_clash_loop(
+            attacker,
+            defender,
+            user_results,
+            boss_results,
+            [],
+            [],
+            1,
+        )
+        self.assertEqual(user_results[0]["resolved_value"], 108)
+
+    async def test_eligible_floor_locks_commands_until_blessings_finish(self):
+        lobby = make_dungeon_lobby(score=9_000)
+        lobby.participants[2] = {
+            "user": SimpleNamespace(id=2, display_name="두 번째 공격자"),
+            "char": DummyCharacter(),
+            "char_idx": 0,
+            "data": {},
+            "revived": False,
+        }
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        view._refresh_public_windows = AsyncMock()
+        view._refresh_command_panels = AsyncMock()
+        interaction = SimpleNamespace(channel=SimpleNamespace())
+        try:
+            self.assertTrue(await view._advance_dungeon_floor(interaction))
+            self.assertEqual(view.pending_blessing_floor, 1)
+            self.assertEqual(view.pending_blessing_user_ids, {1, 2})
+            self.assertIsNone(view.boss_intent)
+            self.assertFalse(view.attackers_can_choose())
+            self.assertFalse(view.btn_pick.disabled)
+
+            await view._auto_choose_pending_blessings(1)
+            self.assertIsNone(view.pending_blessing_floor)
+            self.assertEqual(
+                view.participants[1]["dungeon_blessings"]["vitality"], 1
+            )
+            self.assertEqual(
+                view.participants[2]["dungeon_blessings"]["vitality"], 1
+            )
+            self.assertIsNotNone(view.boss_intent)
+            self.assertTrue(view.attackers_can_choose())
+            self.assertTrue(any("1층 축복" in line for line in view.logs))
+        finally:
+            if view.blessing_choice_task:
+                view.blessing_choice_task.cancel()
+
+    async def test_dungeon_history_contains_difficulty_and_personal_choices(self):
+        lobby = make_dungeon_lobby(score=11_000)
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        view.pending_blessing_floor = 1
+        view.pending_blessing_user_ids = {1}
+        view._apply_dungeon_blessing(1, "assault", 1)
+
+        data = view._dungeon_battle_data()
+        self.assertEqual(data["difficulty"]["tier"], 5)
+        self.assertEqual(data["difficulty"]["score"], 11_000)
+        self.assertEqual(data["blessings"]["1"]["stacks"]["assault"], 1)
+        self.assertEqual(
+            data["blessings"]["1"]["choices"][0]["blessing"], "assault"
+        )
+
+    async def test_factor_and_expedition_bonuses_are_both_removed_before_save(self):
+        lobby = make_dungeon_lobby(score=13_000)
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        participant = view.participants[1]
+        char = participant["char"]
+        view._apply_dungeon_factor(
+            {"kind": "stat", "stat": "hp", "stars": 3}
+        )
+        view._apply_dungeon_factor(
+            {"kind": "stat", "stat": "attack", "stars": 3}
+        )
+        view.pending_blessing_floor = 1
+        view.pending_blessing_user_ids = {1}
+        view._apply_dungeon_blessing(1, "vitality", 1)
+        self.assertGreater(char.max_hp, 1_000)
+        self.assertGreater(char.attack, 10)
+
+        view._remove_dungeon_strength_bonuses(participant)
+        view._remove_dungeon_factors(participant)
+        saved = char.to_dict()
+        self.assertEqual(saved["hp"], 1_000)
+        self.assertEqual(saved["attack"], 10)
+        self.assertEqual(saved["defense"], 10)
+
     async def test_dungeon_floor_clear_grants_factor_and_recovers_party(self):
         lobby = make_dungeon_lobby()
         view = guild.RaidBattleView(
@@ -362,18 +599,65 @@ class RaidFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((latest["money"], latest["pt"]), (13_750, 2_750))
         self.assertEqual(latest["inventory"]["순수한 희망"], 2)
 
+    async def test_user_boss_win_schedules_one_registered_skill_choice(self):
+        lobby = make_dungeon_lobby(score=9_000)
+        view = guild.RaidBattleView(
+            lobby,
+            boss_training.DungeonRaidMonster(
+                lobby.user_boss_record["boss_data"]["dungeon"]["monsters"][0]
+            ),
+        )
+        view.battle_id = "battle-skill-choice"
+        participant = view.participants[1]
+        latest = {
+            "money": 0,
+            "pt": 0,
+            "cards": ["기본공격"],
+            "characters": [{}],
+            "life_data": {},
+            "inventory": {},
+        }
+
+        async def mutate(_uid, callback, _name):
+            callback(latest)
+            return latest
+
+        with patch("guild.mutate_user_data", side_effect=mutate):
+            await view._save_participant_result(1, participant, win=True)
+
+        pending = boss_training.pending_boss_skill_rewards(latest)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["battle_id"], "battle-skill-choice")
+        self.assertEqual(
+            pending[0]["choices"][0]["source_name"],
+            lobby.user_boss_record["boss_data"]["build"]["skills"][0]["name"],
+        )
+
     async def test_self_boss_attacker_gets_seventy_percent_without_hope(self):
         view = guild.RaidBattleView(make_lobby(controlled=False), DummyBoss())
         view.user_boss_record = {
             "boss_id": "boss",
+            "boss_name": "자기 보스",
             "owner_id": "1",
             "grade": "UF",
+            "boss_data": {
+                "build": {
+                    "skills": [{
+                        "name": "자기 보스 기술",
+                        "dice": [{"type": "attack", "min": 8, "max": 14}],
+                        "effects": [],
+                        "cooldown": 2,
+                        "is_aoe": False,
+                    }]
+                }
+            },
         }
         view.battle_id = "battle-self"
         participant = view.participants[1]
         latest = {
             "money": 0,
             "pt": 0,
+            "cards": ["기본공격"],
             "characters": [{}],
             "life_data": {},
             "inventory": {},
@@ -390,6 +674,9 @@ class RaidFlowTests(unittest.IsolatedAsyncioTestCase):
             {"money": 17_500, "pt": 3_500, "contribution": 350},
         )
         self.assertNotIn("순수한 희망", latest["inventory"])
+        self.assertEqual(
+            len(boss_training.pending_boss_skill_rewards(latest)), 1
+        )
 
     async def test_attacker_commands_wait_for_controlled_boss(self):
         view = guild.RaidBattleView(make_lobby(controlled=True), DummyBoss())

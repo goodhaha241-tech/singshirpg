@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import boss_training as boss
+import cards
 import life_system
 from gem_effects import status_amount_after_resistance
 
@@ -862,6 +863,103 @@ class BossTrainingViewSmokeTests(unittest.IsolatedAsyncioTestCase):
         factor_field = next(field for field in embed.fields if field.name == "🧬 보유 인자")
         self.assertIn("★★★ HP 인자", factor_field.value)
         self.assertIn("★★ 공격 성장률 인자", factor_field.value)
+
+
+class BossSkillRewardTests(unittest.IsolatedAsyncioTestCase):
+    async def test_victory_skill_is_claimed_once_and_rebuilt_as_card(self):
+        data = make_user()
+        data["cards"] = ["기본공격"]
+        record = {
+            "boss_id": "boss-reward-123456",
+            "boss_name": "전리품 보스",
+            "grade": "UG",
+            "boss_data": {
+                "name": "전리품 보스",
+                "build": {
+                    "skills": [
+                        {
+                            "name": "왕의 일격",
+                            "dice": [
+                                {"type": "attack", "min": 12, "max": 20}
+                            ],
+                            "effects": ["bleed"],
+                            "cooldown": 3,
+                            "is_aoe": False,
+                        },
+                        {
+                            "name": "왕의 방벽",
+                            "dice": [
+                                {"type": "defense", "min": 12, "max": 20}
+                            ],
+                            "effects": [],
+                            "cooldown": 2,
+                            "is_aoe": False,
+                        },
+                    ]
+                },
+            },
+        }
+        self.assertTrue(
+            boss.schedule_boss_skill_reward(data, "battle-reward", record)
+        )
+        pending = boss.pending_boss_skill_rewards(data)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(len(pending[0]["choices"]), 2)
+
+        async def mutate(_uid, callback, _name):
+            callback(data)
+            return data
+
+        with patch("boss_training.mutate_user_data", side_effect=mutate):
+            result = await boss.claim_boss_skill_reward(
+                1, "battle-reward", 0, "공격자"
+            )
+            with self.assertRaises(boss.BossTrainingError):
+                await boss.claim_boss_skill_reward(
+                    1, "battle-reward", 1, "공격자"
+                )
+
+        self.assertIn(result["card_name"], data["cards"])
+        self.assertEqual(boss.pending_boss_skill_rewards(data), [])
+        reward_card = cards.get_card(result["card_name"])
+        self.assertIsNotNone(reward_card)
+        self.assertIn("보스 전리품", reward_card.description)
+        self.assertIn("출혈 1", reward_card.description)
+        cards._BOSS_REWARD_CARDS.pop(result["card_name"], None)
+        self.assertIsNone(cards.get_card(result["card_name"]))
+        cards.register_boss_reward_cards(data["life_data"])
+        self.assertIsNotNone(cards.get_card(result["card_name"]))
+
+    async def test_same_boss_skill_is_not_scheduled_twice_after_unlock(self):
+        data = make_user()
+        record = {
+            "boss_id": "same-boss",
+            "boss_name": "같은 보스",
+            "boss_data": {
+                "build": {
+                    "skills": [{
+                        "name": "유일한 기술",
+                        "dice": [{"type": "attack", "min": 5, "max": 9}],
+                        "effects": [],
+                        "cooldown": 2,
+                        "is_aoe": False,
+                    }]
+                }
+            },
+        }
+        boss.schedule_boss_skill_reward(data, "battle-one", record)
+
+        async def mutate(_uid, callback, _name):
+            callback(data)
+            return data
+
+        with patch("boss_training.mutate_user_data", side_effect=mutate):
+            await boss.claim_boss_skill_reward(
+                1, "battle-one", 0, "공격자"
+            )
+        self.assertFalse(
+            boss.schedule_boss_skill_reward(data, "battle-two", record)
+        )
 
 
 class BossBalanceSimulationTests(unittest.TestCase):
